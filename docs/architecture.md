@@ -39,18 +39,20 @@ enforcement layers on its own side of an externally supplied service, but not in
 
 Default DENY at both layers (NetworkPolicy and mesh AuthorizationPolicy). These are the only
 permitted paths. The ZT-55 role column names the management-plane role from the table above that
-the destination serves; destinations that are not one of the five roles are marked *outside the
-five roles*.
+the destination serves. A destination outside the five roles is denied by the catch-all row
+unless it has its own ALLOW row. Three such explicit exceptions exist; each is marked *exception*
+in the role column with the supporting service it provides, and is justified under
+[Explicit exceptions](#explicit-exceptions) below the matrix.
 
 | From data-plane workload → | ZT-55 role | Allowed? | Path/layer that enforces |
 |---|---|---|---|
 | PDP adapter → TSA policy engine | Policy Engine | ALLOW (mTLS, named pair) | mesh policy |
 | aTLS gateway → TCR resolve | TRAIN (resolution) | ALLOW (named pair) | mesh policy |
-| aTLS gateway → cmcd | outside the five roles | ALLOW (named pair) | mesh policy |
+| aTLS gateway → cmcd | exception: attestation for the aTLS channel | ALLOW (named pair) | mesh policy |
 | workloads → OTel collector (export only) | Observability stack | ALLOW (declared bypass, ZT-26) | mesh policy, egress-restricted |
-| workloads → DNS | outside the five roles | ALLOW (declared bypass) | NetworkPolicy port 53 |
+| workloads → DNS | exception: name-resolution infrastructure | ALLOW (declared bypass) | NetworkPolicy port 53 |
 | backend → verification service | OCM | ALLOW (named pair) | mesh policy |
-| backend → Keycloak token endpoint | outside the five roles | ALLOW (named pair) | mesh policy |
+| backend → Keycloak token endpoint | exception: identity and token issuance | ALLOW (named pair) | mesh policy |
 | any data-plane workload → TSPA (trust-list publication) | TRAIN (publication) | **DENY** | both layers; ZT-55 matrix test |
 | any data-plane workload → SPIRE server | SPIRE control plane | **DENY** | both layers; ZT-55 matrix test |
 | anything else data → management, outside the five ZT-55 roles (for example ArgoCD, OpenBao, Harbor, estserver, admin APIs) | outside the five roles | **DENY** | both layers; ZT-55 matrix test |
@@ -63,6 +65,27 @@ publishes. Publication writes the trust anchors that every peer relies on, so le
 from the data plane would let a compromised data-plane workload alter trust decisions, which
 ZT-55 forbids. Publication therefore stays denied from the data plane and is reached only through
 the pipeline's dedicated control channel.
+
+#### Explicit exceptions
+
+Three permitted destinations are not one of the five ZT-55 roles. Each is a supporting service
+that a named data-plane path depends on, and each is allowed only by its own row; every other
+destination outside the five roles falls to the catch-all denial.
+
+- **aTLS gateway → cmcd — attestation for the aTLS channel.** The attested channel between the
+  zones requires both ends to present evidence of the software they run, bound to the TLS
+  connection it is presented on ([trust boundary between the zones](environments/osc.md#6-the-trust-boundary-between-the-zones)).
+  That evidence comes from CMC (ZT-31, ZT-71; [specifications](specifications.md)), and cmcd is
+  the per-zone CMC service that receives the pipeline-signed reference metadata the evidence is
+  checked against. Without this path the gateway cannot establish attested TLS as ZT-35
+  (SRS 3.1.3) requires.
+- **workloads → DNS — name-resolution infrastructure.** Data-plane workloads reach the
+  destinations permitted above by service name, so without name resolution none of those paths
+  can be used. The exception is a declared bypass limited to port 53 at the NetworkPolicy layer.
+- **backend → Keycloak token endpoint — identity and token issuance.** Keycloak is the
+  demonstrator's identity provider (ZT-21, ZT-22; [Keycloak integration](keycloak.md)), and its
+  token endpoint is where tokens from that provider are issued. The path is limited to the token
+  endpoint for the backend as a named pair.
 
 ### Staleness matrix
 
