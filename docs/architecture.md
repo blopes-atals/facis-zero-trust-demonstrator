@@ -238,13 +238,26 @@ carries no test column.
 
 ### Staleness matrix
 
-Maximum window in which a revoked or rotated artefact still authorises. All values are proposed.
+Maximum window in which a revoked or rotated artefact still authorises. The allow matrix governs
+which management-plane decisions may travel to the data plane; the staleness matrix bounds how long
+they take to arrive. The staleness matrix is deliberately broader than the allow matrix: a row is
+in scope because its freshness bounds an authorisation, not because its producer is one of the five
+components ZT-55 (SRS 3.3) names, so rows for artefacts outside those five are not to be removed
+as inconsistencies. These values are what §6 commits to, and configuration has to meet them.
 
-| Artefact | Rotation/lifetime | Cache | Max stale-authorisation window |
-|---|---|---|---|
-| SVID | 1 h TTL | in-process | ≤ 1 h (mesh) |
-| Keycloak/issuer JWKS | rotate on demand | guard cache 5 min | ≤ 5 min |
-| Access token | 300 s lifetime | — | ≤ 300 s after revocation of its basis |
-| Policy bundle | poll 60 s | TSA cache | ≤ 60 s |
-| Trust list / measurement | TTL 300 s | TCR/gateway | ≤ 300 s + channel lifetime 15 min ⇒ ≤ ~20 min for an established channel (bounded by channel re-establishment) |
-| Credential revocation | checked per verification | outcome TTL 120 s | ≤ renewal interval (≤ token lifetime 300 s) + 120 s |
+| Artefact | Rotation/lifetime | Cache or held outcome | Max stale-authorisation window | Enforced by | Test |
+|---|---|---|---|---|---|
+| SVID | 1 h TTL | in-process | ≤ 1 h | mesh | `@ZT-24 @BDD-ZT-024` |
+| Keycloak/issuer JWKS | rotate on demand | guard cache 5 min | ≤ 5 min | connector guard | `@ZT-22 @BDD-ZT-022` |
+| Access token | 300 s lifetime | — | ≤ 300 s after revocation of its basis | guard and token store | `@ZT-22 @BDD-ZT-022` |
+| Policy bundle | poll 60 s | TSA cache | ≤ 60 s | TSA policy engine | `@ZT-20 @BDD-ZT-020` |
+| Trust list / measurement | TTL 300 s | TCR/gateway | ≤ 300 s + channel lifetime 15 min ⇒ ≤ ~20 min for an established channel (bounded by channel re-establishment) | aTLS gateway | `@ZT-35 @BDD-ZT-035` |
+| Credential revocation | checked per verification | outcome relied on 120 s | ≤ token lifetime + outcome reliance period; in force ≤ 300 s + 120 s | backend and token store | `@ZT-51 @BDD-ZT-051` |
+
+- **Trust list / measurement.** The window bounds the locally held copy from the moment the
+  published list changes, not the time until it changes upstream: the trust list is not
+  provisioned by this project.
+- **Keycloak/issuer JWKS.** No requirement row covers the freshness of the issuer key set; it
+  follows from a recorded architecture decision rather than from a requirement. The row therefore
+  carries the tag of the requirement whose behaviour depends on the key set: a key set stale past
+  a rotation makes token validation fail.
