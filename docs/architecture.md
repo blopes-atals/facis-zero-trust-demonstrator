@@ -64,9 +64,11 @@ layers; a denied path is denied at both.
 On every permitted path the **mesh waypoint** is the single L7 enforcement owner, and the
 NetworkPolicy layer is held to L3/L4 for that path. Two L7 decision points on one path would make
 the fail-closed behaviour ZT-55 depends on non-deterministic, so each path has exactly one
-([ADR-0001](adr/0001-service-mesh-mode-istio-ambient-with-cilium.md)). The assignment is recorded
-per path in the mesh configuration; this matrix reflects that record and does not replace it. If
-the mesh configuration changes the owner of a path, this column changes with it.
+([ADR-0001](adr/0001-service-mesh-mode-istio-ambient-with-cilium.md)). The place of record for the
+assignment is the mesh configuration, per path. No mesh configuration is deployed yet, so until one
+is, this column declares the intended assignment rather than reflecting a configured one. Once the
+configuration is deployed, this matrix reflects that record and does not replace it. If the mesh
+configuration changes the owner of a path, this column changes with it.
 
 The test column names the scenario tag that proves each row, in the form the acceptance harness
 requires: the requirement row and its acceptance test identifier
@@ -114,14 +116,86 @@ management plane toward a data-plane cluster, such as metric collection pulled b
 observability interfaces, are outside this matrix. ZT-55 governs reachability from the data plane,
 so the matrix models that direction only.
 
-The two TRAIN rows carry opposite verdicts on purpose. ZT-35 (SRS 3.1.3) requires any endpoint
-that establishes attested TLS connections to *resolve* its peers' trusted hashes from TRAIN, so
-the aTLS gateway needs a read path to TCR at run time. The same requirement assigns *publication*
-to the endpoint's CI/CD pipeline, which uploads the hash on deployment; no data-plane workload
-publishes. Publication writes the trust anchors that every peer relies on, so leaving it reachable
-from the data plane would let a compromised data-plane workload alter trust decisions, which
-ZT-55 forbids. Publication therefore stays denied from the data plane and is reached only through
-the pipeline's publication path.
+Each row of the matrix is justified below. A permitted row states the requirement that needs the
+path, which end initiates it, and the surface it is limited to. A denied row states what reaching
+the destination would give a compromised data-plane workload; the catch-all row states the role it
+plays in the matrix.
+
+- **PDP adapter → TSA policy engine — Policy Engine.** ZT-20 (SRS 3.1.1) requires the connector's
+  guard to base its enforcement on Rego policies and the TSA policy engine, and ZT-52 (SRS 3.3)
+  allows no access to a protected resource without a valid, verified policy decision. The engine
+  runs as its own service, so the enforcement point obtains every decision over the network, and
+  the PDP adapter is its route to the engine: without this path the enforcement point cannot obtain
+  a decision, and every guarded request is denied. The PDP adapter initiates each call; the engine
+  answers and never calls into the data plane over this path. The surface is policy evaluation
+  only — a decision request out and its verdict back — not the administration of the policies the
+  engine evaluates.
+- **aTLS gateway → TCR resolve — TRAIN (resolution).** ZT-35 (SRS 3.1.3) requires any endpoint
+  that establishes attested TLS connections to *resolve* its peers' trusted hashes from TRAIN, so
+  the aTLS gateway needs a read path to TCR at run time. Resolution is needed when a channel is
+  established: the gateway fetches the peer's hash from TRAIN and proceeds only if it matches the
+  value in the peer's attestation report, so without this path no attested channel between the
+  zones can be established. The gateway initiates; TCR answers and never calls into the data plane
+  over this path. The surface is resolution — a peer's hash is looked up, never written.
+  Publication, the write side of TRAIN, is a separate row and is denied.
+- **workloads → OTel collector — Observability stack.** ZT-27 (SRS 3.1.2) requires events to be
+  exported from the cluster in a standard format and names the OpenTelemetry Collector as the
+  primary aggregation and export tool, so data-plane workloads must be able to reach the collector.
+  ZT-26 (SRS 3.1.2) places observability APIs among the endpoints that must bypass the Zero Trust
+  Connector, and requires them to use their own appropriate ingress and egress configuration
+  instead; that is the declared bypass this row carries. ZT-52 (SRS 3.3) requires control-plane
+  failures to be detected within 30 seconds and alerted through the observability stack, and a
+  failure the data plane observes, such as a policy engine that no longer answers, reaches that
+  alerting only over this path. The row is therefore not a dedicated control channel, as the
+  definition above the matrix says, and it is not an exception granted against ZT-55 (SRS 3.3)
+  either: it is a path these requirements compel, and denying it would break ZT-27 and ZT-52
+  without adding to the separation ZT-55 requires.
+
+  What these requirements need is narrower than reaching the observability stack, and the row
+  permits only that. The source is admitted by the workload identity it holds, its SVID. The
+  destination is the collector alone, not Prometheus, Jaeger or any other part of the stack. The
+  surface is the collector's export port, to which the egress rule in the enforcement column limits
+  the source. The workload initiates, and telemetry travels outward only: the path lets a workload
+  hand its telemetry to the collector and opens no route back into the stack, to the data it holds
+  or to its configuration. None of this depends on which component takes the L7 decision on the
+  path, so a change of mesh mode leaves the justification standing.
+- **backend → verification service — OCM.** ZT-40 (SRS 3.1.5) bases access on credentials from
+  the OCM W-Stack, and ZT-51 (SRS 3.3) requires revocation status to be checked at every credential
+  verification, failing closed when it cannot be. A verdict held from an earlier verification
+  cannot stand in for a new one: it records the credential's status when that verification ran,
+  so a credential revoked since would still pass. Each new verification therefore reaches the
+  service, and the [staleness matrix](#staleness-matrix) bounds how long one verification's outcome
+  is relied on. The backend initiates; the verification service answers and never calls into the
+  data plane over this path. The surface is credential verification — a presentation out and its
+  verification result, revocation status included, back — not the issuance or revocation of
+  credentials.
+- **any data-plane workload → TSPA — TRAIN (publication).** The two TRAIN rows carry opposite
+  verdicts on purpose. The resolution row above rests on ZT-35 (SRS 3.1.3). The same requirement
+  assigns *publication* to the endpoint's CI/CD pipeline, which uploads the hash on deployment; no
+  data-plane workload publishes. Publication writes the trust anchors that every peer relies on, so
+  leaving it reachable from the data plane would let a compromised data-plane workload alter trust
+  decisions, which ZT-55 forbids. Publication therefore stays denied from the data plane and is
+  reached only through the pipeline's publication path.
+- **any data-plane workload → SPIRE server — SPIRE control plane.** Under ZT-24 (SRS 3.1.2) the
+  SPIRE server issues the SVIDs by which every other row names its source and destination, and
+  holds the registration entries that decide which workload receives which identity. A compromised
+  data-plane workload that reached it could seek identities it was never issued, or alter the
+  registrations that assign them; every named pair in this matrix, and the identity that admits the
+  observability row, would then rest on identities the attacker controls. That is the access to the
+  management plane that ZT-55 (SRS 3.3) requires a compromise of the data plane never to grant. The
+  denial does not cut a workload off from its own identity. A workload receives its SVID by the
+  node-local path, from the SPIRE agent on its node through a mounted volume
+  ([workload identity](environments/osc.md#2-workload-identity)), and the agent, which is part of
+  the SPIRE deployment rather than a data-plane workload, is what talks to the server. The path
+  this row denies is the one from a workload to the server itself.
+- **anything else data → management — any management-plane destination not listed above.** The
+  five roles ZT-55 (SRS 3.3) names are not the whole management plane: other management components
+  such as ArgoCD, OpenBao, Harbor, estserver and administrative APIs sit there too. This row is what
+  makes the matrix a closed statement about the management plane rather than a list of examples:
+  every management-plane destination is either named by a row above or denied by this one, and
+  none is denied merely by being left out. It is also what the plane-separation test asserts for
+  any management-plane destination it probes and does not find listed: that destination is
+  unreachable at both layers.
 
 ### Supporting services (outside the management plane)
 
