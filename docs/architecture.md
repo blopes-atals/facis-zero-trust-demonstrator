@@ -44,13 +44,14 @@ source — not who supplies the service; see the allow matrix below.
 
 ### Allow matrix (data plane → management plane)
 
-Default DENY at both layers (NetworkPolicy and mesh AuthorizationPolicy). In this demonstrator, a
-*dedicated control channel* in the ZT-55 sense is a named, mTLS-authenticated source → destination
-pair that is permitted explicitly at both the NetworkPolicy layer and the mesh AuthorizationPolicy
-layer. Each ALLOW row below is such a channel toward one of the five roles, and nothing else
-reaches the management plane. The ZT-55 role column names the role from the table above that the
-destination serves. Any management-plane destination without its own row is denied by the
-catch-all row.
+Default DENY at both layers (NetworkPolicy and mesh AuthorizationPolicy). Each ALLOW row below is
+permitted explicitly at both the NetworkPolicy layer and the mesh AuthorizationPolicy layer, and
+nothing else reaches the management plane. In this demonstrator, a *dedicated control channel* in
+the ZT-55 sense is a named, mTLS-authenticated source → destination pair; the rows marked *named
+pair* are such channels toward the roles they name. The observability export row is not a named
+pair: it is permitted as a declared bypass under ZT-26, defined below the matrix. The ZT-55 role
+column names the role from the table above that the destination serves. Any management-plane
+destination without its own row is denied by the catch-all row.
 
 ZT-55 (SRS 3.3) requires the separation to be enforced at both the Kubernetes network policy layer
 and the service mesh layer, so every row states its disposition at both. The enforcement column
