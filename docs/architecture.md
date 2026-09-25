@@ -15,8 +15,11 @@ Source: [`diagrams/03-trust-boundaries.mmd`](diagrams/03-trust-boundaries.mmd).
 
 ### Management-plane roles (ZT-55)
 
-ZT-55 (SRS 3.3) names five management-plane components that must be reachable only through
-dedicated control channels and never from the data plane network. The table binds each of them,
+ZT-55 (SRS 3.3) names five management-plane components that must be strictly separated from the
+data plane network. In this demonstrator they are reachable from the data plane only through the
+paths the allow matrix below permits explicitly at both layers; those paths are dedicated control
+channels (named mTLS pairs), except the observability export path, which is a declared bypass
+under ZT-26. The table binds each of them,
 in the order the requirement names them, to the service or services that implement it in this
 demonstrator. The allow matrix below lists the dedicated control channels toward these roles and
 refers to the roles by name, so coverage of the five components can be checked here before the
