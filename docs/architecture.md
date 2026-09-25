@@ -199,8 +199,21 @@ plays in the matrix.
 
 ### Supporting services (outside the management plane)
 
-The data plane also depends on three services that are not among the five components ZT-55
-names. ZT-55 does not govern them: they are supporting services outside the management plane.
+The data plane also depends on two services that are outside the management plane. ZT-55
+(SRS 3.3) characterises both planes with parenthetical examples rather than enumerating them, and
+its operative sentence states the test: compromise of the data plane must not grant any access to
+management-plane components. A destination is therefore outside the management plane when reaching
+it grants no ability to alter what the system runs, trusts or holds. Absence from the five
+components ZT-55 lists is not the criterion. The catch-all row above denies management components
+that are equally absent from that list, and it can do so without contradicting this subsection
+because both decide by what reaching a destination grants, not by whether its name is on the list.
+Each service below is justified by its own requirement rather than by this category, and none is
+an exception to ZT-55.
+
+This subsection exists because the allow matrix covers destinations in the management plane: a
+permitted destination that is not a management-plane component has nowhere else to be recorded,
+and a reader finding no row for it would apply the catch-all denial to it.
+
 Each is permitted explicitly under the same default DENY at both layers as the matrix above, and
 any other destination without a row is denied. They are not all named mTLS pairs: a service whose
 traffic the mesh cannot govern is permitted by a rule at the network layer instead, and its row
@@ -215,15 +228,16 @@ carries no test column.
 |---|---|---|---|
 | aTLS gateway → cmcd | attestation for the aTLS channel | ALLOW (named pair) | NetworkPolicy: ALLOW, L3/L4 only; mesh: ALLOW, L7 owner (waypoint) |
 | workloads → DNS | name-resolution infrastructure | ALLOW (declared bypass, ZT-26) | NetworkPolicy: ALLOW, port 53 only; mesh: not applicable — DNS is not mTLS traffic, so the mesh cannot govern it |
-| backend → Keycloak token endpoint | identity and token issuance | ALLOW (named pair) | NetworkPolicy: ALLOW, L3/L4 only; mesh: ALLOW, L7 owner (waypoint), token endpoint only |
 
 - **aTLS gateway → cmcd — attestation for the aTLS channel.** cmcd is the per-zone attestation
   service beside the gateway. The attested channel between the zones requires both ends to present
   evidence of the software they run, bound to the TLS connection it is presented on
   ([trust boundary between the zones](environments/osc.md#6-the-trust-boundary-between-the-zones)).
-  That evidence comes from CMC (ZT-31, ZT-71; [specifications](specifications.md)), and cmcd is
-  the per-zone CMC service that receives the pipeline-signed reference metadata the evidence is
-  checked against. Without this path the gateway cannot establish attested TLS as ZT-35
+  That evidence comes from CMC (ZT-31; [specifications](specifications.md)): the SRS grounds the
+  bidirectional remote attestation feature (SRS 5.2) in the CMC aTLS protocol (SRS 2.6.1), and its
+  appendix on attested TLS refers to the REQUIRED CMC daemon (SRS 6). cmcd is the per-zone CMC
+  service that receives the pipeline-signed reference metadata (ZT-71) the evidence is checked
+  against. Without this path the gateway cannot establish attested TLS as ZT-35
   (SRS 3.1.3) requires.
 - **workloads → DNS — name-resolution infrastructure.** DNS is cluster infrastructure. Data-plane
   workloads reach the destinations permitted above by service name, so without name resolution
@@ -231,10 +245,6 @@ carries no test column.
   above, and is permitted by a NetworkPolicy rule limited to port 53. It is not a named mTLS pair:
   DNS is not mTLS traffic, so the mesh layer does not apply and the network layer imposes the
   restriction.
-- **backend → Keycloak token endpoint — identity and token issuance.** Keycloak is the
-  demonstrator's identity provider (ZT-21, ZT-22; [Keycloak integration](keycloak.md)), and its
-  token endpoint is where tokens from that provider are issued. The path is limited to the token
-  endpoint for the backend as a named pair.
 
 ### Staleness matrix
 
@@ -248,7 +258,7 @@ as inconsistencies. These values are what §6 commits to, and configuration has 
 | Artefact | Rotation/lifetime | Cache or held outcome | Max stale-authorisation window | Enforced by | Test |
 |---|---|---|---|---|---|
 | SVID | 1 h TTL | in-process | ≤ 1 h | mesh | `@ZT-24 @BDD-ZT-024` |
-| Keycloak/issuer JWKS | rotate on demand | guard cache 5 min | ≤ 5 min | connector guard | `@ZT-22 @BDD-ZT-022` |
+| Connector issuer JWKS | rotate on demand | guard cache 5 min | ≤ 5 min | connector guard | `@ZT-22 @BDD-ZT-022` |
 | Access token | 300 s lifetime | — | ≤ 300 s after revocation of its basis | guard and token store | `@ZT-22 @BDD-ZT-022` |
 | Policy bundle | poll 60 s | TSA cache | ≤ 60 s | TSA policy engine | `@ZT-20 @BDD-ZT-020` |
 | Trust list / measurement | TTL 300 s | TCR/gateway | ≤ 300 s + channel lifetime 15 min ⇒ ≤ ~20 min for an established channel (bounded by channel re-establishment) | aTLS gateway | `@ZT-35 @BDD-ZT-035` |
@@ -257,7 +267,7 @@ as inconsistencies. These values are what §6 commits to, and configuration has 
 - **Trust list / measurement.** The window bounds the locally held copy from the moment the
   published list changes, not the time until it changes upstream: the trust list is not
   provisioned by this project.
-- **Keycloak/issuer JWKS.** No requirement row covers the freshness of the issuer key set; it
-  follows from a recorded architecture decision rather than from a requirement. The row therefore
-  carries the tag of the requirement whose behaviour depends on the key set: a key set stale past
-  a rotation makes token validation fail.
+- **Connector issuer JWKS.** The connector guard validates token signatures against the
+  connector's own published key set, so that is the artefact this row bounds. The key set is part
+  of the connector's token machinery, which ZT-22 (SRS 3.1.1) governs, and the row carries that
+  requirement's tag as its own basis: a key set stale past a rotation makes token validation fail.
