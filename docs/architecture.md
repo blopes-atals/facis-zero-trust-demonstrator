@@ -210,10 +210,6 @@ because both decide by what reaching a destination grants, not by whether its na
 Each service below is justified by its own requirement rather than by this category, and none is
 an exception to ZT-55.
 
-This subsection exists because the allow matrix covers destinations in the management plane: a
-permitted destination that is not a management-plane component has nowhere else to be recorded,
-and a reader finding no row for it would apply the catch-all denial to it.
-
 Each is permitted explicitly under the same default DENY at both layers as the matrix above, and
 any other destination without a row is denied. They are not all named mTLS pairs: a service whose
 traffic the mesh cannot govern is permitted by a rule at the network layer instead, and its row
@@ -223,6 +219,10 @@ above.
 These rows are proved by the acceptance families of their own requirements (see the
 [scenario inventory](bdd.md#scenario-inventory)), not by the plane-separation test, so this table
 carries no test column.
+
+This subsection exists because the allow matrix covers destinations in the management plane: a
+permitted destination that is not a management-plane component has nowhere else to be recorded,
+and a reader finding no row for it would apply the catch-all denial to it.
 
 | From data-plane workload → | Supporting service | Allowed? | Enforcement (NetworkPolicy; mesh AuthorizationPolicy) |
 |---|---|---|---|
