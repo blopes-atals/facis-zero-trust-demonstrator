@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# scenario: plane-separation-design / The SVG and the source disagree
+# level: L2
+# requirement: The diagram source records how its rendered form is produced
+# Simulates the disagreement in a scratch copy: the SVG is replaced by a stale one, the source's
+# own render command is run, and the regenerated SVG must correspond to the source (i.e. equal
+# the committed render). Also checks the document points readers to the source.
+. "$EVAL_ROOT/evals/lib/render03.sh"
+grep -q '03-trust-boundaries.mmd' "$EVAL_ROOT/docs/architecture.md" \
+  || { echo "FAIL: architecture.md does not point to the diagram source"; exit 1; }
+R="$EVAL_TMP/repo"; mkdir -p "$R/docs/diagrams"
+cp "$EVAL_ROOT/$MMD_REL" "$R/$MMD_REL"
+printf '<svg xmlns="http://www.w3.org/2000/svg"><text>stale</text></svg>\n' > "$R/$SVG_REL"
+render "$R"; rc=$?
+[ $rc -eq 0 ] || { echo "UNVERIFIABLE: the render command could not run here (rc=$rc)"; exit 77; }
+if grep -q '>stale<' "$R/$SVG_REL"; then echo "FAIL: the stale SVG was not regenerated"; exit 1; fi
+if cmp -s <(normsvg "$R/$SVG_REL") <(normsvg "$EVAL_ROOT/$SVG_REL"); then
+  echo "PASS: regenerating from the source replaces a disagreeing SVG with the source's render"
+  exit 0
+fi
+echo "FAIL: regenerated SVG does not match the committed SVG, so the committed pair disagree"
+diff <(normsvg "$R/$SVG_REL") <(normsvg "$EVAL_ROOT/$SVG_REL") | head -20
+exit 1

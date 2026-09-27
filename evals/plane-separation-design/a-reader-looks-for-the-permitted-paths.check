@@ -1,0 +1,50 @@
+#!/usr/bin/env python3
+# scenario: plane-separation-design / A reader looks for the permitted paths
+# level: L1
+# requirement: Diagram 03 reflects the plane-separation model
+import os, re, sys
+sys.path.insert(0, os.path.join(os.environ.get("EVAL_ROOT", "."), "evals/lib"))
+from diagram03 import *
+
+g = diagram()
+fails = []
+intra = []
+for td in g.trust_domains():
+    for dp in g.data_plane(td):
+        for (s, k, lab, t) in g.edges:
+            if s == dp and t in g.mgmt_plane(td):
+                intra.append((td, lab))
+if not intra:
+    die("no data-plane -> management-plane edge inside any trust domain")
+for td, lab in intra:
+    l = lab.lower()
+    print(f"{td} intra-zone edge: {lab!r}")
+    checks = {
+        "default deny": re.search(r"default\s+deny|denied\s+by\s+default|deny\s+by\s+default", l),
+        "both layers": "both" in l,
+        "NetworkPolicy layer named": "networkpolicy" in l or "network policy" in l,
+        "mesh layer named": "mesh" in l,
+        "only the ZT-55 allow matrix's paths cross": "only" in l and "zt-55" in l and re.search(r"allow[- ]matrix", l),
+        "names named mTLS pairs": re.search(r"named mtls pair", l),
+        "names the ZT-26 observability export": "zt-26" in l and "observability export" in l,
+    }
+    for name, ok in checks.items():
+        if not ok:
+            fails.append(f"{td}: edge label does not state: {name}")
+
+# the diagram does not list the individual rows of the matrix
+_, rows = first_table(section(read(ARCH), "Allow matrix"))
+labels = " || ".join(g.all_labels()).lower()
+for r in rows:
+    pair = r[0]
+    src = norm(pair.split("→")[0]).lower()
+    if norm(pair).lower() in labels:
+        fails.append(f"diagram repeats allow-matrix row {pair!r}")
+    elif src and src not in ("workloads", "any data-plane workload") and not src.startswith("anything else") and src in labels:
+        fails.append(f"diagram names row-specific source {src!r} of row {pair!r}")
+if re.search(r"@zt-|@bdd-", labels):
+    fails.append("diagram carries test tags from matrix rows")
+
+if fails:
+    die("FAIL:\n  " + "\n  ".join(fails))
+print(f"PASS: {len(intra)} intra-zone edge(s) state the rule; no allow-matrix row is repeated ({len(rows)} rows checked)")

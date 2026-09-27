@@ -1,0 +1,25 @@
+#!/usr/bin/env python3
+# scenario: plane-separation-design / The SPIRE server's placement
+# level: L1
+# requirement: Diagram 03 reflects the plane-separation model
+import os, re, sys
+sys.path.insert(0, os.path.join(os.environ.get("EVAL_ROOT", "."), "evals/lib"))
+from diagram03 import *
+
+g = diagram()
+spire = [n for n, l in g.nodes.items() if "spire server" in l.lower()]
+print("nodes naming the SPIRE server:", {n: (g.nodes[n], g.parent.get(n)) for n in spire})
+fails = []
+if not spire:
+    die("FAIL: no node names the SPIRE server")
+for n in spire:
+    if not g.in_domain(n):
+        fails.append(f"{n} ({g.nodes[n]!r}) is outside every SPIFFE trust domain")
+    if n in g.unplaced():
+        fails.append(f"{n} is the grouping outside both trust domains")
+for td in g.trust_domains():
+    if not any(g.parent.get(n) == td for n in spire):
+        fails.append(f"{td} ({g.subgraphs[td]}) has no SPIRE server inside it to issue its identities")
+if fails:
+    die("FAIL:\n  " + "\n  ".join(fails))
+print("PASS: each trust domain holds its own SPIRE server; none drawn outside")

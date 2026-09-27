@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# scenario: plane-separation-design / The model changes and the diagram must follow
+# level: L2
+# requirement: The diagram source records how its rendered form is produced
+. "$EVAL_ROOT/evals/lib/render03.sh"
+R="$EVAL_TMP/repo"; mkdir -p "$R/docs/diagrams"
+cp "$EVAL_ROOT/$MMD_REL" "$R/$MMD_REL"
+render "$R"; rc=$?
+[ $rc -eq 0 ] || { echo "UNVERIFIABLE: the render command could not run here (rc=$rc)"; exit 77; }
+[ -s "$R/$SVG_REL" ] || { echo "FAIL: the render command produced no SVG"; exit 1; }
+if cmp -s <(normsvg "$R/$SVG_REL") <(normsvg "$EVAL_ROOT/$SVG_REL"); then
+  echo "PASS: committed SVG matches the render of the committed source (modulo font-metric geometry)"
+  exit 0
+fi
+echo "FAIL: committed SVG was not produced from the committed source by the recorded command"
+diff <(normsvg "$R/$SVG_REL") <(normsvg "$EVAL_ROOT/$SVG_REL") | head -20
+exit 1

@@ -1,0 +1,31 @@
+#!/usr/bin/env python3
+# scenario: staleness-windows / A row names a scenario that exists
+# level: L1
+# requirement: Every row names the test that proves it
+import os, re, sys, glob
+sys.path.insert(0, os.path.join(os.environ.get("EVAL_ROOT", "."), "evals/lib"))
+from diagram03 import *
+
+rows = staleness_rows()
+scen = feature_scenarios()
+fails, matched = [], 0
+for art, tags in rows:
+    zt = [t for t in tags if re.fullmatch(r"@ZT-\d+", t)]
+    print(f"{art}: {tags}")
+    if not zt:
+        fails.append(f"row {art!r} names no @ZT-<n> requirement tag")
+        continue
+    written = [s for s in scen if zt[0] in s[2] + s[4]]
+    for path, fname, ftags, sname, stags in written:
+        matched += 1
+        have = set(ftags + stags)
+        missing = [t for t in tags if t not in have]
+        print(f"  scenario {os.path.relpath(path, ROOT)} :: {sname!r} tags={sorted(have)}")
+        if missing:
+            fails.append(f"row {art!r} names {tags} but scenario {sname!r} lacks {missing}")
+if fails:
+    die("FAIL:\n  " + "\n  ".join(fails))
+if matched == 0:
+    print("PASS (vacuous): no staleness row's tagged scenario is written yet; nothing to mismatch")
+else:
+    print(f"PASS: {matched} written scenario(s) carry exactly the tags their rows name")

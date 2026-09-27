@@ -1,0 +1,27 @@
+#!/usr/bin/env python3
+# scenario: plane-separation-design / A placement is recorded later
+# level: L1
+# requirement: Diagram 03 reflects the plane-separation model
+# The WHEN is a future edit. Checked as the invariant that makes the THEN hold: each zone has a
+# management-plane grouping to move a component into, and no edge label depends on which
+# components are placed (no component names in the rule), so moving one changes no edge label.
+import os, re, sys
+sys.path.insert(0, os.path.join(os.environ.get("EVAL_ROOT", "."), "evals/lib"))
+from diagram03 import *
+
+g = diagram()
+fails = []
+for td in g.trust_domains():
+    if len(g.mgmt_plane(td)) != 1:
+        fails.append(f"{td}: no single management-plane grouping to move a component into")
+components = ["spire", "otel", "collector", "train", "tcr", "tspa", "tsa", "ocm", "policy engine"]
+rule_edges = [(s, lab, t) for (s, k, lab, t) in g.edges
+              if "management plane" in g.nodes.get(t, "").lower()]
+for s, lab, t in rule_edges:
+    hit = [c for c in components if re.search(r"\b" + re.escape(c) + r"\b", lab.lower())]
+    print(f"{s}->{t}: {lab!r}")
+    if hit:
+        fails.append(f"edge {s}->{t} names component(s) {hit}; moving one would change the rule")
+if fails:
+    die("FAIL:\n  " + "\n  ".join(fails))
+print(f"PASS: {len(rule_edges)} management-plane edges carry a rule independent of placement")
