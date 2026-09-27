@@ -1,20 +1,36 @@
 %% Render: npx -y -p @mermaid-js/mermaid-cli mmdc -i docs/diagrams/03-trust-boundaries.mmd -o docs/diagrams/03-trust-boundaries.svg
 %% Diagram 03, trust boundaries. Illustrates ARCHITECTURE section 6; the allow matrix there is the place of record.
-flowchart TB
+%% Edges are drawn at zone level so that each zone keeps its own top-to-bottom layout (Mermaid ignores a subgraph direction once a node inside it links outside).
+%%{init: {"flowchart": {"nodeSpacing": 30, "rankSpacing": 70, "wrappingWidth": 360}}}%%
+flowchart LR
+  classDef data fill:#e8f1fb,stroke:#2b5d8c,color:#10243a
+  classDef mgmt fill:#fff3d6,stroke:#a86b00,color:#3a2600
+  classDef prov fill:#fff3d6,stroke:#a86b00,stroke-dasharray:6 4,color:#3a2600
+  classDef ext fill:#f4f4f4,stroke:#666,color:#222
+  classDef deny fill:#fbe3e3,stroke:#b3261e,color:#5c0f0b
+
   subgraph TD_A["SPIFFE trust domain zone-a (one cluster)"]
     direction TB
-    A1["data plane: workloads with SVIDs"]
-    A2["management plane, placed here: SPIRE server, OTel collector"]
-    A1 -.->|"default DENY at both layers<br/>(NetworkPolicy, mesh)<br/>crossed only by the ZT-55<br/>allow-matrix paths:<br/>named mTLS pairs +<br/>the ZT-26 observability export"| A2
+    A1["data plane<br/>workloads with SVIDs"]:::data
+    A2["management plane, placed here:<br/>SPIRE server · OTel collector"]:::mgmt
+    A1 -. "default DENY at both layers (NetworkPolicy · mesh)<br/>crossed only by the ZT-55 allow-matrix paths:<br/>named mTLS pairs · ZT-26 observability export" .-> A2
   end
   subgraph TD_B["SPIFFE trust domain zone-b (one cluster)"]
     direction TB
-    B1["data plane: workloads with SVIDs"]
-    B2["management plane, placed here: SPIRE server, OTel collector"]
-    B1 -.->|"default DENY at both layers<br/>(NetworkPolicy, mesh)<br/>crossed only by the ZT-55<br/>allow-matrix paths:<br/>named mTLS pairs +<br/>the ZT-26 observability export"| B2
+    B1["data plane<br/>workloads with SVIDs"]:::data
+    B2["management plane, placed here:<br/>SPIRE server · OTel collector"]:::mgmt
+    B1 -. "default DENY at both layers (NetworkPolicy · mesh)<br/>crossed only by the ZT-55 allow-matrix paths:<br/>named mTLS pairs · ZT-26 observability export" .-> B2
   end
-  A1 ==>|"ONLY via attested channel + TRAIN verdict"| B1
-  MGMT_P["management plane, placement not yet recorded:<br/>TRAIN (TCR, TSPA), TSA policy engine, OCM"]
-  A1 -.->|"same rule: ZT-55 allow matrix, both layers"| MGMT_P
-  B1 -.->|"same rule: ZT-55 allow matrix, both layers"| MGMT_P
-  EXT["anything without SVID / unsigned image"] -->|"cannot join / cannot start"| X((denied))
+  TD_A == "ONLY via attested channel<br/>+ TRAIN verdict" ==> TD_B
+  TD_A ~~~ MGMT_P
+
+  MGMT_P["management plane, placement not yet recorded:<br/>TRAIN (TCR, TSPA) · TSA policy engine · OCM"]:::prov
+  TD_A -. "same rule: ZT-55 allow matrix, both layers" .-> MGMT_P
+  TD_B -. "same rule: ZT-55 allow matrix, both layers" .-> MGMT_P
+
+  EXT["anything without SVID<br/>or with an unsigned image"]:::ext
+  X(["denied"]):::deny
+  EXT -- "cannot join / cannot start" --> X
+
+  style TD_A fill:#f7f9fc,stroke:#7a8aa0
+  style TD_B fill:#f7f9fc,stroke:#7a8aa0
