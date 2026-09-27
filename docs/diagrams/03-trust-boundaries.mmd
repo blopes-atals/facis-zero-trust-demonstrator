@@ -1,17 +1,17 @@
 %% Render: npx -y -p @mermaid-js/mermaid-cli mmdc -i docs/diagrams/03-trust-boundaries.mmd -o docs/diagrams/03-trust-boundaries.svg
 %% Diagram 03, trust boundaries. Illustrates ARCHITECTURE section 6; the allow matrix there is the place of record.
-flowchart LR
+flowchart TB
   subgraph TD_A["SPIFFE trust domain zone-a (one cluster)"]
     direction TB
     A1["data plane: workloads with SVIDs"]
     A2["management plane, placed here: SPIRE server, OTel collector"]
-    A1 -.->|"default DENY at both layers (NetworkPolicy, mesh)<br/>crossed only by the ZT-55 allow-matrix paths:<br/>named mTLS pairs + the ZT-26 observability export"| A2
+    A1 -.->|"default DENY at both layers<br/>(NetworkPolicy, mesh)<br/>crossed only by the ZT-55<br/>allow-matrix paths:<br/>named mTLS pairs +<br/>the ZT-26 observability export"| A2
   end
   subgraph TD_B["SPIFFE trust domain zone-b (one cluster)"]
     direction TB
     B1["data plane: workloads with SVIDs"]
     B2["management plane, placed here: SPIRE server, OTel collector"]
-    B1 -.->|"default DENY at both layers (NetworkPolicy, mesh)<br/>crossed only by the ZT-55 allow-matrix paths:<br/>named mTLS pairs + the ZT-26 observability export"| B2
+    B1 -.->|"default DENY at both layers<br/>(NetworkPolicy, mesh)<br/>crossed only by the ZT-55<br/>allow-matrix paths:<br/>named mTLS pairs +<br/>the ZT-26 observability export"| B2
   end
   A1 ==>|"ONLY via attested channel + TRAIN verdict"| B1
   MGMT_P["management plane, placement not yet recorded:<br/>TRAIN (TCR, TSPA), TSA policy engine, OCM"]
