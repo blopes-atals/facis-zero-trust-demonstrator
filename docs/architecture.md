@@ -4,10 +4,18 @@
 
 ### Trust boundaries (diagram 03)
 
-Each trust zone is its own SPIFFE trust domain. The two domains meet only through the attested
-channel and a TRAIN verdict; they are never merged. Data-plane calls into the management plane are
-denied by default, and a workload without an SVID or running an unsigned image cannot join or
-start.
+Each trust zone is one cluster and its own SPIFFE trust domain (ZT-24, SRS 3.1.2). The two domains
+meet only through the attested channel and a TRAIN verdict; they are never merged. The
+management-plane components whose placement this section records, the SPIRE server and the
+OpenTelemetry Collector, run in the same cluster as the zone's data-plane workloads and therefore
+inside the zone's trust domain: the separation between the planes is a namespace and policy
+boundary, not an identity boundary. Data-plane calls into the management plane are denied by default
+at both the NetworkPolicy layer and the mesh AuthorizationPolicy layer, and are permitted only along
+the paths the allow matrix below lists, which are named mTLS pairs and the declared observability
+export under ZT-26 (SRS 3.1.2). The management-plane components whose placement is not yet recorded,
+TRAIN (TCR and TSPA), the TSA policy engine and OCM, are drawn outside both zones under the same
+rule until their placement is decided; the four provisional rows of the allow matrix are theirs. A
+workload without an SVID or running an unsigned image cannot join or start.
 
 ![Trust boundaries](diagrams/03-trust-boundaries.svg)
 
@@ -254,6 +262,11 @@ they take to arrive. The staleness matrix is deliberately broader than the allow
 in scope because its freshness bounds an authorisation, not because its producer is one of the five
 components ZT-55 (SRS 3.3) names, so rows for artefacts outside those five are not to be removed
 as inconsistencies. These values are what §6 commits to, and configuration has to meet them.
+
+The test column names the scenario tag that proves each row's window, in the form the acceptance
+harness requires: the requirement row and its acceptance test identifier ([Tags](bdd.md#tags)). A
+tag is named here even where its scenario is not yet written — the matrix is the specification that
+scenario is written from, and the traceability sheet reports the row as uncovered until it exists.
 
 | Artefact | Rotation/lifetime | Cache or held outcome | Max stale-authorisation window | Enforced by | Test |
 |---|---|---|---|---|---|
