@@ -1,6 +1,7 @@
-%% Render: npx -y -p @mermaid-js/mermaid-cli mmdc -i docs/diagrams/03-trust-boundaries.mmd -o docs/diagrams/03-trust-boundaries.svg
+%% Render: npx -y -p @mermaid-js/mermaid-cli mmdc --no-font-embed -i docs/diagrams/03-trust-boundaries.mmd -o docs/diagrams/03-trust-boundaries.svg
 %% Diagram 03, trust boundaries. Illustrates ARCHITECTURE section 6; the allow matrix there is the place of record.
 %% Edges are drawn at zone level so that each zone keeps its own top-to-bottom layout (Mermaid ignores a subgraph direction once a node inside it links outside).
+%% --no-font-embed: the embedded webfont is measured before it loads, which clips the widest line of every label in browsers.
 %%{init: {"flowchart": {"nodeSpacing": 30, "rankSpacing": 70, "wrappingWidth": 360}}}%%
 flowchart LR
   classDef data fill:#e8f1fb,stroke:#2b5d8c,color:#10243a
