@@ -1,0 +1,56 @@
+#!/usr/bin/env python3
+# scenario: plane-separation-design / A component without recorded placement
+# level: L1
+# requirement: Diagram 03 reflects the plane-separation model
+# Reading: "the same rule" is satisfied when the edge label either repeats the intra-zone
+# label or explicitly says it is the same rule and names the ZT-55 allow matrix and both layers.
+import os, re, sys
+sys.path.insert(0, os.path.join(os.environ.get("EVAL_ROOT", "."), "evals/lib"))
+from diagram03 import *
+
+g = diagram()
+md = read(ARCH)
+allow = section(md, "Allow matrix")
+_, rows = first_table(allow)
+# provisional rows as the section lists them ("... so four rows are provisional: A, B, C, and D.")
+m = re.search(r"rows are provisional:\s*(.*?)\.\s", norm(allow))
+if not m:
+    die("FAIL: cannot find the section's list of provisional rows")
+prov = [r for r in rows if norm(r[0].split("(")[0]).strip() and re.sub(r"\s*\(.*?\)", "", r[0]).strip() in m.group(1)]
+print("provisional rows:", [r[0] for r in prov])
+if not prov:
+    die("FAIL: no allow-matrix row matched the provisional list")
+
+up = g.unplaced()
+fails = []
+if len(up) != 1:
+    die(f"FAIL: expected one grouping outside both trust domains labelled 'placement not yet recorded', got {up}")
+grp = up[0]
+glab = g.nodes[grp]
+print(f"unplaced grouping {grp}: {glab!r}")
+gl = glab.lower()
+for r in prov:
+    dest = norm(re.sub(r"\(.*?\)", "", r[0].split("→")[1])).lower()
+    role = norm(re.sub(r"\(.*?\)", "", r[1])).lower()
+    cands = {dest, dest.split()[0], role}
+    if not any(c and c in gl for c in cands):
+        fails.append(f"provisional row {r[0]!r} (role {r[1]!r}): its destination is not in the unplaced grouping")
+# the grouping must not hold placed components (the rows of placed components are not provisional)
+for placed in ("spire", "otel", "collector"):
+    if placed in gl:
+        fails.append(f"unplaced grouping names a placed component: {placed}")
+
+intra = [lab for (s, k, lab, t) in g.edges
+         for td in g.trust_domains() if s in g.data_plane(td) and t in g.mgmt_plane(td)]
+into = [(s, lab) for (s, k, lab, t) in g.edges if t == grp]
+print("edges into grouping:", into)
+if not into:
+    fails.append("no edge into the unplaced grouping")
+for s, lab in into:
+    l = lab.lower()
+    same = lab in intra or ("same rule" in l and "zt-55" in l and re.search(r"allow[- ]matrix", l) and "both layers" in l)
+    if not same:
+        fails.append(f"edge {s}->{grp} does not carry the intra-zone rule: {lab!r}")
+if fails:
+    die("FAIL:\n  " + "\n  ".join(fails))
+print("PASS: unplaced components drawn outside both domains, match the provisional rows, edges carry the same rule")

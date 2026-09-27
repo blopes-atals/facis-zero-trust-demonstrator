@@ -1,0 +1,47 @@
+#!/usr/bin/env python3
+# scenario: staleness-windows / The introduction is read for the meaning of the Test column
+# level: L1
+# requirement: Every row names the test that proves it
+import os, re, sys, glob
+sys.path.insert(0, os.path.join(os.environ.get("EVAL_ROOT", "."), "evals/lib"))
+from diagram03 import *
+
+md = read(ARCH)
+stale = prose_before_table(section(md, "Staleness matrix")).lower()
+allow = prose_before_table(section(md, "Allow matrix")).lower()
+print("staleness intro:", stale)
+fails = []
+clauses = {
+    "states what the Test column names (the scenario tag proving each row's window)":
+        r"test column names the scenario tag that proves each row'?s window",
+    "in the form the acceptance harness requires":
+        r"in the form the acceptance harness requires",
+    "a tag is named even where its scenario is not yet written":
+        r"tag is named[^.]*even where its scenario is not yet written",
+    "the traceability sheet reports such a row as uncovered":
+        r"traceability sheet reports the row as uncovered",
+}
+for name, rx in clauses.items():
+    if not re.search(rx, stale):
+        fails.append(f"staleness introduction does not state: {name}")
+# same terms as the allow matrix's introduction
+for name, rx in clauses.items():
+    arx = rx.replace(r"each row'?s window", r"each row")
+    if not re.search(arx, allow):
+        print(f"note: allow-matrix intro lacks {name!r}; cannot compare that clause")
+        continue
+m_a = re.search(r"the test column names.*?until it exists\.", allow)
+m_s = re.search(r"the test column names.*?until it exists\.", stale)
+if m_a and m_s:
+    a = re.sub(r"\s+", " ", m_a.group(0).replace("each row", "each row's window"))
+    s = re.sub(r"\s+", " ", m_s.group(0))
+    wa, ws = set(re.findall(r"[a-z]+", a)), set(re.findall(r"[a-z]+", s))
+    missing = sorted(wa - ws)
+    print("allow-matrix terms absent from staleness sentence:", missing)
+    if len(missing) > 2:
+        fails.append(f"staleness sentence departs from the allow matrix's terms: missing {missing}")
+else:
+    fails.append("could not locate the Test-column sentence in one of the introductions")
+if fails:
+    die("FAIL:\n  " + "\n  ".join(fails))
+print("PASS: the staleness introduction states what its Test column names in the allow matrix's terms")

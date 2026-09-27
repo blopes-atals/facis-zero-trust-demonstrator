@@ -1,0 +1,7 @@
+# Created by ops-eval — review me.
+# Checks that render diagram 03 download mermaid-cli via npx on first use, hence the long timeout.
+timeout: 600
+setup: ./evals/setup.sh
+teardown: ./evals/teardown.sh
+env: { PYTHONDONTWRITEBYTECODE: "1" }
+# agentic: { trials: 3, cli: claude }

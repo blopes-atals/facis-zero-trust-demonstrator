@@ -1,0 +1,62 @@
+#!/usr/bin/env python3
+# scenario: staleness-windows / A row names a scenario that does not exist yet
+# level: L2
+# requirement: Every row names the test that proves it
+# Builds the repository's traceability generator (cmd/bddreport) and feeds it a cucumber-JSON
+# report synthesised from the real feature files' tags; rows whose scenario is unwritten must be
+# reported uncovered.
+import os, re, sys, glob
+sys.path.insert(0, os.path.join(os.environ.get("EVAL_ROOT", "."), "evals/lib"))
+from diagram03 import *
+import json, subprocess, shutil
+
+tmp = os.environ.get("EVAL_TMP") or die("EVAL_TMP not set", 2)
+if not shutil.which("go"):
+    die("UNVERIFIABLE: go toolchain not available to build cmd/bddreport", 77)
+rows = staleness_rows()
+scen = feature_scenarios()
+alltags = {t for s in scen for t in s[2] + s[4]}
+unwritten = []
+fails = []
+for art, tags in rows:
+    zt = [t for t in tags if re.fullmatch(r"@ZT-\d+", t)]
+    if not zt:
+        fails.append(f"row {art!r} names no requirement tag")
+    elif zt[0] not in alltags:
+        unwritten.append((art, zt[0][1:]))
+print("rows with no written scenario:", unwritten)
+if not unwritten:
+    print("PASS (vacuous): every row's scenario exists"); sys.exit(0)
+
+feats = {}
+for path, fname, ftags, sname, stags in scen:
+    f = feats.setdefault(path, {"uri": os.path.relpath(path, ROOT), "name": fname,
+                                "tags": [{"name": t} for t in ftags], "elements": []})
+    f["elements"].append({"type": "scenario", "name": sname, "tags": [{"name": t} for t in ftags + stags]})
+rep = os.path.join(tmp, "report.json")
+json.dump(list(feats.values()), open(rep, "w"))
+env = dict(os.environ, GOCACHE=os.path.join(tmp, "gocache"), GOPROXY="off", GOFLAGS="")
+b = subprocess.run(["go", "build", "-o", os.path.join(tmp, "bddreport"), "./cmd/bddreport"],
+                   cwd=ROOT, env=env, capture_output=True, text=True)
+if b.returncode:
+    die("UNVERIFIABLE: cannot build cmd/bddreport offline:\n" + b.stderr[-800:], 77)
+out = os.path.join(tmp, "bdd")
+r = subprocess.run([os.path.join(tmp, "bddreport"), "--rows", os.path.join(ROOT, "features/annex-rows.txt"),
+                    "--out", out, rep], cwd=ROOT, capture_output=True, text=True)
+print("bddreport:", r.stdout.strip(), r.stderr.strip())
+if r.returncode:
+    die(f"FAIL: bddreport exited {r.returncode}")
+sheet = {}
+for line in read(os.path.join(out, "traceability.csv")).splitlines()[1:]:
+    c = line.split(",")
+    sheet[c[0]] = c[1]
+for art, rid in unwritten:
+    got = sheet.get(rid)
+    print(f"  {rid} ({art}): covered={got}")
+    if got is None:
+        fails.append(f"{rid} named by row {art!r} is not a row of the traceability sheet at all")
+    elif got != "no":
+        fails.append(f"{rid} named by row {art!r} is reported covered ({got}) though no scenario exists")
+if fails:
+    die("FAIL:\n  " + "\n  ".join(fails))
+print("PASS: every row without a scenario still names its tag and appears as a gap in the generated sheet")

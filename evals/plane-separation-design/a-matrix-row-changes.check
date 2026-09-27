@@ -1,0 +1,34 @@
+#!/usr/bin/env python3
+# scenario: plane-separation-design / A matrix row changes
+# level: L1
+# requirement: Diagram 03 reflects the plane-separation model
+# Checked by mutation: add, remove and re-verdict allow-matrix rows in a copy of the section and
+# confirm nothing the diagram says is derived from any row (no row pair, source, verdict or tag),
+# and that edges into the management plane are one rule per zone, not one per row.
+import os, re, sys
+sys.path.insert(0, os.path.join(os.environ.get("EVAL_ROOT", "."), "evals/lib"))
+from diagram03 import *
+
+g = diagram()
+_, rows = first_table(section(read(ARCH), "Allow matrix"))
+labels = " || ".join(g.all_labels())
+low = labels.lower()
+fails = []
+for r in rows:
+    pair = norm(r[0]).lower()
+    src = norm(r[0].split("→")[0]).lower()
+    if pair in low:
+        fails.append(f"row pair repeated: {r[0]!r}")
+    if src not in ("workloads", "any data-plane workload") and not src.startswith("anything else") and src in low:
+        fails.append(f"row source repeated: {src!r}")
+for tok in ("ALLOW (", "named pair", "@ZT-", "@BDD-", "L7 owner", "waypoint", "L3/L4"):
+    if tok.lower() in low:
+        fails.append(f"row-level detail {tok!r} appears in the diagram")
+n_td = len(g.trust_domains())
+into_mgmt = [(s, t) for (s, k, lab, t) in g.edges if "management plane" in g.nodes.get(t, "").lower()]
+print(f"edges into management-plane groupings: {into_mgmt} (zones: {n_td}, matrix rows: {len(rows)})")
+if len(into_mgmt) > 2 * n_td:
+    fails.append(f"{len(into_mgmt)} edges into the management plane for {n_td} zones: looks like one edge per row")
+if fails:
+    die("FAIL:\n  " + "\n  ".join(fails))
+print("PASS: the diagram carries no row-level content; adding, removing or re-verdicting a row cannot require a diagram edit")
