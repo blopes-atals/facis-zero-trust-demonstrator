@@ -208,7 +208,7 @@ if load "allow matrix" "Allow matrix" &&
     if [[ "$role" == "any management-plane destination"* ]]; then
       catch_all=1
       # The management components the catch-all names by example are management-plane
-      # destinations as much as the five roles are.
+      # destinations as much as the bound roles are.
       allow_destinations+="$row"$'\n'
       if [ "$verdict" != DENY ] || [ "$np" != DENY ] || [ "$mesh" != DENY ]; then
         fail "allow matrix row '$row': catch-all row is not denied at both layers"
