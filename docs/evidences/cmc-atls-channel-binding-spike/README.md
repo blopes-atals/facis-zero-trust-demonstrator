@@ -28,5 +28,10 @@ The pin itself is recorded in the architecture decision record `docs/adr/0010-�
 
 ## Status
 
-Empty — artefacts are added as each criterion is proven. Local runs (Docker Compose, test
-scaffold only) and target-cluster runs are kept apart; only target-cluster runs close a criterion.
+Artefacts are added as each criterion is proven. Local runs (Docker Compose, test scaffold only)
+and target-cluster runs are kept apart; only target-cluster runs close a criterion.
+
+| Criterion | Artefacts so far |
+|---|---|
+| 4 — wrapper isolation | `criterion-4-wrapper-isolation/prove-isolation.sh` regenerates `depguard-run.txt` (clean tree passes; throwaway CMC and `atlstest` imports outside `internal/atls` fail and are named) and `atls-test-run.txt` (wrapper tests, plain and under `-race`). The interface is described in [Attested channel control](../../attested-channel.md); it is not yet frozen — freezing waits for criterion 3. |
+| 1–3 | none yet |
