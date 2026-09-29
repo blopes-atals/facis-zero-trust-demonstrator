@@ -30,7 +30,7 @@ and nobody hand-rolls their own:
 | Job | What it does | Blocking |
 |---|---|---|
 | `Go tests` | Calls the shared `go-test.yml`, which runs the tests of every Go module it finds | yes |
-| `Go lint` | `golangci-lint run ./...`, with a pinned golangci-lint built by the Go version `go.mod` names | yes |
+| `Go lint` | `golangci-lint run --config .golangci.yml ./...`, with a pinned golangci-lint built by the Go version `go.mod` names. `.golangci.yml` adds `depguard` to the standard linters: only `internal/atls` may import the CMC attested-TLS library, and the test-only `internal/atls/atlstest` may not be imported from non-test code | yes |
 | `Image build and scan` | Builds each context under `deployment/docker/` for `linux/amd64`, asserts the built image's OS, then scans it with Trivy for HIGH and CRITICAL vulnerabilities | yes |
 | `Chart lint and render` | `helm lint` and a `helm template` dry-run render of every chart under `deployment/helm/` | yes |
 
