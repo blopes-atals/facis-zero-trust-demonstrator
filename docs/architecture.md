@@ -6,10 +6,10 @@
 
 Each trust zone is one cluster and its own SPIFFE trust domain (ZT-24, SRS 3.1.2). The two domains
 meet only through the attested channel and a TRAIN verdict; they are never merged. The
-management-plane components whose placement this section records, the SPIRE server and the
-OpenTelemetry Collector, run in the same cluster as the zone's data-plane workloads and therefore
-inside the zone's trust domain: the separation between the planes is a namespace and policy
-boundary, not an identity boundary. Data-plane calls into the management plane are denied by default
+management-plane components whose placement this section records, the SPIRE server, the
+OpenTelemetry Collector and the CMC daemon (cmcd), run in the same cluster as the zone's data-plane
+workloads and therefore inside the zone's trust domain: the separation between the planes is a
+namespace and policy boundary, not an identity boundary. Data-plane calls into the management plane are denied by default
 at both the NetworkPolicy layer and the mesh AuthorizationPolicy layer, and are permitted only along
 the paths the allow matrix below lists, which are named mTLS pairs and the declared observability
 export under ZT-26 (SRS 3.1.2). The management-plane components whose placement is not yet recorded,
@@ -32,6 +32,15 @@ that implement it in this demonstrator. The allow matrix below lists the permitt
 these roles and refers to the roles by name, so coverage of the five components can be checked here
 before the permitted paths are read.
 
+The table also binds one role ZT-55 does not name: attestation, implemented by CMC. ZT-55
+characterises the management plane with parenthetical examples rather than enumerating it, and its
+operative sentence is that compromise of the data plane must not grant any access to
+management-plane components. CMC is placed in the management plane by that test: cmcd holds the
+zone's attestation keys, enrolled through the estserver, and the pipeline-signed reference metadata
+(ZT-71) that the peer zone's trust decision rests on, so a workload able to alter it could alter
+what the system trusts. It is bound here because the data plane has a permitted path to it, which
+the allow matrix names by role.
+
 Every role in the table below is bound to at least one service; none is unimplemented.
 
 The supply boundary records who provides the software, not who deploys or operates it.
@@ -51,6 +60,7 @@ source — not who supplies the service; see the allow matrix below.
 | SPIRE control plane | SPIRE server and its controller-manager | Project-built | [Workload identity](environments/osc.md#2-workload-identity) |
 | OCM | OCM W-Stack, used by the backend as the credential verification service | Client-supplied | [External XFSC components](dependencies.md#external-xfsc-components) |
 | Observability stack | OpenTelemetry Collector, read through Prometheus and Jaeger | Project-built | [Operations](environments/osc.md#operations) |
+| Attestation | cmcd, the per-zone CMC daemon, and its enrolment server (estserver) | Project-built | [Specifications](specifications.md); [trust boundary between the zones](environments/osc.md#6-the-trust-boundary-between-the-zones) |
 
 ### Allow matrix (data plane → management plane)
 
@@ -88,18 +98,19 @@ row as uncovered until it exists.
 |---|---|---|---|---|
 | PDP adapter → TSA policy engine | Policy Engine | ALLOW (mTLS, named pair) | NetworkPolicy: ALLOW, L3/L4 only; mesh: ALLOW, L7 owner (waypoint) | `@ZT-55 @BDD-ZT-055` |
 | aTLS gateway → TCR resolve | TRAIN (resolution) | ALLOW (named pair) | NetworkPolicy: ALLOW, L3/L4 only; mesh: ALLOW, L7 owner (waypoint) | `@ZT-55 @BDD-ZT-055` |
+| aTLS gateway → cmcd | Attestation (CMC) | ALLOW (named pair) | NetworkPolicy: ALLOW, L3/L4 only; mesh: ALLOW, L7 owner (waypoint) | `@ZT-55 @BDD-ZT-055` |
 | workloads → OTel collector (export only) | Observability stack | ALLOW (declared bypass, ZT-26) | NetworkPolicy: ALLOW, L3/L4 only, egress rule limiting the source to the collector's export port (ZT-26); mesh: ALLOW, L7 owner (waypoint) | `@ZT-55 @BDD-ZT-055` |
 | backend → verification service | OCM | ALLOW (named pair) | NetworkPolicy: ALLOW, L3/L4 only; mesh: ALLOW, L7 owner (waypoint) | `@ZT-55 @BDD-ZT-055` |
 | any data-plane workload → TSPA (trust-list publication) | TRAIN (publication) | **DENY** | NetworkPolicy: DENY; mesh: DENY | `@ZT-55 @BDD-ZT-055` |
 | any data-plane workload → SPIRE server | SPIRE control plane | **DENY** | NetworkPolicy: DENY; mesh: DENY | `@ZT-55 @BDD-ZT-055` |
-| anything else data → management: any management-plane destination without its own row, including other management components (for example ArgoCD, OpenBao, Harbor, estserver, admin APIs) | any management-plane destination not listed above | **DENY** | NetworkPolicy: DENY; mesh: DENY | `@ZT-55 @BDD-ZT-055` |
+| anything else data → management: any management-plane destination without its own row, including a bound service without a row of its own (estserver) and other management components (for example ArgoCD, OpenBao, Harbor, admin APIs) | any management-plane destination not listed above | **DENY** | NetworkPolicy: DENY; mesh: DENY | `@ZT-55 @BDD-ZT-055` |
 
 **Same-cluster assumption.** The layers named above assume that the destination runs in the same
 cluster as the source workload, where both are policies between namespaces. The enforcing
 mechanism follows network topology rather than who supplies a service: a destination in another
 cluster is reached through an egress rule, and one outside the estate through a different control
-again. Placement is recorded for the SPIRE control plane and the observability stack only, so four
-rows are provisional: PDP adapter → TSA policy engine, aTLS gateway → TCR resolve, backend →
+again. Placement is recorded for the SPIRE control plane, the observability stack and attestation
+only, so four rows are provisional: PDP adapter → TSA policy engine, aTLS gateway → TCR resolve, backend →
 verification service, and the denied row any data-plane workload → TSPA. The denied row is
 included because a denial across a cluster boundary rests on a different mechanism than one within
 a cluster. Once their destinations are placed, these rows will also name their egress rule.
@@ -147,6 +158,19 @@ plays in the matrix.
   zones can be established. The gateway initiates; TCR answers and never calls into the data plane
   over this path. The surface is resolution — a peer's hash is looked up, never written.
   Publication, the write side of TRAIN, is a separate row and is denied.
+- **aTLS gateway → cmcd — Attestation (CMC).** The attested channel between the zones requires both
+  ends to present evidence of the software they run, bound to the TLS connection it is presented on
+  ([trust boundary between the zones](environments/osc.md#6-the-trust-boundary-between-the-zones)).
+  That evidence comes from CMC (ZT-31; [specifications](specifications.md)): the SRS grounds the
+  bidirectional remote attestation feature (SRS 5.2) in the CMC aTLS protocol (SRS 2.6.1), and its
+  appendix on attested TLS refers to the REQUIRED CMC daemon (SRS 6). The gateway reaches cmcd to
+  have its own evidence produced and its peer's evidence verified, so without this path it cannot
+  establish attested TLS as ZT-35 (SRS 3.1.3) requires. The gateway initiates; cmcd answers and
+  never calls into the data plane over this path. The surface is attestation only — evidence
+  produced for the gateway and a peer's evidence verified — not the provisioning of cmcd's keys or
+  of the pipeline-signed reference metadata (ZT-71) it checks evidence against. That provisioning
+  runs from the estserver to cmcd inside the management plane, and the estserver stays denied to
+  the data plane by the catch-all row.
 - **workloads → OTel collector — Observability stack.** ZT-27 (SRS 3.1.2) requires events to be
   exported from the cluster in a standard format and names the OpenTelemetry Collector as the
   primary aggregation and export tool, so data-plane workloads must be able to reach the collector.
@@ -198,8 +222,9 @@ plays in the matrix.
   the SPIRE deployment rather than a data-plane workload, is what talks to the server. The path
   this row denies is the one from a workload to the server itself.
 - **anything else data → management — any management-plane destination not listed above.** The
-  five roles ZT-55 (SRS 3.3) names are not the whole management plane: other management components
-  such as ArgoCD, OpenBao, Harbor, estserver and administrative APIs sit there too. This row is what
+  rows above do not name every management-plane destination: the estserver, bound to the
+  attestation role, has no row of its own, and other management components such as ArgoCD, OpenBao,
+  Harbor and administrative APIs are bound to no role at all. This row is what
   makes the matrix a closed statement about the management plane rather than a list of examples:
   every management-plane destination is either named by a row above or denied by this one, and
   none is denied merely by being left out. It is also what the plane-separation test asserts for
@@ -208,52 +233,27 @@ plays in the matrix.
 
 ### Supporting services (outside the management plane)
 
-The data plane also depends on two services that are outside the management plane. ZT-55
-(SRS 3.3) characterises both planes with parenthetical examples rather than enumerating them, and
-its operative sentence states the test: compromise of the data plane must not grant any access to
-management-plane components. A destination is therefore outside the management plane when reaching
-it grants no ability to alter what the system runs, trusts or holds. Absence from the five
-components ZT-55 lists is not the criterion. The catch-all row above denies management components
-that are equally absent from that list, and it can do so without contradicting this subsection
-because both decide by what reaching a destination grants, not by whether its name is on the list.
-Each service below is justified by its own requirement rather than by this category, and none is
-an exception to ZT-55.
-
-Each is permitted explicitly under the same default DENY at both layers as the matrix above, and
-any other destination without a row is denied. They are not all named mTLS pairs: a service whose
-traffic the mesh cannot govern is permitted by a rule at the network layer instead, and its row
-says so. Where the mesh does govern a path, the mesh waypoint is its L7 owner as in the matrix
-above.
-
-These rows are proved by the acceptance families of their own requirements (see the
-[scenario inventory](bdd.md#scenario-inventory)), not by the plane-separation test, so this table
-carries no test column.
-
-This subsection exists because the allow matrix covers destinations in the management plane: a
-permitted destination that is not a management-plane component has nowhere else to be recorded,
-and a reader finding no row for it would apply the catch-all denial to it.
+The allow matrix covers destinations in the management plane, so a permitted destination outside
+it is recorded here; without a row, a reader would apply the catch-all denial to it. A destination
+is outside the management plane when reaching it grants no ability to alter what the system runs,
+trusts or holds, which is the test ZT-55 (SRS 3.3) states. Absence from the components ZT-55 lists
+decides nothing either way: the same test places attestation in the management plane
+([management-plane roles](#management-plane-roles-zt-55)) and drives the catch-all denial. Each
+row is justified by its own requirement, is not an exception to ZT-55, and sits under the same
+default DENY at both layers. A row need not be a named mTLS pair: a service whose traffic the mesh
+cannot govern is permitted at the network layer and says so. These rows are proved by the
+acceptance families of their own requirements ([scenario inventory](bdd.md#scenario-inventory)),
+not by the plane-separation test, so the table has no test column.
 
 | From data-plane workload → | Supporting service | Allowed? | Enforcement (NetworkPolicy; mesh AuthorizationPolicy) |
 |---|---|---|---|
-| aTLS gateway → cmcd | attestation for the aTLS channel | ALLOW (named pair) | NetworkPolicy: ALLOW, L3/L4 only; mesh: ALLOW, L7 owner (waypoint) |
 | workloads → DNS | name-resolution infrastructure | ALLOW (declared bypass, ZT-26) | NetworkPolicy: ALLOW, port 53 only; mesh: not applicable — DNS is not mTLS traffic, so the mesh cannot govern it |
 
-- **aTLS gateway → cmcd — attestation for the aTLS channel.** cmcd is the per-zone attestation
-  service beside the gateway. The attested channel between the zones requires both ends to present
-  evidence of the software they run, bound to the TLS connection it is presented on
-  ([trust boundary between the zones](environments/osc.md#6-the-trust-boundary-between-the-zones)).
-  That evidence comes from CMC (ZT-31; [specifications](specifications.md)): the SRS grounds the
-  bidirectional remote attestation feature (SRS 5.2) in the CMC aTLS protocol (SRS 2.6.1), and its
-  appendix on attested TLS refers to the REQUIRED CMC daemon (SRS 6). cmcd is the per-zone CMC
-  service that receives the pipeline-signed reference metadata (ZT-71) the evidence is checked
-  against. Without this path the gateway cannot establish attested TLS as ZT-35
-  (SRS 3.1.3) requires.
-- **workloads → DNS — name-resolution infrastructure.** DNS is cluster infrastructure. Data-plane
-  workloads reach the destinations permitted above by service name, so without name resolution
-  none of those paths can be used. The path is a declared bypass under ZT-26, in the sense defined
-  above, and is permitted by a NetworkPolicy rule limited to port 53. It is not a named mTLS pair:
-  DNS is not mTLS traffic, so the mesh layer does not apply and the network layer imposes the
-  restriction.
+- **workloads → DNS — name-resolution infrastructure.** Data-plane workloads reach every
+  destination permitted above by service name, so none of those paths works without name
+  resolution. DNS is cluster infrastructure and a declared bypass under ZT-26, in the sense defined
+  above. The mesh cannot govern it because it is not mTLS traffic, so the NetworkPolicy rule
+  limited to port 53 imposes the restriction.
 
 ### Staleness matrix
 

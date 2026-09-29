@@ -13,13 +13,13 @@ flowchart LR
   subgraph TD_A["SPIFFE trust domain zone-a (one cluster)"]
     direction TB
     A1["data plane<br/>workloads with SVIDs"]:::data
-    A2["management plane, placed here:<br/>SPIRE server · OTel collector"]:::mgmt
+    A2["management plane, placed here:<br/>SPIRE server · OTel collector · cmcd"]:::mgmt
     A1 -. "default DENY at both layers (NetworkPolicy · mesh)<br/>crossed only by the ZT-55 allow-matrix paths:<br/>named mTLS pairs · ZT-26 observability export" .-> A2
   end
   subgraph TD_B["SPIFFE trust domain zone-b (one cluster)"]
     direction TB
     B1["data plane<br/>workloads with SVIDs"]:::data
-    B2["management plane, placed here:<br/>SPIRE server · OTel collector"]:::mgmt
+    B2["management plane, placed here:<br/>SPIRE server · OTel collector · cmcd"]:::mgmt
     B1 -. "default DENY at both layers (NetworkPolicy · mesh)<br/>crossed only by the ZT-55 allow-matrix paths:<br/>named mTLS pairs · ZT-26 observability export" .-> B2
   end
   TD_A == "ONLY via attested channel<br/>+ TRAIN verdict" ==> TD_B
