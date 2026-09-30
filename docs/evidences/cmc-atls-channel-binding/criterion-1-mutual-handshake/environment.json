@@ -1,0 +1,12 @@
+{
+  "script": "scripts/atls-probe/prove-c1.sh",
+  "commit": "9c863e67d5ff32475ee991794b42b3aafc7b8a68",
+  "dirty": false,
+  "go_version": "go1.27.0",
+  "cmc_version": "v0.9.15",
+  "cmcd_binary": "github.com/Fraunhofer-AISEC/cmc@v0.9.15",
+  "date": "2026-09-30T10:17:11Z",
+  "host_kind": "local",
+  "os": "Linux 7.0.0-31-generic",
+  "arch": "x86_64"
+}
