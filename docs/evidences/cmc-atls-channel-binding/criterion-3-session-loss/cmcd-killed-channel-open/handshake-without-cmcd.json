@@ -1,0 +1,46 @@
+{
+  "schema": "atls-probe-record/v1",
+  "mode": "client",
+  "role": "dialer",
+  "identities": [
+    "spiffe://b/gateway",
+    "localhost"
+  ],
+  "cert_fingerprint": "a180fb5070aab68d2c856e399c55a4c9df318fd00878e82aab60b155bad750a4",
+  "expected_peer_identity": "spiffe://a/gateway",
+  "cmcd_addr": "127.0.0.1:32557",
+  "connect_addr": "127.0.0.1:43091",
+  "hold_ms": 0,
+  "interval_ms": 1000,
+  "started_at": "2026-09-30T10:17:45.489829127Z",
+  "started_at_unix_ms": 1790763465489,
+  "finished_at": "2026-09-30T10:17:45.499362668Z",
+  "exit_code": 2,
+  "outcome": "refused",
+  "peer_addr": "127.0.0.1:43091",
+  "handshake_started_at": "2026-09-30T10:17:45.49021569Z",
+  "handshake_ms": 9,
+  "refusal": {
+    "sentinel": "ErrPlainTLS",
+    "message": "atls: peer does not speak attested TLS 1.3: the peer left without completing the attestation exchange: atls handshake failed: 127.0.0.1:36402: failed to send handshake complete to 127.0.0.1:43091: failed to send: failed to write length to 127.0.0.1:43091: write tcp 127.0.0.1:36402-\u003e127.0.0.1:43091: write: broken pipe"
+  },
+  "refused_at": "2026-09-30T10:17:45.499304379Z",
+  "refused_at_unix_ms": 1790763465499,
+  "ended_at": "2026-09-30T10:17:45.499304379Z",
+  "ended_at_unix_ms": 1790763465499,
+  "ended": "refused",
+  "heartbeats": {
+    "sent": 0,
+    "received": 0,
+    "max_gap_ms": 0
+  },
+  "application_bytes_sent": 0,
+  "application_bytes_received": 0,
+  "environment": {
+    "commit": "554bdc2c84c71718d0365ed13d984462ab8134e0",
+    "dirty": false,
+    "go_version": "go1.27.0",
+    "cmc_version": "v0.9.15",
+    "platform": "linux/amd64"
+  }
+}
