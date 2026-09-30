@@ -159,6 +159,56 @@ CMC's default build links every TEE driver, and the SGX driver needs cgo. A bina
 `CGO_ENABLED=0` must use the build tags `nodefaults,grpc`. They keep only the gRPC attester and
 drop the in-process backend and the TEE drivers from the binary.
 
+## Session loss: what each end observes
+
+The session-loss proof (`scripts/atls-probe/prove-c3.sh`) runs two probe processes over this
+interface, each with the real `cmcd` of its zone, and takes one thing away at a time. Its findings
+are in
+[reconnect-findings.md](evidences/cmc-atls-channel-binding/criterion-3-session-loss/reconnect-findings.md).
+The run recorded there is local (one machine, loopback); a run on the target cluster is pending.
+
+| What happens | What the surviving end gets | Refusal sentinel |
+|---|---|---|
+| The peer process is killed while the channel is open | The next `Read` returns `io.EOF` within milliseconds | none — a transport error |
+| This zone's `cmcd` is killed while the channel is open | Nothing. The channel keeps working; the attester is needed only during a handshake | none |
+| A handshake while this zone's `cmcd` is down, or dies during the handshake | The handshake is refused within milliseconds | `ErrAttesterUnavailable` |
+| A handshake while the *peer's* `cmcd` is down, or dies during the handshake | The handshake is refused: "the peer left without completing the attestation exchange" | `ErrPlainTLS` |
+| The peer process is frozen (half-open channel) | No error within 15 s. Writes keep succeeding, reads wait. Only the missing heartbeats of the application show it. After the peer runs again the channel continues | none |
+| A new handshake towards a frozen peer | The handshake is refused after `HandshakeTimeout` | `ErrHandshakeTimeout` |
+| A new handshake towards a peer that is down | The handshake is refused at once | `ErrPeerUnreachable` |
+
+In every scenario a new channel could be opened as soon as the missing process was back.
+
+### Error surfaces the sentinels do not express
+
+These are input for the freeze of this interface. The interface is unchanged by them so far.
+
+1. **Loss of an established channel has no sentinel.** All sentinels describe a refused
+   handshake. After `Dial` or `Accept` has returned, `Read` and `Write` return the errors of
+   `crypto/tls` and `net` as they are. A peer that was killed and a peer that closed the channel in
+   an orderly way both surface as `io.EOF`: Go reports an end of stream at a record boundary as
+   `io.EOF` whether or not the peer sent its closing alert. The owner of the channel cannot tell a
+   crash from a close by the error value.
+2. **A half-open channel is not detected.** The wrapper sets no deadline on a returned connection
+   and has no heartbeat of its own. A frozen peer is invisible at this interface until the owner's
+   own traffic shows it. The operating system's TCP keep-alive does not show it either: the kernel
+   of a frozen process still acknowledges. Detecting it needs an application heartbeat with a read
+   deadline, owned either by the wrapper or by its caller; the freeze must say which. A network
+   partition, where the peer's kernel is unreachable too, was not part of this run.
+3. **A peer whose attester is unavailable is reported as `ErrPlainTLS`.** The end whose `cmcd` is
+   down gets the exact `ErrAttesterUnavailable`. The other end gets `ErrPlainTLS`, which reads as
+   "this peer does not speak attested TLS" although the peer does and merely could not attest. CMC
+   hides the peer's cause (limitation N7 below), so the wrapper cannot name it. The sentinel's
+   meaning has to be widened in its description, or a separate sentinel introduced for "the peer
+   aborted the attestation exchange".
+4. **Losing the local `cmcd` is silent until the next handshake.** An open channel gives no sign
+   of it. With a channel rotation every 15 minutes, a dead `cmcd` is first noticed when the
+   rotation fails with `ErrAttesterUnavailable`, while the old channel is still usable until its
+   `ValidUntil`. Noticing it earlier is a health check on `cmcd`, outside this interface.
+5. **A refusal returned by `Accept` does not identify the peer.** `*atls.Error` carries the
+   sentinel, the reason and the cause, but no remote address. A listener can attribute a refusal
+   to a peer only through the text of the cause.
+
 ## Known CMC v0.9.15 limitations
 
 The wrapper is built around the following behaviour of CMC v0.9.15. Findings marked *tested* are
