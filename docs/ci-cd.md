@@ -22,6 +22,7 @@ and is declared as such in [Specification changes](specifications.md#readings-an
 | `.github/workflows/ci.yml` | every pull request, push to `main`, manual | Go lint and tests, image build with the Linux assertion and a Trivy scan, chart lint and dry-run render |
 | `.github/workflows/release.yml` | manual, push to a `candidate/**` branch | Release candidate: builds, pushes, signs and attests every image by digest, then verifies each one (see [Image signing](#image-signing)) |
 | `.github/workflows/measurement-determinism.yml` | pull request and push to `main` touching the check, manual | Measures one fixture on a hosted runner, in a container, and on a deliberately divergent checkout, and requires the normalised measurement to be the same on all three |
+| `.github/workflows/atls-channel-binding.yml` | pull requests touching the attested channel, its probe or its proof scripts; manual | Re-runs the three attested-channel proofs (`scripts/atls-probe/`) as plain processes, uploads the run's records and writes the verdicts to the job summary. It never writes the committed evidence |
 
 ## The service pipeline
 
