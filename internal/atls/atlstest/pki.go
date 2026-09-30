@@ -4,6 +4,11 @@
 //
 // It is for tests only. Every constructor panics outside a test binary, and a depguard rule
 // refuses imports of this package from non-test files.
+//
+// Two tests of this package do nothing unless asked through the environment, and exist for the
+// proofs that run the channel against real cmcd processes (scripts/atls-probe): TestWriteFixtures
+// writes two zones' material to the directory ATLS_FIXTURE_DIR names, and TestCmcdReports checks
+// the cmcd processes listed in ATLS_FIXTURE_CMCD_CHECK.
 package atlstest
 
 import (
@@ -45,13 +50,19 @@ type PKI struct {
 func NewPKI(t testing.TB) *PKI {
 	mustTest()
 	t.Helper()
+	return newPKI(t, "atlstest zone CA")
+}
+
+// newPKI creates a CA named commonName, valid for one hour.
+func newPKI(t testing.TB, commonName string) *PKI {
+	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatalf("atlstest: CA key: %v", err)
 	}
 	tmpl := &x509.Certificate{
 		SerialNumber:          big.NewInt(1),
-		Subject:               pkix.Name{CommonName: "atlstest zone CA"},
+		Subject:               pkix.Name{CommonName: commonName},
 		NotBefore:             time.Now().Add(-time.Minute),
 		NotAfter:              time.Now().Add(time.Hour),
 		IsCA:                  true,
@@ -69,7 +80,7 @@ func NewPKI(t testing.TB) *PKI {
 	pool := x509.NewCertPool()
 	pool.AddCert(ca)
 	file := filepath.Join(t.TempDir(), "ca.pem")
-	if err := os.WriteFile(file, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o600); err != nil {
+	if err := os.WriteFile(file, certPEM(der), 0o600); err != nil {
 		t.Fatalf("atlstest: write CA: %v", err)
 	}
 	return &PKI{CA: ca, Pool: pool, key: key, CAFile: file, swStorage: filepath.Join(t.TempDir(), "sw")}
@@ -82,6 +93,19 @@ type certOptions struct {
 	key       crypto.Signer
 	notBefore time.Time
 	notAfter  time.Time
+}
+
+// PEM encodings of a certificate and of a private key (PKCS #8), as files on disk hold them.
+func certPEM(der []byte) []byte {
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+}
+
+func keyPEM(key crypto.PrivateKey) ([]byte, error) {
+	der, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		return nil, err
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}), nil
 }
 
 // WithKey issues the certificate for key instead of a fresh P-256 key.
