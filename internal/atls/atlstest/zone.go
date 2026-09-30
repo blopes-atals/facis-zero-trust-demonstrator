@@ -85,24 +85,7 @@ func NewZone(t testing.TB, pki *PKI, name string, opts ...ZoneOption) *Zone {
 	if err := os.MkdirAll(storage, 0o700); err != nil {
 		t.Fatalf("atlstest: storage: %v", err)
 	}
-	z.lib = &cmc.Config{
-		Drivers:          []string{"sw"},
-		Ctr:              true,
-		CtrDriver:        "sw",
-		HashAlg:          "SHA-256",
-		Api:              "libapi",
-		Storage:          storage,
-		Cache:            filepath.Join(dir, "cache"),
-		RootCas:          []string{pki.CAFile},
-		MetadataLocation: []string{"file://" + metadata},
-		// NewCmc requires an endorser and an enroller. The sw driver uses neither; "direct"
-		// contacts vendors only for TDX/SNP, and the enrollment address is never reached
-		// because TLS keys come from tls.Config.
-		EndorsementMode: "direct",
-		VendorCache:     filepath.Join(dir, "vendor-cache"),
-		EnrollmentMode:  "est",
-		EnrollmentAddr:  "https://127.0.0.1:1/never-contacted",
-	}
+	z.lib = swConfig("libapi", storage, dir, []string{pki.CAFile}, metadata)
 	// Create the CMC once: provisions the sw attestation key on disk and serves the stand-in.
 	proverMu.Lock()
 	c, err := cmc.NewCmc(z.lib)
@@ -112,6 +95,31 @@ func NewZone(t testing.TB, pki *PKI, name string, opts ...ZoneOption) *Zone {
 	}
 	z.c = c
 	return z
+}
+
+// swConfig is the CMC configuration of a zone attesting with the sw driver (mock evidence, no
+// TEE): signed metadata read from the directory metadata, trust anchors rootCas, the sw
+// attestation key kept in storage, caches under dir. api selects how the CMC is reached:
+// "libapi" in process, "grpc" for a cmcd.
+func swConfig(api, storage, dir string, rootCas []string, metadata string) *cmc.Config {
+	return &cmc.Config{
+		Drivers:          []string{"sw"},
+		Ctr:              true,
+		CtrDriver:        "sw",
+		HashAlg:          "SHA-256",
+		Api:              api,
+		Storage:          storage,
+		Cache:            filepath.Join(dir, "cache"),
+		RootCas:          rootCas,
+		MetadataLocation: []string{"file://" + metadata},
+		// NewCmc requires an endorser and an enroller. The sw driver uses neither; "direct"
+		// contacts vendors only for TDX/SNP, and the enrollment address is never reached
+		// because TLS keys come from tls.Config.
+		EndorsementMode: "direct",
+		VendorCache:     filepath.Join(dir, "vendor-cache"),
+		EnrollmentMode:  "est",
+		EnrollmentAddr:  "https://127.0.0.1:1/never-contacted",
+	}
 }
 
 // LibAPIConfig returns the zone's in-process CMC configuration, for tests that drive CMC's
