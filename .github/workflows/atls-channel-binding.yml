@@ -23,8 +23,8 @@ jobs:
     name: Attested channel proofs
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    env:
-      EVIDENCE: ${{ runner.temp }}/evidence
+    # The records go to the runner's temp directory, outside the checkout ($RUNNER_TEMP is set in
+    # every step's shell; the runner context is not available in a job-level env).
     steps:
       - name: Checkout repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -36,20 +36,20 @@ jobs:
           go-version-file: go.mod
 
       - name: Criterion 1 - mutual handshake, identical binding
-        run: scripts/atls-probe/prove-c1.sh --out "$EVIDENCE"
+        run: scripts/atls-probe/prove-c1.sh --out "$RUNNER_TEMP/evidence"
 
       # The later proofs run even when an earlier one failed, so the summary shows every verdict.
       - name: Criterion 2 - a report bound to another session is refused
         if: ${{ !cancelled() }}
-        run: scripts/atls-probe/prove-c2.sh --out "$EVIDENCE"
+        run: scripts/atls-probe/prove-c2.sh --out "$RUNNER_TEMP/evidence"
 
       - name: Criterion 3 - session loss recorded per scenario
         if: ${{ !cancelled() }}
-        run: scripts/atls-probe/prove-c3.sh --out "$EVIDENCE"
+        run: scripts/atls-probe/prove-c3.sh --out "$RUNNER_TEMP/evidence"
 
       - name: Write the verdicts to the job summary
         if: ${{ !cancelled() }}
-        run: scripts/atls-probe/summary.sh "$EVIDENCE" >> "$GITHUB_STEP_SUMMARY"
+        run: scripts/atls-probe/summary.sh "$RUNNER_TEMP/evidence" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload this run's records
         if: ${{ !cancelled() }}
