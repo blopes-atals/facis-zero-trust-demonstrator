@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# Shared by prove-c1.sh, prove-c2.sh and prove-c3.sh. Source it; do not run it.
+# Shared by prove-mutual-handshake.sh, prove-tampered-binding.sh and prove-session-loss.sh. Source it; do not run it.
 #
 # It builds cmcd (the CMC version pinned in go.mod) and the probe, generates the two zones'
 # fixtures, runs one cmcd per zone as a plain process, and collects records, logs, the verdict
@@ -44,7 +44,7 @@ now_ms() {
 # --- arguments ----------------------------------------------------------------------------
 
 # parse_args DEFAULT_FOLDER "$@"
-#   --out DIR      write the evidence to DIR (default: the criterion's folder in the repository)
+#   --out DIR      write the evidence to DIR (default: the proof's folder in the repository)
 #   --verify DIR   run no process: check the records already in DIR and print the verdict
 parse_args() {
 	local default=$1

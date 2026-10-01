@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regenerates the criterion-4 evidence: the import guard, the wrapper test run and the freeze of
+# Regenerates the wrapper-isolation evidence: the import guard, the wrapper test run and the freeze of
 # the wrapper's exported API at v1.
 #
 #   depguard-run.txt   golangci-lint on the clean tree, then with throwaway imports of CMC and of

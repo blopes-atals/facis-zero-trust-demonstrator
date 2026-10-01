@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Criterion 1 — two processes complete a mutually attested handshake and derive the same
+# Proof — two processes complete a mutually attested handshake and derive the same
 # channel binding.
 #
 # Runs one cmcd per zone and a probe server (zone a) and client (zone b) as separate processes.
 # Passes only when both records show an established channel with verdict "success", each end saw
 # the certificate of the expected peer, and both hold the same 32-byte RFC 9266 binding.
 #
-# Usage: prove-c1.sh [--out DIR] [--verify DIR]
-#   --out DIR      write the evidence to DIR/criterion-1-mutual-handshake
+# Usage: prove-mutual-handshake.sh [--out DIR] [--verify DIR]
+#   --out DIR      write the evidence to DIR/mutual-handshake
 #                  (default: docs/evidences/cmc-atls-channel-binding/)
 #   --verify DIR   run nothing; check the records already in DIR
 #
@@ -16,7 +16,7 @@ set -euo pipefail
 # shellcheck source=scripts/atls-probe/lib.sh
 source "$(dirname "$0")/lib.sh"
 
-# verdict DIR: the checks of criterion 1 over the records in DIR.
+# verdict DIR: the checks of this proof over the records in DIR.
 verdict() {
 	local dir=$1 server=$1/server.json client=$1/client.json
 	check "the server returned an established channel with verdict success" \
@@ -51,8 +51,8 @@ verdict() {
 		'[., $peer[0]] | all(.application_bytes_sent > 0 and .application_bytes_received > 0)'
 }
 
-parse_args criterion-1-mutual-handshake "$@"
-title="Criterion 1 — mutual attested handshake, identical binding"
+parse_args mutual-handshake "$@"
+title="Mutual attested handshake, identical binding"
 if [ -n "$verify_only" ]; then
 	verdict "$out"
 	conclude "$title"
