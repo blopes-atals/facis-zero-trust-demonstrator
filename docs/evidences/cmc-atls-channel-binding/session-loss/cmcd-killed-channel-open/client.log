@@ -1,4 +1,4 @@
-2026-10-01T08:19:35.116Z atls-probe: dialing 127.0.0.1:27515 through cmcd 127.0.0.1:44737, expecting spiffe://a/gateway
-time="2026-10-01T07:19:35-01:00" level=info msg="Client-side aTLS connection complete" service=atls
-2026-10-01T08:19:35.129Z atls-probe: session 0 established with 127.0.0.1:27515: binding a6326b7acd798ded7fe854a69219c8fe21e65b7b3a5229671d45444ba00a05f3, peer e30475f9869e219f1d0ff5e66ca7b1d06b4ec946932122ccfb2cd7a933ebc236, verdict success, valid until 2026-10-01T08:34:35Z
-2026-10-01T08:19:45.698Z atls-probe: session 0 ended (signal) after 10.568s
+2026-10-01T09:52:00.606Z atls-probe: dialing 127.0.0.1:26833 through cmcd 127.0.0.1:42037, expecting spiffe://a/gateway
+time="2026-10-01T08:52:00-01:00" level=info msg="Client-side aTLS connection complete" service=atls
+2026-10-01T09:52:00.620Z atls-probe: session 0 established with 127.0.0.1:26833: binding 4c68cbbc248b8f6e01c63efa0d46417e848bb479a08a21fce23f7260353a756d, peer 4e87601716462f54f531d28e2b82c63397df7cc0c8f45f69b75211495225185e, verdict success, valid until 2026-10-01T10:07:00Z
+2026-10-01T09:52:11.217Z atls-probe: session 0 ended (signal) after 10.597s
