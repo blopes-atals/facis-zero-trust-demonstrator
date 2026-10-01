@@ -35,17 +35,17 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Criterion 1 - mutual handshake, identical binding
-        run: scripts/atls-probe/prove-c1.sh --out "$RUNNER_TEMP/evidence"
+      - name: Mutual handshake, identical binding
+        run: scripts/atls-probe/prove-mutual-handshake.sh --out "$RUNNER_TEMP/evidence"
 
       # The later proofs run even when an earlier one failed, so the summary shows every verdict.
-      - name: Criterion 2 - a report bound to another session is refused
+      - name: A report bound to another session is refused
         if: ${{ !cancelled() }}
-        run: scripts/atls-probe/prove-c2.sh --out "$RUNNER_TEMP/evidence"
+        run: scripts/atls-probe/prove-tampered-binding.sh --out "$RUNNER_TEMP/evidence"
 
-      - name: Criterion 3 - session loss recorded per scenario
+      - name: Session loss recorded per scenario
         if: ${{ !cancelled() }}
-        run: scripts/atls-probe/prove-c3.sh --out "$RUNNER_TEMP/evidence"
+        run: scripts/atls-probe/prove-session-loss.sh --out "$RUNNER_TEMP/evidence"
 
       - name: Write the verdicts to the job summary
         if: ${{ !cancelled() }}
