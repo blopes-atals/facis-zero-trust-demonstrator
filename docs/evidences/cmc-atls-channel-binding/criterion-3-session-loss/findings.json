@@ -5,7 +5,7 @@
     "surviving_end": "client",
     "error": "read: EOF",
     "classification": "transport (eof), no sentinel",
-    "time_to_detect": "3 ms",
+    "time_to_detect": "4 ms",
     "reconnect": "while the server is down: refused, ErrPeerUnreachable; after restarting it: established in 14 ms, verdict success"
   },
   {
@@ -14,53 +14,53 @@
     "surviving_end": "server",
     "error": "read: EOF",
     "classification": "transport (eof), no sentinel",
-    "time_to_detect": "4 ms",
+    "time_to_detect": "3 ms",
     "reconnect": "a new client against the surviving server: established in 15 ms, verdict success"
   },
   {
     "scenario": "cmcd-killed-channel-open",
     "from_established_channel": true,
     "surviving_end": "server and client (open channel)",
-    "error": "no error observed within 8 s; the open channel keeps working (heartbeats received: server 2 to 11, client 2 to 10)",
+    "error": "no error observed within 8 s; the open channel keeps working (heartbeats received: server 3 to 11, client 2 to 10)",
     "classification": "none",
     "time_to_detect": "not detected",
-    "reconnect": "not needed for the open channel; a new one after restarting cmcd: established in 15 ms, verdict success"
+    "reconnect": "not needed for the open channel; a new one after restarting cmcd: established in 22 ms, verdict success"
   },
   {
     "scenario": "cmcd-killed-channel-open",
     "from_established_channel": true,
     "surviving_end": "server, zone without cmcd (new handshake)",
-    "error": "atls: local attester unavailable: the local attester could not be reached or failed: atls handshake failed: 127.0.0.1:43091: attestation with peer 127.0.0.1:36402 failed: failed to fetch peer cache: failed to fetch peer cache: rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 127.0.0.1:41043: connect: connection refused\"",
+    "error": "atls: local attester unavailable: the local attester could not be reached or failed: atls handshake failed: 127.0.0.1:27515: attestation with peer 127.0.0.1:55310 failed: failed to fetch peer cache: failed to fetch peer cache: rpc error: code = Unavailable desc = connection error: desc = \"transport: Error while dialing: dial tcp 127.0.0.1:41949: connect: connection refused\"",
     "classification": "sentinel ErrAttesterUnavailable",
-    "time_to_detect": "19 ms",
-    "reconnect": "after restarting cmcd: established in 15 ms, verdict success"
+    "time_to_detect": "21 ms",
+    "reconnect": "after restarting cmcd: established in 22 ms, verdict success"
   },
   {
     "scenario": "cmcd-killed-channel-open",
     "from_established_channel": true,
     "surviving_end": "client, zone with cmcd (new handshake)",
-    "error": "atls: peer does not speak attested TLS 1.3: the peer left without completing the attestation exchange: atls handshake failed: 127.0.0.1:36402: failed to send handshake complete to 127.0.0.1:43091: failed to send: failed to write length to 127.0.0.1:43091: write tcp 127.0.0.1:36402->127.0.0.1:43091: write: broken pipe",
-    "classification": "sentinel ErrPlainTLS",
-    "time_to_detect": "22 ms",
-    "reconnect": "after restarting cmcd: established in 15 ms, verdict success"
+    "error": "atls: peer left before the attestation exchange completed: the peer left without completing the attestation exchange: atls handshake failed: 127.0.0.1:55310: failed to send handshake complete to 127.0.0.1:27515: failed to send: failed to write payload to 127.0.0.1:27515: write tcp 127.0.0.1:55310->127.0.0.1:27515: write: broken pipe",
+    "classification": "sentinel ErrPeerAborted",
+    "time_to_detect": "25 ms",
+    "reconnect": "after restarting cmcd: established in 22 ms, verdict success"
   },
   {
     "scenario": "cmcd-killed-during-handshake",
     "from_established_channel": true,
     "surviving_end": "server, its cmcd died (handshake in flight)",
-    "error": "atls: local attester unavailable: the local attester could not be reached or failed: atls handshake failed: 127.0.0.1:58619: attestation with peer 127.0.0.1:52490 failed: failed to fetch peer cache: failed to fetch peer cache: rpc error: code = Unavailable desc = connection error: desc = \"error reading server preface: connection reset by peer\"",
+    "error": "atls: local attester unavailable: the local attester could not be reached or failed: atls handshake failed: 127.0.0.1:45815: attestation with peer 127.0.0.1:50176 failed: failed to fetch peer cache: failed to fetch peer cache: rpc error: code = Unavailable desc = connection error: desc = \"error reading server preface: connection reset by peer\"",
     "classification": "sentinel ErrAttesterUnavailable",
     "time_to_detect": "6 ms",
-    "reconnect": "after restarting cmcd: established in 15 ms, verdict success"
+    "reconnect": "after restarting cmcd: established in 17 ms, verdict success"
   },
   {
     "scenario": "cmcd-killed-during-handshake",
     "from_established_channel": true,
     "surviving_end": "client, its cmcd is up (handshake in flight)",
-    "error": "atls: peer does not speak attested TLS 1.3: the peer left without completing the attestation exchange: atls handshake failed: 127.0.0.1:52490: failed to send handshake complete to 127.0.0.1:58619: failed to send: failed to write length to 127.0.0.1:58619: write tcp 127.0.0.1:52490->127.0.0.1:58619: write: broken pipe",
-    "classification": "sentinel ErrPlainTLS",
-    "time_to_detect": "8 ms",
-    "reconnect": "after restarting cmcd: established in 15 ms, verdict success"
+    "error": "atls: peer left before the attestation exchange completed: the peer left without completing the attestation exchange: atls handshake failed: 127.0.0.1:50176: failed to send handshake complete to 127.0.0.1:45815: failed to send: failed to write length to 127.0.0.1:45815: write tcp 127.0.0.1:50176->127.0.0.1:45815: write: broken pipe",
+    "classification": "sentinel ErrPeerAborted",
+    "time_to_detect": "9 ms",
+    "reconnect": "after restarting cmcd: established in 17 ms, verdict success"
   },
   {
     "scenario": "cmcd-killed-during-handshake",
@@ -75,19 +75,19 @@
     "scenario": "cmcd-killed-during-handshake-dialer-zone",
     "from_established_channel": true,
     "surviving_end": "client, its cmcd died (handshake in flight)",
-    "error": "atls: local attester unavailable: the local attester could not be reached or failed: atls handshake failed: 127.0.0.1:38766: attestation with peer 127.0.0.1:56582 failed: failed to fetch peer cache: failed to fetch peer cache: rpc error: code = Unavailable desc = connection error: desc = \"error reading server preface: connection reset by peer\"",
+    "error": "atls: local attester unavailable: the local attester could not be reached or failed: atls handshake failed: 127.0.0.1:40918: attestation with peer 127.0.0.1:55270 failed: failed to fetch peer cache: failed to fetch peer cache: rpc error: code = Unavailable desc = connection error: desc = \"error reading server preface: connection reset by peer\"",
     "classification": "sentinel ErrAttesterUnavailable",
-    "time_to_detect": "5 ms",
-    "reconnect": "after restarting cmcd: established in 16 ms, verdict success"
+    "time_to_detect": "6 ms",
+    "reconnect": "after restarting cmcd: established in 20 ms, verdict success"
   },
   {
     "scenario": "cmcd-killed-during-handshake-dialer-zone",
     "from_established_channel": true,
     "surviving_end": "server, its cmcd is up (handshake in flight)",
-    "error": "atls: peer does not speak attested TLS 1.3: the peer left without completing the attestation exchange: atls handshake failed: 127.0.0.1:56582: failed to send handshake complete to 127.0.0.1:38766: failed to send: failed to write length to 127.0.0.1:38766: write tcp 127.0.0.1:56582->127.0.0.1:38766: write: connection reset by peer",
-    "classification": "sentinel ErrPlainTLS",
-    "time_to_detect": "8 ms",
-    "reconnect": "after restarting cmcd: established in 16 ms, verdict success"
+    "error": "atls: peer left before the attestation exchange completed: the peer left without completing the attestation exchange: atls handshake failed: 127.0.0.1:55270: failed to send handshake complete to 127.0.0.1:40918: failed to send: failed to write length to 127.0.0.1:40918: write tcp 127.0.0.1:55270->127.0.0.1:40918: write: broken pipe",
+    "classification": "sentinel ErrPeerAborted",
+    "time_to_detect": "10 ms",
+    "reconnect": "after restarting cmcd: established in 20 ms, verdict success"
   },
   {
     "scenario": "cmcd-killed-during-handshake-dialer-zone",
@@ -102,9 +102,9 @@
     "scenario": "server-frozen",
     "from_established_channel": true,
     "surviving_end": "client",
-    "error": "no error observed within 15 s; its writes still succeed (16 heartbeats sent); the last heartbeat from the peer is 13999 ms old",
+    "error": "no error observed within 15 s; its writes still succeed (16 heartbeats sent); the last heartbeat from the peer is 14000 ms old",
     "classification": "none",
     "time_to_detect": "not detected",
-    "reconnect": "while the server is frozen: refused, ErrHandshakeTimeout; after it runs again: established in 17 ms, verdict success; the frozen channel resumes once the server runs again"
+    "reconnect": "while the server is frozen: refused, ErrHandshakeTimeout; after it runs again: established in 16 ms, verdict success; the frozen channel resumes once the server runs again"
   }
 ]
