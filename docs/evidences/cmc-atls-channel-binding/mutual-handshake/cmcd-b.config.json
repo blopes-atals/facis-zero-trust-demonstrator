@@ -1,6 +1,6 @@
 {
   "logLevel": "info",
-  "cmcAddr": "127.0.0.1:46252",
+  "cmcAddr": "127.0.0.1:25439",
   "endorsementMode": "direct",
   "enrollmentMode": "est",
   "enrollmentAddr": "https://127.0.0.1:1/never-contacted",

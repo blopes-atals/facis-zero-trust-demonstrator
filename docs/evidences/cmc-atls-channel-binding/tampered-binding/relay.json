@@ -6,17 +6,17 @@
     "spiffe://a/gateway",
     "localhost"
   ],
-  "cert_fingerprint": "e3aaeecf6063e88e6df72e8b1c71eacff8fe95666df88a19b98d856109dd1c36",
-  "listen_addr": "127.0.0.1:32564",
+  "cert_fingerprint": "87a400325c29cb7e80a55edebf9f3240fba160f7bff327912d8e441f7bf66382",
+  "listen_addr": "127.0.0.1:55454",
   "hold_ms": 0,
   "interval_ms": 0,
-  "started_at": "2026-09-30T10:17:21.693932412Z",
-  "started_at_unix_ms": 1790763441693,
-  "finished_at": "2026-09-30T10:17:21.823473856Z",
+  "started_at": "2026-10-01T09:51:45.273006481Z",
+  "started_at_unix_ms": 1790848305273,
+  "finished_at": "2026-10-01T09:51:45.29320894Z",
   "exit_code": 0,
   "outcome": "forwarded",
-  "local_addr": "127.0.0.1:32564",
-  "peer_addr": "127.0.0.1:56996",
+  "local_addr": "127.0.0.1:55454",
+  "peer_addr": "127.0.0.1:56896",
   "heartbeats": {
     "sent": 0,
     "received": 0,
@@ -25,48 +25,48 @@
   "application_bytes_sent": 0,
   "application_bytes_received": 0,
   "relay": {
-    "upstream_addr": "127.0.0.1:44043",
+    "upstream_addr": "127.0.0.1:25591",
     "downstream": {
-      "local_addr": "127.0.0.1:32564",
-      "peer_addr": "127.0.0.1:56996",
-      "presented_fingerprint": "e3aaeecf6063e88e6df72e8b1c71eacff8fe95666df88a19b98d856109dd1c36",
+      "local_addr": "127.0.0.1:55454",
+      "peer_addr": "127.0.0.1:56896",
+      "presented_fingerprint": "87a400325c29cb7e80a55edebf9f3240fba160f7bff327912d8e441f7bf66382",
       "presented_identities": [
         "spiffe://a/gateway",
         "localhost"
       ],
-      "peer_fingerprint": "29f59e7658b81c951f5a3396478c2739b5219de0939e52be897840cebfb8b7ef",
+      "peer_fingerprint": "826857ab70690eacdf84c85e19d7a7a72e3cc71b4ae9bd4c6d4e515557822ca9",
       "peer_identities": [
         "spiffe://b/gateway",
         "localhost"
       ],
       "tls_version": "TLS 1.3",
-      "binding": "f1a8c346684954191e33134a90e23268a912efa758905cdf9f13a6868dffae8e"
+      "binding": "dcbaea9b04d8738992d87561ff4161e0813e7528817d2425c2dc23cc30c45f7b"
     },
     "upstream": {
-      "local_addr": "127.0.0.1:54180",
-      "peer_addr": "127.0.0.1:44043",
-      "presented_fingerprint": "9ce366a05a851fbcd82ff8313d76381c87f024f4bf5e6d87eae3987488613231",
+      "local_addr": "127.0.0.1:50534",
+      "peer_addr": "127.0.0.1:25591",
+      "presented_fingerprint": "9ebd728b9a1f01c6c3fe5063c7d90bfdcfd228c547dfe0005a82775f9c90b58c",
       "presented_identities": [
         "spiffe://b/gateway",
         "localhost"
       ],
-      "peer_fingerprint": "6897fa0ab4c19958ba15986de76ebdb3bbc0f06f8222610038c8ba872c24a4d5",
+      "peer_fingerprint": "abbb6cac6b6ac67b624294ca7d8f09a943566d0777ec6c0bfc529853ba2ac131",
       "peer_identities": [
         "spiffe://a/gateway",
         "localhost"
       ],
       "tls_version": "TLS 1.3",
-      "binding": "5ea625dea1382522aa9d6542b52ebb22801db0f9224aa340dfb1f10eea16fbe4"
+      "binding": "bdde3f0afb236d73fe18d1d7e6bc6ab648278981cd214ca1dcc56a642aa66d0b"
     },
     "bindings_differ": true,
     "bytes_dialer_to_listener": 6429,
     "bytes_listener_to_dialer": 6413,
-    "forwarding_started_at": "2026-09-30T10:17:21.81695383Z",
-    "forwarding_ended_at": "2026-09-30T10:17:21.823432448Z",
+    "forwarding_started_at": "2026-10-01T09:51:45.286847797Z",
+    "forwarding_ended_at": "2026-10-01T09:51:45.293180467Z",
     "forwarding_ended_because": "the listener closed its session"
   },
   "environment": {
-    "commit": "9c863e67d5ff32475ee991794b42b3aafc7b8a68",
+    "commit": "cfbc1dcd2b11d39e1f8bce3045b31681f2d546fb",
     "dirty": false,
     "go_version": "go1.27.0",
     "cmc_version": "v0.9.15",
