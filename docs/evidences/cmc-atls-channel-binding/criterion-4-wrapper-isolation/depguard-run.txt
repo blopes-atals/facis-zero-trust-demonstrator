@@ -2,7 +2,7 @@
 
 golangci-lint has version 2.13.2 built with go1.27.0 from (unknown, modified: ?, mod sum: "h1:bCyq3E4vo9qwzifjpzJqYndEt7Ncva80qkk8G2B4TXU=") on (unknown)
 go version go1.27.0 linux/amd64
-tree: 054a5b3721cae3c3e0c93476f55d6feba3a65600
+tree: 09fbd27827f85d1490b1d6c80515501c4ea0003d
 
 ## 1. Clean tree: no package outside internal/atls imports CMC
 $ golangci-lint run ./...
