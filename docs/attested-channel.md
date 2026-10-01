@@ -375,9 +375,6 @@ The run recorded there is local (one machine, loopback); a run on the target clu
 
 In every scenario a new channel could be opened as soon as the missing process was back.
 
-The recorded run predates v1. Its records name `ErrPlainTLS` where the table above says
-`ErrPeerAborted`; the next run of the script records the v1 sentinel.
-
 ### What v1 decided for each error surface
 
 The session-loss proof showed five error surfaces the draft interface did not express. v1 settles
