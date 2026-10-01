@@ -35,7 +35,7 @@ with, and `cmcd-check.log`: each `cmcd` produces reports with metadata, and both
 To check a folder again without running anything: `scripts/atls-probe/prove-mutual-handshake.sh --verify
 docs/evidences/cmc-atls-channel-binding/mutual-handshake` (likewise for the other two).
 
-The pin itself is recorded in the architecture decision record `docs/adr/0010-…`.
+The pin itself is recorded in [ADR-0010](../../adr/0010-session-attestation-through-cmcd.md).
 
 ## Status
 
