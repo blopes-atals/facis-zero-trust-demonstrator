@@ -40,6 +40,9 @@ type PeerAttestation struct {
 	Verdict Verdict
 	// PeerID is the hex SHA-256 fingerprint of the peer's TLS leaf certificate.
 	PeerID string
+	// Identity is the identity the peer's certificate matched: the configured
+	// Config.ExpectedPeerIdentity, a URI SAN or a DNS SAN.
+	Identity string
 	// Measurements are the verified measurements of the peer's evidence.
 	Measurements []Measurement
 	// AttestedAt is when this end received the verification result.

@@ -32,7 +32,9 @@ type Listener struct {
 	once     sync.Once
 }
 
-// Listen listens on the TCP address addr for attested channels.
+// Listen listens on the TCP address addr for attested channels. An invalid cfg is reported as an
+// *Error matching ErrConfig; a failure to open the address is the error of package net, wrapped,
+// and not an *Error.
 func Listen(addr string, cfg Config) (*Listener, error) {
 	p, err := cfg.prepare(roleServer)
 	if err != nil {
@@ -57,9 +59,10 @@ func Listen(addr string, cfg Config) (*Listener, error) {
 	return l, nil
 }
 
-// Accept returns the next attested connection. A refused connection is reported as an error
-// matching one of the refusal sentinels; the listener stays open and Accept can be called again.
-// After Close, Accept returns net.ErrClosed.
+// Accept returns the next attested connection. A refused connection is reported as an *Error
+// matching one of the refusal sentinels and carrying the address of the refused peer; the
+// listener stays open and Accept can be called again. Two errors are not an *Error: ctx.Err()
+// when ctx ends first, and net.ErrClosed after Close.
 func (l *Listener) Accept(ctx context.Context) (*Conn, error) {
 	select {
 	case c := <-l.ready:
@@ -116,15 +119,17 @@ func (l *Listener) handle(raw net.Conn) {
 	defer l.wg.Done()
 	ctx, cancel := l.p.handshakeContext(l.ctx)
 	defer cancel()
+	// Every refusal Accept returns names the transport address of the connection it refused.
+	peer := raw.RemoteAddr()
 
 	if err := l.gate.acquire(ctx, l.p.maxConcurrent); err != nil {
 		_ = raw.Close()
-		l.refused(refuse(ErrHandshakeTimeout, "no handshake slot became free before the deadline", nil))
+		l.refused(attribute(refuse(ErrHandshakeTimeout, "no handshake slot became free before the deadline", nil), peer))
 		return
 	}
 	conn, err := l.handshake(ctx, raw)
 	if err != nil {
-		l.refused(err)
+		l.refused(attribute(err, peer))
 		return
 	}
 	select {

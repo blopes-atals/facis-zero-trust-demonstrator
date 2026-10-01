@@ -26,8 +26,9 @@ import (
 
 var sentinels = []error{
 	atls.ErrNotAttested, atls.ErrBindingMismatch, atls.ErrEvidenceExpired, atls.ErrIdentityMismatch,
-	atls.ErrPlainTLS, atls.ErrAttestModeMismatch, atls.ErrAttesterUnavailable, atls.ErrHandshakeTimeout,
-	atls.ErrPeerRejected, atls.ErrPeerUnreachable, atls.ErrConfig,
+	atls.ErrPlainTLS, atls.ErrPeerAborted, atls.ErrAttestModeMismatch, atls.ErrAttesterUnavailable,
+	atls.ErrHandshakeTimeout, atls.ErrPeerRejected, atls.ErrPeerUnreachable, atls.ErrConfig,
+	atls.ErrChannelLost,
 }
 
 // assertRefusal checks err matches want and no other sentinel, and states a reason in words.
@@ -155,7 +156,9 @@ func TestRelayedReportRefused(t *testing.T) {
 	expectClosed(t, victim)
 }
 
-// 5.3 A plain TLS client is refused as plain TLS.
+// 5.3 A TLS 1.3 client that holds a valid zone certificate and leaves before the attestation
+// exchange completes — a plain TLS client, or a peer whose attester is down — is refused as
+// peer aborted, not as plain TLS.
 func TestPlainTLSClientRefused(t *testing.T) {
 	f := newFixture(t)
 	ln := listen(t, f.b.Config(t, f.a))
@@ -163,7 +166,7 @@ func TestPlainTLSClientRefused(t *testing.T) {
 	c := fakeTLSClient(t, ln.Addr().String(), f.a)
 	recvMsg(t, c) // the server's attestation request, which a plain client does not understand
 	_ = c.Close()
-	assertRefusal(t, (<-acc).err, atls.ErrPlainTLS)
+	assertRefusal(t, (<-acc).err, atls.ErrPeerAborted)
 }
 
 // 5.3 A TLS 1.2-only client is refused even when the caller's tls.Config allows TLS 1.2, and a

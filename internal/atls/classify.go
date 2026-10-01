@@ -130,11 +130,12 @@ var textRules = []textRule{
 		"failed to establish tls connection", // dialer.go, any other TLS failure
 		"TLS handshake failed",               // listener.go, any other TLS failure
 	}},
-	// CMC returns the real cause only when the handshake-complete exchange itself succeeds,
-	// which only an attested-TLS peer does (attestation.go aTlsHandshakeComplete). A peer that
-	// leaves before that exchange, without any attestation result on this side, is a peer that
-	// did not speak the protocol. With a result on this side, see fromTextWith.
-	{kind: ErrPlainTLS, reason: "the peer left without completing the attestation exchange", completeStage: true, patterns: []string{
+	// CMC returns the real cause only when the handshake-complete exchange itself succeeds
+	// (attestation.go aTlsHandshakeComplete). A peer that leaves before that exchange, without
+	// any attestation result on this side, completed TLS 1.3 with a valid zone certificate and
+	// then aborted: its attester is down, or it never spoke attestation. CMC hides which. With a
+	// result on this side, see fromTextWith.
+	{kind: ErrPeerAborted, reason: "the peer left without completing the attestation exchange", completeStage: true, patterns: []string{
 		"failed to send handshake complete",    // attestation.go aTlsHandshakeComplete
 		"failed to receive handshake complete", // attestation.go aTlsHandshakeComplete
 	}},

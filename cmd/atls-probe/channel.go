@@ -23,7 +23,8 @@ import (
 // exchangeTimeout bounds the single heartbeat exchange of a run without --hold.
 const exchangeTimeout = 10 * time.Second
 
-// sentinels are the refusal sentinels of the wrapper, by name.
+// sentinels are the sentinels of the wrapper, by name: the refusals, and ErrChannelLost for an
+// established channel.
 var sentinels = []struct {
 	err  error
 	name string
@@ -33,12 +34,14 @@ var sentinels = []struct {
 	{atls.ErrEvidenceExpired, "ErrEvidenceExpired"},
 	{atls.ErrIdentityMismatch, "ErrIdentityMismatch"},
 	{atls.ErrPlainTLS, "ErrPlainTLS"},
+	{atls.ErrPeerAborted, "ErrPeerAborted"},
 	{atls.ErrAttestModeMismatch, "ErrAttestModeMismatch"},
 	{atls.ErrAttesterUnavailable, "ErrAttesterUnavailable"},
 	{atls.ErrHandshakeTimeout, "ErrHandshakeTimeout"},
 	{atls.ErrPeerRejected, "ErrPeerRejected"},
 	{atls.ErrPeerUnreachable, "ErrPeerUnreachable"},
 	{atls.ErrConfig, "ErrConfig"},
+	{atls.ErrChannelLost, "ErrChannelLost"},
 }
 
 // sentinelName returns the name of the wrapper sentinel err matches, or "".
@@ -51,7 +54,8 @@ func sentinelName(err error) string {
 	return ""
 }
 
-// transportKind names a read or write failure that is not a wrapper refusal.
+// transportKind names the transport error of a read or write failure, also when the wrapper
+// reports it as a lost channel: the wrapper's error still matches its cause.
 func transportKind(err error) string {
 	var alert tls.AlertError
 	var netErr net.Error
@@ -224,9 +228,15 @@ func (p *probe) serve(ctx context.Context, addr string, cfg atls.Config, h *hold
 		}
 		i := rec.NextSession()
 		if err != nil {
-			// A refusal returned by Accept does not say which peer was refused.
 			p.refused(rec, i, err)
-			rec.UpdateSession(i, func(s *record.Session) { s.LocalAddr = ln.Addr().String() })
+			rec.UpdateSession(i, func(s *record.Session) {
+				s.LocalAddr = ln.Addr().String()
+				// A refusal returned by Accept names the address of the refused peer.
+				var refusal *atls.Error
+				if errors.As(err, &refusal) && refusal.Peer != nil {
+					s.PeerAddr = refusal.Peer.String()
+				}
+			})
 			_ = rec.Save()
 			continue
 		}
@@ -414,7 +424,11 @@ func (h *holder) run(ctx context.Context, i int, conn net.Conn) {
 				SinceLastPeerHeartbeatMs: f.at.Sub(lastPeer).Milliseconds(),
 			}
 			if name := sentinelName(f.err); name != "" {
-				e.Kind, e.Sentinel, e.Transport = "sentinel", name, ""
+				e.Kind, e.Sentinel = "sentinel", name
+				// A lost channel keeps the transport error it wraps; no other sentinel has one.
+				if !errors.Is(f.err, atls.ErrChannelLost) {
+					e.Transport = ""
+				}
 			}
 			e.DetectedAt, e.DetectedAtUnixMs = record.Stamp(f.at)
 			s.Error = e
