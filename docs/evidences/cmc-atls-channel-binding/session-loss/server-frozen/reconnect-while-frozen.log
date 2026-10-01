@@ -1,2 +1,2 @@
-2026-10-01T08:20:16.097Z atls-probe: dialing 127.0.0.1:29088 through cmcd 127.0.0.1:44737, expecting spiffe://a/gateway
-2026-10-01T08:20:21.102Z atls-probe: session 0 refused (ErrHandshakeTimeout): atls: handshake timed out: handshake did not finish before the deadline
+2026-10-01T09:52:41.096Z atls-probe: dialing 127.0.0.1:57965 through cmcd 127.0.0.1:42037, expecting spiffe://a/gateway
+2026-10-01T09:52:46.100Z atls-probe: session 0 refused (ErrHandshakeTimeout): atls: handshake timed out: handshake did not finish before the deadline

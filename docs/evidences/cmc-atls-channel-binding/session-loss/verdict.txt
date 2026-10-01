@@ -1,4 +1,4 @@
-Criterion 3 — session loss is recorded per scenario
+Session loss is recorded per scenario
 
 PASS  findings.json and reconnect-findings.md were written
 PASS  server-killed: ran from an established channel and left findings with a reconnect outcome

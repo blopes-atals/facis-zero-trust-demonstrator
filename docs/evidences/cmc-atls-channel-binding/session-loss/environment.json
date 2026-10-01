@@ -1,11 +1,11 @@
 {
-  "script": "scripts/atls-probe/prove-c3.sh",
-  "commit": "7ce53663e3fd01a28657e45f75274a74b0717fcf",
+  "script": "scripts/atls-probe/prove-session-loss.sh",
+  "commit": "65f2f867ad44f2db0082b65e4f94928d5438fb2b",
   "dirty": false,
   "go_version": "go1.27.0",
   "cmc_version": "v0.9.15",
   "cmcd_binary": "github.com/Fraunhofer-AISEC/cmc@v0.9.15",
-  "date": "2026-10-01T08:19:28Z",
+  "date": "2026-10-01T09:51:54Z",
   "host_kind": "local",
   "os": "Linux 7.0.0-34-generic",
   "arch": "x86_64"
