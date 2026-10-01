@@ -3,6 +3,8 @@ package atls
 import (
 	"context"
 	"crypto/tls"
+	"errors"
+	"io"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -41,6 +43,35 @@ func (c *Conn) Peer() PeerAttestation {
 // ConnectionState returns the TLS state of the connection.
 func (c *Conn) ConnectionState() tls.ConnectionState {
 	return c.tls.ConnectionState()
+}
+
+// Read reads from the channel. io.EOF and timeout errors are returned exactly as the connection
+// returns them; any other error is returned as an *Error matching ErrChannelLost that wraps it.
+func (c *Conn) Read(b []byte) (int, error) {
+	n, err := c.Conn.Read(b)
+	return n, c.transportErr("read failed", err)
+}
+
+// Write writes to the channel. Timeout errors are returned exactly as the connection returns
+// them; any other error is returned as an *Error matching ErrChannelLost that wraps it. After a
+// write deadline has expired the TLS session is broken and the channel must be discarded.
+func (c *Conn) Write(b []byte) (int, error) {
+	n, err := c.Conn.Write(b)
+	return n, c.transportErr("write failed", err)
+}
+
+// transportErr classifies an error of an established channel: io.EOF and timeouts stay as they
+// are, so standard-library consumers and the caller's deadlines keep working; everything else
+// is a lost channel.
+func (c *Conn) transportErr(reason string, err error) error {
+	if err == nil || errors.Is(err, io.EOF) {
+		return err
+	}
+	var t interface{ Timeout() bool }
+	if errors.As(err, &t) && t.Timeout() {
+		return err
+	}
+	return &Error{Kind: ErrChannelLost, Reason: reason, Err: err, Peer: c.RemoteAddr()}
 }
 
 // gate caps concurrent handshakes. Waiters give up when their context ends.
@@ -117,33 +148,42 @@ func (p *prepared) cmcOptions(rec *recorder) ([]attestedtls.ConnectionOption[att
 }
 
 // finish applies the verdict rules to a connection CMC completed, resets deadlines, asks the
-// PeerVerifier and computes the binding. It closes the connection on every refusal.
+// PeerVerifier and computes the binding. On every refusal it closes the connection and records
+// the peer's address on the error.
 func (p *prepared) finish(ctx context.Context, tc *tls.Conn, rec *recorder) (*Conn, error) {
+	conn, err := p.accept(ctx, tc, rec)
+	if err != nil {
+		_ = tc.Close()
+		return nil, attribute(err, tc.RemoteAddr())
+	}
+	return conn, nil
+}
+
+// accept is finish without the handling of a refusal.
+func (p *prepared) accept(ctx context.Context, tc *tls.Conn, rec *recorder) (*Conn, error) {
 	cs := tc.ConnectionState()
 	peers := cs.PeerCertificates
 	if len(peers) == 0 {
-		_ = tc.Close()
 		return nil, refuse(ErrNotAttested, "peer presented no certificate", nil)
 	}
 	peer, err := judge(rec, peers[0], p.lifetime, time.Now())
 	if err != nil {
-		_ = tc.Close()
 		return nil, err
 	}
+	// The TLS verification of this connection matched the certificate against p.expected
+	// (verifyPeer); a handshake that got here carries that identity.
+	peer.Identity = p.expected
 	if p.verifier != nil {
 		if err := p.verifier.VerifyPeer(ctx, peer); err != nil {
-			_ = tc.Close()
 			return nil, refuse(ErrPeerRejected, "the peer verifier refused the attested peer", err)
 		}
 	}
 	binding, err := cs.ExportKeyingMaterial(bindingLabel, nil, bindingLen)
 	if err != nil {
-		_ = tc.Close()
 		return nil, refuse(ErrNotAttested, "cannot export the channel binding", textCause(err))
 	}
 	// CMC leaves its handshake deadline on the connection; clear it for the caller.
 	if err := tc.SetDeadline(time.Time{}); err != nil {
-		_ = tc.Close()
 		return nil, refuse(ErrNotAttested, "cannot clear the handshake deadline", textCause(err))
 	}
 	return &Conn{Conn: tc, tls: tc, binding: binding, peer: peer}, nil
@@ -188,10 +228,14 @@ func Dial(ctx context.Context, addr string, cfg Config) (*Conn, error) {
 	select {
 	case d := <-done:
 		if d.err != nil {
+			refusal := classify(d.err, rec, false, ctx)
+			// CMC v0.9.15 returns no connection with an error, so such a refusal carries no
+			// peer address; should it ever return one, close it and name its peer.
 			if d.conn != nil {
+				refusal.Peer = d.conn.RemoteAddr()
 				_ = d.conn.Close()
 			}
-			return nil, classify(d.err, rec, false, ctx)
+			return nil, refusal
 		}
 		return p.finish(ctx, d.conn, rec)
 	case <-ctx.Done():
