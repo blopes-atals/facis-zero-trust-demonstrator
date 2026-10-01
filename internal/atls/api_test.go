@@ -2,12 +2,19 @@ package atls_test
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"go/ast"
+	"go/build"
+	"go/importer"
 	"go/parser"
 	"go/token"
+	"go/types"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -140,6 +147,219 @@ func exportedField(f *ast.Field) bool {
 		}
 	}
 	return false
+}
+
+// apiGolden lists the exported API of package atls as frozen at v1: one line per exported
+// identifier with its signature.
+const apiGolden = "api_v1.txt"
+
+// apiUpdateEnv, set to 1, makes TestExportedAPIFrozen rewrite the listing instead of comparing.
+const apiUpdateEnv = "ATLS_API_UPDATE"
+
+const apiHeader = `# Exported API of internal/atls, frozen at v1: one line per exported identifier.
+# TestExportedAPIFrozen (api_test.go) regenerates this listing from the package and fails when
+# the two differ. A change to the API is deliberate: update docs/attested-channel.md with it
+# (its Stability section states which changes need agreement), then regenerate this file with
+#   ATLS_API_UPDATE=1 go test -run TestExportedAPIFrozen ./internal/atls
+`
+
+// TestExportedAPIFrozen regenerates the listing of the exported API from the non-test files of
+// the package and compares it with the committed one. It fails, naming each difference, when an
+// exported function, method, type, field, constant or sentinel was added, removed or changed.
+func TestExportedAPIFrozen(t *testing.T) {
+	got := exportedAPI(t)
+	if os.Getenv(apiUpdateEnv) == "1" {
+		if err := os.WriteFile(apiGolden, []byte(got), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("%s rewritten; update docs/attested-channel.md with the change", apiGolden)
+		return
+	}
+	data, err := os.ReadFile(apiGolden)
+	if err != nil {
+		t.Fatalf("the v1 listing of the exported API is missing: %v", err)
+	}
+	want := string(data)
+	if got == want {
+		return
+	}
+	wantLines, gotLines := strings.Split(want, "\n"), strings.Split(got, "\n")
+	differences := 0
+	for _, l := range wantLines {
+		if !slices.Contains(gotLines, l) {
+			t.Errorf("only in %s:   %s", apiGolden, l)
+			differences++
+		}
+	}
+	for _, l := range gotLines {
+		if !slices.Contains(wantLines, l) {
+			t.Errorf("only in the package: %s", l)
+			differences++
+		}
+	}
+	if differences == 0 {
+		t.Errorf("%s holds the right lines in another order or form", apiGolden)
+	}
+	t.Fatalf("the exported API of internal/atls differs from its v1 freeze (%s). If the change is "+
+		"intended, update docs/attested-channel.md and regenerate the listing with %s=1; a removal "+
+		"or a changed signature needs agreement first", apiGolden, apiUpdateEnv)
+}
+
+// exportedAPI type-checks the non-test files of the package in the working directory and returns
+// the listing of its exported API: the header, then one sorted line per identifier.
+func exportedAPI(t *testing.T) string {
+	t.Helper()
+	bp, err := build.ImportDir(".", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fset := token.NewFileSet()
+	var files []*ast.File
+	for _, name := range bp.GoFiles {
+		f, err := parser.ParseFile(fset, name, nil, parser.SkipObjectResolution)
+		if err != nil {
+			t.Fatal(err)
+		}
+		files = append(files, f)
+	}
+	exports := exportFiles(t)
+	imp := importer.ForCompiler(fset, "gc", func(path string) (io.ReadCloser, error) {
+		file, ok := exports[path]
+		if !ok {
+			return nil, fmt.Errorf("no export data for %s", path)
+		}
+		return os.Open(file)
+	})
+	pkg, err := (&types.Config{Importer: imp}).Check(modulePath+"/internal/atls", fset, files, nil)
+	if err != nil {
+		t.Fatalf("type-check the package: %v", err)
+	}
+
+	// Types of this package are named bare, all others by their full import path.
+	qual := func(p *types.Package) string {
+		if p == pkg {
+			return ""
+		}
+		return p.Path()
+	}
+	var typ func(types.Type) string
+	// signature renders parameters and results by type only: a parameter name is not API.
+	signature := func(sig *types.Signature) string {
+		tuple := func(tu *types.Tuple, variadic bool) []string {
+			out := make([]string, tu.Len())
+			for i := range tu.Len() {
+				pt := tu.At(i).Type()
+				if variadic && i == tu.Len()-1 {
+					out[i] = "..." + typ(pt.(*types.Slice).Elem())
+					continue
+				}
+				out[i] = typ(pt)
+			}
+			return out
+		}
+		s := "(" + strings.Join(tuple(sig.Params(), sig.Variadic()), ", ") + ")"
+		switch res := tuple(sig.Results(), false); len(res) {
+		case 0:
+		case 1:
+			s += " " + res[0]
+		default:
+			s += " (" + strings.Join(res, ", ") + ")"
+		}
+		return s
+	}
+	typ = func(t types.Type) string {
+		if sig, ok := t.(*types.Signature); ok {
+			return "func" + signature(sig)
+		}
+		return types.TypeString(t, qual)
+	}
+
+	var lines []string
+	add := func(format string, args ...any) { lines = append(lines, fmt.Sprintf(format, args...)) }
+	scope := pkg.Scope()
+	for _, name := range scope.Names() {
+		obj := scope.Lookup(name)
+		if !obj.Exported() {
+			continue
+		}
+		switch o := obj.(type) {
+		case *types.Const:
+			add("const %s %s = %s", name, typ(o.Type()), o.Val().ExactString())
+		case *types.Var:
+			add("var %s %s", name, typ(o.Type()))
+		case *types.Func:
+			add("func %s%s", name, signature(o.Type().(*types.Signature)))
+		case *types.TypeName:
+			if o.IsAlias() {
+				add("type %s = %s", name, typ(types.Unalias(o.Type())))
+				continue
+			}
+			named := o.Type().(*types.Named)
+			switch u := named.Underlying().(type) {
+			case *types.Struct:
+				add("type %s struct", name)
+				for i := range u.NumFields() {
+					switch f := u.Field(i); {
+					case !f.Exported():
+					case f.Embedded():
+						add("type %s struct, embedded %s", name, typ(f.Type()))
+					default:
+						add("type %s struct, %s %s", name, f.Name(), typ(f.Type()))
+					}
+				}
+			case *types.Interface:
+				add("type %s interface", name)
+				for i := range u.NumMethods() {
+					m := u.Method(i)
+					if !m.Exported() {
+						add("type %s interface, unexported methods", name)
+						continue
+					}
+					add("type %s interface, %s%s", name, m.Name(), signature(m.Type().(*types.Signature)))
+				}
+			default:
+				add("type %s %s", name, typ(u))
+			}
+			for i := range named.NumMethods() {
+				m := named.Method(i)
+				if !m.Exported() {
+					continue
+				}
+				sig := m.Type().(*types.Signature)
+				recv := name
+				if _, ptr := sig.Recv().Type().(*types.Pointer); ptr {
+					recv = "*" + name
+				}
+				add("method (%s) %s%s", recv, m.Name(), signature(sig))
+			}
+		}
+	}
+	if len(lines) == 0 {
+		t.Fatal("no exported identifier found")
+	}
+	slices.Sort(lines)
+	return apiHeader + strings.Join(slices.Compact(lines), "\n") + "\n"
+}
+
+// exportFiles maps every package the atls package depends on to the file holding its compiled
+// export data, which the type checker reads instead of the sources of the dependencies.
+func exportFiles(t *testing.T) map[string]string {
+	t.Helper()
+	out, err := exec.Command("go", "list", "-export", "-deps", "-f", "{{if .Export}}{{.ImportPath}}={{.Export}}{{end}}", ".").Output()
+	if err != nil {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			t.Fatalf("go list -export: %v\n%s", err, ee.Stderr)
+		}
+		t.Fatalf("go list -export: %v", err)
+	}
+	files := map[string]string{}
+	for line := range strings.SplitSeq(strings.TrimSpace(string(out)), "\n") {
+		if path, file, ok := strings.Cut(line, "="); ok {
+			files[path] = file
+		}
+	}
+	return files
 }
 
 // TestPinnedVersion: go.mod requires CMC v0.9.15 and does not replace it.
