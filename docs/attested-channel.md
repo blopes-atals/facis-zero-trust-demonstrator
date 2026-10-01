@@ -357,10 +357,10 @@ drop the in-process backend and the TEE drivers from the binary.
 
 ## Session loss: what each end observes
 
-The session-loss proof (`scripts/atls-probe/prove-c3.sh`) runs two probe processes over this
+The session-loss proof (`scripts/atls-probe/prove-session-loss.sh`) runs two probe processes over this
 interface, each with the real `cmcd` of its zone, and takes one thing away at a time. Its findings
 are in
-[reconnect-findings.md](evidences/cmc-atls-channel-binding/criterion-3-session-loss/reconnect-findings.md).
+[reconnect-findings.md](evidences/cmc-atls-channel-binding/session-loss/reconnect-findings.md).
 The run recorded there is local (one machine, loopback); a run on the target cluster is pending.
 
 | What happens | What the surviving end gets | Refusal sentinel |

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Criterion 2 — a tampered binding aborts the handshake.
+# Proof — a tampered binding aborts the handshake.
 #
 # Puts the probe's relay between the client (zone b) and the server (zone a). The relay is an
 # insider: it holds certificates the zone CAs issued for the two gateway identities, so both TLS
@@ -8,8 +8,8 @@
 # part of. Passes only when the relay was in the path and forwarded bytes both ways, both ends
 # refuse the channel with ErrBindingMismatch, and no application data crossed.
 #
-# Usage: prove-c2.sh [--out DIR] [--verify DIR]
-#   --out DIR      write the evidence to DIR/criterion-2-tampered-binding
+# Usage: prove-tampered-binding.sh [--out DIR] [--verify DIR]
+#   --out DIR      write the evidence to DIR/tampered-binding
 #                  (default: docs/evidences/cmc-atls-channel-binding/)
 #   --verify DIR   run nothing; check the records already in DIR
 #
@@ -22,7 +22,7 @@ set -euo pipefail
 # shellcheck source=scripts/atls-probe/lib.sh
 source "$(dirname "$0")/lib.sh"
 
-# verdict DIR: the checks of criterion 2 over the records in DIR.
+# verdict DIR: the checks of this proof over the records in DIR.
 verdict() {
 	local server=$1/server.json client=$1/client.json relay=$1/relay.json end
 
@@ -63,8 +63,8 @@ verdict() {
 		expect "$control/relay.json" '.outcome == "not-relayed" and .relay.bytes_dialer_to_listener == 0 and .relay.bytes_listener_to_dialer == 0'
 }
 
-parse_args criterion-2-tampered-binding "$@"
-title="Criterion 2 — a report bound to another TLS session is refused"
+parse_args tampered-binding "$@"
+title="A report bound to another TLS session is refused"
 if [ -n "$verify_only" ]; then
 	verdict "$out"
 	conclude "$title"
