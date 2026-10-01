@@ -163,6 +163,15 @@ func TestTransportKind(t *testing.T) {
 		if got := transportKind(err); got != want {
 			t.Errorf("transportKind(%v) = %q, want %q", err, got, want)
 		}
+		// The wrapper reports every such error but io.EOF as a lost channel, which still matches
+		// the transport error underneath.
+		lost := &atls.Error{Kind: atls.ErrChannelLost, Reason: "read failed", Err: err}
+		if got := transportKind(lost); got != want {
+			t.Errorf("transportKind(%v) = %q, want %q", lost, got, want)
+		}
+		if got := sentinelName(lost); got != "ErrChannelLost" {
+			t.Errorf("sentinelName(%v) = %q, want ErrChannelLost", lost, got)
+		}
 	}
 }
 

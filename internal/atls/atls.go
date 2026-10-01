@@ -17,6 +17,12 @@
 //
 // Every refusal closes the connection and returns an *Error matching exactly one sentinel.
 //
+// On a returned channel, Read and Write return io.EOF and timeout errors as the connection
+// returns them, and every other error as an *Error matching ErrChannelLost that wraps the cause.
+//
+// The exported API is frozen at v1. api_v1.txt lists it and a test fails when the two differ;
+// docs/attested-channel.md is the contract and states how the API may change.
+//
 // The attester is the zone's cmcd, reached over gRPC at Config.CmcdAddr. The in-process CMC is
 // available to tests only, through package atlstest.
 package atls

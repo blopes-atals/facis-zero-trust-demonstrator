@@ -108,7 +108,9 @@ type IOError struct {
 	// Op is "read" or "write".
 	Op      string `json:"op"`
 	Message string `json:"message"`
-	// Kind is "sentinel" when the error matches a wrapper sentinel, "transport" otherwise.
+	// Kind is "sentinel" when the error matches a wrapper sentinel, "transport" otherwise. A
+	// lost channel (sentinel "ErrChannelLost") names both the sentinel and the transport error
+	// it wraps.
 	Kind      string `json:"kind"`
 	Sentinel  string `json:"sentinel,omitempty"`
 	Transport string `json:"transport,omitempty"`

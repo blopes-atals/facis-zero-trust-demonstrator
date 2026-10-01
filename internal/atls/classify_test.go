@@ -128,8 +128,8 @@ func assertKind(t *testing.T, err error, want error) {
 
 var allSentinels = []error{
 	ErrNotAttested, ErrBindingMismatch, ErrEvidenceExpired, ErrIdentityMismatch, ErrPlainTLS,
-	ErrAttestModeMismatch, ErrAttesterUnavailable, ErrHandshakeTimeout, ErrPeerRejected,
-	ErrPeerUnreachable, ErrConfig,
+	ErrPeerAborted, ErrAttestModeMismatch, ErrAttesterUnavailable, ErrHandshakeTimeout,
+	ErrPeerRejected, ErrPeerUnreachable, ErrConfig, ErrChannelLost,
 }
 
 func TestClassifyNotAttested(t *testing.T) {
@@ -188,13 +188,24 @@ func TestClassifyPlainTLS(t *testing.T) {
 		"atls handshake failed: 127.0.0.1:1: attestation with peer 127.0.0.1:2 failed: prover 127.0.0.1:1: failed to receive attestation request from 127.0.0.1:2: failed to read response: failed to receive message: no length: EOF",
 		// A well-framed message that is not an aTLS request.
 		"atls handshake failed: 127.0.0.1:1: attestation with peer 127.0.0.1:2 failed: API version mismatch. Expected AtlsHandshakeRequest version 1.2.0, got ",
-		// listener.go: a plain TLS client closed; CMC reports only the failed complete exchange.
-		"atls handshake failed: 127.0.0.1:1: failed to send handshake complete to 127.0.0.1:2: failed to send: failed to write payload to 127.0.0.1:2: write tcp 127.0.0.1:1->127.0.0.1:2: write: broken pipe",
 		// TLS version negotiation failure.
 		"TLS handshake failed: tls: client offered only unsupported versions: [303]",
 		"failed to establish tls connection: remote error: tls: protocol version not supported. 1 certificate chain(s) provided: ",
 	} {
 		assertKind(t, Classify(errors.New(msg)), ErrPlainTLS)
+	}
+}
+
+// A peer that completed TLS 1.3 and left before the handshake-complete exchange, with no
+// attestation result on this side. With a result, the same texts are ErrNotAttested
+// (TestClassifyNotAttested).
+func TestClassifyPeerAborted(t *testing.T) {
+	for _, msg := range []string{
+		// listener.go: the peer closed; CMC reports only the failed complete exchange.
+		"atls handshake failed: 127.0.0.1:1: failed to send handshake complete to 127.0.0.1:2: failed to send: failed to write payload to 127.0.0.1:2: write tcp 127.0.0.1:1->127.0.0.1:2: write: broken pipe",
+		"atls handshake failed: 127.0.0.1:1: failed to receive handshake complete from 127.0.0.1:2: failed to read handshake complete: failed to receive message: no length: EOF",
+	} {
+		assertKind(t, Classify(errors.New(msg)), ErrPeerAborted)
 	}
 }
 
