@@ -1,8 +1,8 @@
-# Umbrella chart evidence (2026-09-29T20:29:39Z)
+# Umbrella chart evidence (2026-10-03T17:58:47Z)
 
-Cluster context `kind-ztd`, chart `deployment/helm/ztd` 0.1.0, zone file `deployment/helm/ztd/ci/values.yaml`.
+Cluster context `kind-ztd`, chart `deployment/helm/ztd` 0.1.0, zone file `deployment/helm/ztd/ci/values.yaml` (mesh mode sidecar, the installed baseline), excursion fixture `scripts/verify-umbrella/ambient-values.yaml`.
 
-Tools: helm v4.3.0+gbec5b06, kubectl client v1.35.6. The CI chart job pins Helm v4.3.0.
+Tools: helm v4.3.0+gbec5b06, kubectl client v1.35.0. The CI chart job pins Helm v4.3.0.
 
 Probe results: `200` means the call went through; `denied(28)` means curl gave up after 5 s because the policy dropped the packets.
 
@@ -18,8 +18,8 @@ Probe results: `200` means the call went through; `denied(28)` means curl gave u
 
 ```
 NAME STATUS ROLES AGE VERSION INTERNAL-IP EXTERNAL-IP OS-IMAGE KERNEL-VERSION CONTAINER-RUNTIME
-ztd-control-plane Ready control-plane 4d13h v1.35.5 172.22.0.3 <none> Debian GNU/Linux 13 (trixie) 7.0.0-34-generic containerd://2.3.1
-ztd-worker Ready <none> 4d13h v1.35.5 172.22.0.2 <none> Debian GNU/Linux 13 (trixie) 7.0.0-34-generic containerd://2.3.1
+ztd-control-plane Ready control-plane 7m51s v1.35.5 172.30.0.2 <none> Debian GNU/Linux 13 (trixie) 7.0.0-34-generic containerd://2.3.1
+ztd-worker Ready <none> 7m37s v1.35.5 172.30.0.3 <none> Debian GNU/Linux 13 (trixie) 7.0.0-34-generic containerd://2.3.1
 ```
 
 
@@ -30,7 +30,7 @@ ztd-worker Ready <none> 4d13h v1.35.5 172.22.0.2 <none> Debian GNU/Linux 13 (tri
 ## 2. Install from zero
 
 - PASS: helm upgrade --install from an empty cluster returns 0
-  5s
+  15s
 
 ```
 Release "ztd" does not exist. Installing it now.
@@ -39,8 +39,8 @@ DESCRIPTION: Install complete
 ztd umbrella chart 0.1.0: release ztd in ztd-system, zone kind.
 
 Plane namespaces:
-  - ztd-mgmt  plane=management  istio.io/dataplane-mode=ambient
-  - ztd-data  plane=data  istio.io/dataplane-mode=ambient
+  - ztd-mgmt  plane=management  istio-injection=enabled
+  - ztd-data  plane=data  istio-injection=enabled
 
 Network layer: default-deny in both directions in every plane namespace, the DNS bypass, and
 5 allow-matrix lanes from the data plane into the management plane.
@@ -61,34 +61,38 @@ Evidence: scripts/verify-umbrella/verify.sh
 
 ```
 NAME STATUS AGE PLANE DATAPLANE-MODE ISTIO-INJECTION
-ztd-mgmt Active 5s management ambient 
-ztd-data Active 5s data ambient 
+ztd-mgmt Active 15s management enabled
+ztd-data Active 15s data enabled
 ```
 
 
 ```
 NAMESPACE NAME POD-SELECTOR AGE
-ztd-data allow-atls-gateway-to-cmcd-egress app.kubernetes.io/name=atls-gateway 5s
-ztd-data allow-atls-gateway-to-tcr-egress app.kubernetes.io/name=atls-gateway 5s
-ztd-data allow-backend-to-verification-service-egress app.kubernetes.io/name=backend 5s
-ztd-data allow-dns-egress <none> 5s
-ztd-data allow-intra-plane <none> 5s
-ztd-data allow-pdp-adapter-to-tsa-egress app.kubernetes.io/name=pdp-adapter 5s
-ztd-data allow-workloads-to-otel-collector-egress <none> 5s
-ztd-data default-deny <none> 5s
-ztd-mgmt allow-atls-gateway-to-cmcd-ingress app.kubernetes.io/name=cmcd 5s
-ztd-mgmt allow-atls-gateway-to-tcr-ingress app.kubernetes.io/name=tcr 5s
-ztd-mgmt allow-backend-to-verification-service-ingress app.kubernetes.io/name=verification-service 5s
-ztd-mgmt allow-dns-egress <none> 5s
-ztd-mgmt allow-intra-plane <none> 5s
-ztd-mgmt allow-pdp-adapter-to-tsa-ingress app.kubernetes.io/name=tsa-policy-engine 5s
-ztd-mgmt allow-workloads-to-otel-collector-ingress app.kubernetes.io/name=otel-collector 5s
-ztd-mgmt default-deny <none> 5s
+ztd-data allow-atls-gateway-to-cmcd-egress app.kubernetes.io/name=atls-gateway 15s
+ztd-data allow-atls-gateway-to-tcr-egress app.kubernetes.io/name=atls-gateway 15s
+ztd-data allow-backend-to-verification-service-egress app.kubernetes.io/name=backend 15s
+ztd-data allow-dns-egress <none> 15s
+ztd-data allow-intra-plane <none> 15s
+ztd-data allow-pdp-adapter-to-tsa-egress app.kubernetes.io/name=pdp-adapter 15s
+ztd-data allow-workloads-to-otel-collector-egress <none> 15s
+ztd-data default-deny <none> 15s
+ztd-mgmt allow-atls-gateway-to-cmcd-ingress app.kubernetes.io/name=cmcd 15s
+ztd-mgmt allow-atls-gateway-to-tcr-ingress app.kubernetes.io/name=tcr 15s
+ztd-mgmt allow-backend-to-verification-service-ingress app.kubernetes.io/name=verification-service 15s
+ztd-mgmt allow-dns-egress <none> 15s
+ztd-mgmt allow-intra-plane <none> 15s
+ztd-mgmt allow-pdp-adapter-to-tsa-ingress app.kubernetes.io/name=tsa-policy-engine 15s
+ztd-mgmt allow-workloads-to-otel-collector-ingress app.kubernetes.io/name=otel-collector 15s
+ztd-mgmt default-deny <none> 15s
 ```
 
 - PASS: default-deny present in ztd-mgmt
 - PASS: default-deny present in ztd-data
-- PASS: ambient host-probe exception present (mode ambient, Cilium)
+- PASS: sidecar mode (the baseline): istio-injection=enabled on ztd-mgmt
+- PASS: sidecar mode (the baseline): istio-injection=enabled on ztd-data
+- PASS: sidecar mode: no ambient label on ztd-mgmt
+- PASS: sidecar mode: no ambient label on ztd-data
+- PASS: sidecar mode: no ambient host-probe exception is rendered
 
 ## 4. Install again: idempotent
 
@@ -115,27 +119,44 @@ Stand-in pods carry the matrix labels; nothing else about them is real. Targets 
 - PASS: management pod → data plane: DENIED (default deny is both directions)
   → denied(28)
 - PASS: DNS bypass: the denied pod still resolves names
-  Name:	tsa-policy-engine.ztd-mgmt.svc.cluster.local Address: 10.96.75.158  
+  Name:	tsa-policy-engine.ztd-mgmt.svc.cluster.local Address: 10.96.241.146  
 
-## 6. Mesh mode is one label
+## 6. Mesh mode is one label: the excursion to the parked ambient mode, and back
 
-- PASS: upgrade to sidecar mode returns 0
+Sidecar is the installed baseline (ADR-0006). The release is switched to ambient with the excursion fixture, which must bring the ambient label and the Cilium host-probe exception while the denial and the lane hold, and then back to sidecar, which must leave neither behind.
+
+- PASS: upgrade to ambient mode returns 0
 
 ```
 NAME STATUS AGE PLANE DATAPLANE-MODE ISTIO-INJECTION
-ztd-mgmt Active 37s management enabled
-ztd-data Active 37s data enabled
+ztd-mgmt Active 2m29s management ambient 
+ztd-data Active 2m29s data ambient 
 ```
 
-- PASS: sidecar mode: istio-injection=enabled on the plane namespaces
-- PASS: sidecar mode: the ambient label is gone
-- PASS: sidecar mode: the ambient host-probe exception is gone
-- PASS: sidecar mode: cross-plane call still DENIED
+- PASS: ambient mode: istio.io/dataplane-mode=ambient on ztd-mgmt
+- PASS: ambient mode: istio.io/dataplane-mode=ambient on ztd-data
+- PASS: ambient mode: the sidecar label is gone
+- PASS: ambient mode: the Cilium host-probe exception is rendered (mode ambient, Cilium)
+- PASS: ambient mode: cross-plane call still DENIED
   → denied(28)
-- PASS: sidecar mode: matrix lane still ALLOWED
+- PASS: ambient mode: matrix lane still ALLOWED
   → 200
-- PASS: back to ambient mode returns 0
-- PASS: ambient label restored
+- PASS: back to sidecar mode returns 0
+
+```
+NAME STATUS AGE PLANE DATAPLANE-MODE ISTIO-INJECTION
+ztd-mgmt Active 2m41s management enabled
+ztd-data Active 2m41s data enabled
+```
+
+- PASS: sidecar mode restored: istio-injection=enabled on ztd-mgmt
+- PASS: sidecar mode restored: istio-injection=enabled on ztd-data
+- PASS: sidecar mode restored: the ambient label is gone
+- PASS: sidecar mode restored: the ambient host-probe exception is gone
+- PASS: sidecar mode restored: cross-plane call still DENIED
+  → denied(28)
+- PASS: sidecar mode restored: matrix lane still ALLOWED
+  → 200
 
 ## 7. Guards that refuse a wrong configuration: the lint and render steps of the CI chart gate
 
