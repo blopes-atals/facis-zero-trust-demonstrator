@@ -6,7 +6,7 @@ zone:
   loadBalancer:
     type: cloud                # cloud | metallb | none
 mesh:
-  mode: ambient                # follows the mesh decision of ADR-0001: ambient | sidecar
+  mode: sidecar                # the mesh decision of ADR-0006; ambient is the parked alternative
 networkPolicy:
   kubeApi:
     enabled: true              # management components that talk to the API need this lane

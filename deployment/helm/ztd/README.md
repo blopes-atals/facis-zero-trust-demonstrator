@@ -21,10 +21,11 @@ by `helm uninstall`.
 
 Installing the chart needs rights beyond one namespace: it creates the plane namespaces, a
 ClusterRole and ClusterRoleBinding for the verification job (read-only on namespaces and network
-policies, removed with the job by its hook policy) and, with `mesh.mode=ambient` and
-`cni.cilium.enabled=true`, one CiliumClusterwideNetworkPolicy. It ships no CRD; the Cilium policy is
-an instance of Cilium's own CRD and is rendered only where Cilium is enabled. Everything else is
-namespaced and lives in the plane namespaces.
+policies, removed with the job by its hook policy) and, only in the parked ambient mode
+(`mesh.mode=ambient` with `cni.cilium.enabled=true`), one CiliumClusterwideNetworkPolicy. It ships
+no CRD; the Cilium policy is an instance of Cilium's own CRD and is rendered only where Cilium is
+enabled. In the sidecar baseline nothing cluster-wide beyond the namespaces and the verification
+job's role is created. Everything else is namespaced and lives in the plane namespaces.
 
 ## Values
 
@@ -37,9 +38,9 @@ namespaced and lives in the plane namespaces.
 | `planes.management.namespace` | `ztd-mgmt` | Management-plane namespace |
 | `planes.data.namespace` | `ztd-data` | Data-plane namespace |
 | `planes.extra` | `[]` | Further `{name, plane}` namespaces that component tasks add |
-| `mesh.mode` | `ambient` | `ambient`, `sidecar` or `none`; sets the namespace label only |
+| `mesh.mode` | `sidecar` | `sidecar` (the ADR-0006 baseline), `ambient` (parked) or `none`; sets the namespace label only |
 | `mesh.revision` | `""` | Sidecar mode: pin an Istio revision (`istio.io/rev`) instead of the default injector |
-| `cni.cilium.enabled` | `true` | Render the Cilium-specific pieces (ambient host-probe exception) |
+| `cni.cilium.enabled` | `true` | Render the Cilium-specific pieces (the host-probe exception of the parked ambient mode) |
 | `networkPolicy.defaultDeny` | `true` | Default deny, ingress and egress, in every plane namespace |
 | `networkPolicy.dns.*` | kube-dns in `kube-system` | The declared DNS bypass, port 53 only |
 | `networkPolicy.intraPlane` | `true` | Pods within one plane namespace may reach each other at L3/L4 |
@@ -85,5 +86,6 @@ scripts/dev/kind-cilium-up.sh               # kind with Cilium chained, cni.excl
 scripts/verify-umbrella/verify.sh           # installs, re-installs, probes the policies, tears down
 ```
 
-In CI, `helm lint` and `helm template` run with `ci/values.yaml`; the chart is verified with Helm
-v4.3.0, the version the pipeline pins, and the sidecar mode is proven live by the evidence script.
+In CI, `helm lint` and `helm template` run with `ci/values.yaml` (sidecar, the ADR-0006 baseline);
+the chart is verified with Helm v4.3.0, the version the pipeline pins. The evidence script installs
+in sidecar mode and proves the parked ambient mode live, as an excursion and back.
