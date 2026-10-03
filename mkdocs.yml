@@ -32,6 +32,7 @@ nav:
   - Specification changes: specifications.md
   - Evidence:
       - Mesh mode, upstream state: evidences/mesh-mode-upstream-state/README.md
+      - Mesh mode, upstream state record: evidences/mesh-mode-upstream-state/upstream-state.md
   - Architecture decisions:
       - Overview: adr/index.md
       - 0001 Service mesh mode (superseded by 0006): adr/0001-service-mesh-mode-istio-ambient-with-cilium.md
