@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# scenario: service-mesh-mode / The excursion fails
+# level: L2
+# requirement: The umbrella verification proves sidecar as the baseline and ambient as the excursion
+# Makes the switch to ambient not produce the ambient label by handing verify.sh a sidecar-mode
+# file as its ambient fixture (AMBIENT_VALUES is documented in the script header).
+set -u; . "$EVAL_ROOT/evals/service-mesh-mode/fixtures/lib.sh"
+ctx=${KUBE_CONTEXT:-kind-ztd}
+grep -q 'AMBIENT_VALUES' "$EVAL_ROOT/scripts/verify-umbrella/verify.sh" || fail "verify.sh no longer takes AMBIENT_VALUES; the excursion fixture cannot be swapped"
+if ! command -v kind >/dev/null || ! kubectl config get-contexts "$ctx" >/dev/null 2>&1; then
+  unverifiable "needs the kind cluster '$ctx' from scripts/dev/kind-cilium-up.sh (kind + cilium CLI + helm) to run the switch"
+fi
+git clone -q "$EVAL_ROOT" "$EVAL_TMP/repo" || fail "cannot clone the tree"
+cp "$EVAL_TMP/repo/deployment/helm/ztd/ci/values.yaml" "$EVAL_TMP/not-ambient.yaml"
+KUBE_CONTEXT=$ctx AMBIENT_VALUES="$EVAL_TMP/not-ambient.yaml" bash "$EVAL_TMP/repo/scripts/verify-umbrella/verify.sh" > "$EVAL_TMP/run.log" 2>&1; rc=$?
+echo "verify.sh exit: $rc (expected non-zero)"
+grep -iE 'FAIL' "$EVAL_TMP/repo/scripts/verify-umbrella/evidence.md" | head
+[ $rc -ne 0 ] || fail "verify.sh exited 0 although the excursion produced no ambient label"
+grep -qiE 'FAIL.*(ambient|dataplane|host-?probe|cilium)' "$EVAL_TMP/repo/scripts/verify-umbrella/evidence.md" || fail "evidence records no failed ambient check"

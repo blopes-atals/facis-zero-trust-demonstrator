@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# scenario: service-mesh-mode / The premises hold
+# level: L2
+# requirement: The upstream state behind the decision is recorded by a script
+# Live run against the real upstream sources, writing into EVAL_TMP (OUT_DIR, documented in the script header).
+set -u; . "$EVAL_ROOT/evals/service-mesh-mode/fixtures/lib.sh"
+script=$(ls "$EVAL_ROOT"/scripts/mesh-mode/*.sh 2>/dev/null | head -1); [ -n "$script" ] || fail "no script under scripts/mesh-mode/"
+for u in https://istio.io/latest/docs/ambient/migrate/ https://api.github.com/repos/spiffe/spire/releases/latest https://raw.githubusercontent.com/spiffe/spire/main/README.md; do
+  curl -sS -m 15 -o /dev/null "$u" || unverifiable "upstream source $u not reachable from here"
+done
+out="$EVAL_TMP/out"; mkdir -p "$out"
+env -u CI OUT_DIR="$out" bash "$script" > "$EVAL_TMP/log" 2>&1; rc=$?
+cat "$EVAL_TMP/log"; echo "exit: $rc (expected 0 while the premises hold)"
+rec="$out/upstream-state.md"; envf="$out/environment.json"
+[ -f "$rec" ] || fail "no upstream-state.md written to OUT_DIR"
+[ -f "$envf" ] || fail "no environment.json written to OUT_DIR"
+jq -e . "$envf" >/dev/null || fail "environment.json is not JSON"
+keys=$(jq -r '[paths | map(tostring) | join(".")] | .[]' "$envf"); echo "environment.json keys:"; sed 's/^/  /' <<<"$keys"
+for k in 'commit' 'dirty' 'date|time|when|generated' 'tool|version|helm|curl|jq|gh' 'host|kind|os'; do
+  grep -qiE "$k" <<<"$keys" || fail "environment.json has no key matching /$k/"
+done
+echo "record checks:"
+bad=0
+want() { if grep -qiE -- "$2" "$rec"; then echo "  has $1"; else echo "  LACKS $1 (/$2/)"; bad=1; fi; }
+want "the latest Istio release" 'istio.*[0-9]+\.[0-9]+\.[0-9]+'
+want "the unsupported statement with its excerpt" 'SPIRE as the certificate provider'
+want "the tracking issue 42339" '42339'
+want "ztunnel PR 1676 (Delegated Identity API)" '1676'
+want "ztunnel PR 1936 (Broker API client)" '1936'
+want "ztunnel PR 2067 (cache groundwork)" '2067'
+want "the latest SPIRE release" 'spire.*v?1\.[0-9]+\.[0-9]+'
+want "the Broker API experimental state" 'experimental'
+[ $bad -eq 0 ] || fail "the record is incomplete"
+[ $rc -eq 0 ] || fail "expected exit 0, got $rc (if a premise really moved upstream, this is the world changing, not a defect: read the log)"

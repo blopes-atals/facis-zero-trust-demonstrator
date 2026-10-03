@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# scenario: service-mesh-mode / The run on kind
+# level: L2
+# requirement: The umbrella verification proves sidecar as the baseline and ambient as the excursion
+set -u; . "$EVAL_ROOT/evals/service-mesh-mode/fixtures/lib.sh"
+ev="$EVAL_ROOT/scripts/verify-umbrella/evidence.md"; [ -f "$ev" ] || fail "no committed evidence file $ev"
+# Static part: the committed evidence must be the output of such a run.
+bad=0
+want() { if grep -qiE -- "$2" "$ev"; then echo "evidence has $1"; else echo "evidence LACKS $1 (/$2/)"; bad=1; fi; }
+want "cluster name/context" 'context|cluster'
+want "Kubernetes version" 'v1\.[0-9]+\.[0-9]+'
+want "Cilium version" 'cilium[^0-9]*[0-9]+\.[0-9]+\.[0-9]+|cilium.*:v?[0-9]+\.[0-9]+'
+want "tool versions (helm, kubectl)" 'helm v?[0-9]+\.[0-9]+' 
+want "sidecar as the installed mode" 'mesh mode sidecar|sidecar.*(installed|baseline)|(installed|baseline).*sidecar'
+want "ambient as the excursion" 'ambient.*(excursion|switch)|(excursion|switch).*ambient'
+fails=$(grep -cE '^- \*\*FAIL\*\*|^- FAIL' "$ev"); echo "FAIL lines in evidence: $fails"; [ "$fails" -eq 0 ] || bad=1
+[ $bad -eq 0 ] || fail "the committed evidence does not show a passing sidecar-baseline / ambient-excursion run"
+# Live part: needs the kind cluster from scripts/dev/kind-cilium-up.sh.
+ctx=${KUBE_CONTEXT:-kind-ztd}
+if ! command -v kind >/dev/null || ! kubectl config get-contexts "$ctx" >/dev/null 2>&1; then
+  unverifiable "committed evidence is consistent, but the live run needs the kind cluster '$ctx' (kind + cilium CLI + helm; create it with scripts/dev/kind-cilium-up.sh)"
+fi
+git clone -q "$EVAL_ROOT" "$EVAL_TMP/repo" || fail "cannot clone the tree"
+KUBE_CONTEXT=$ctx bash "$EVAL_TMP/repo/scripts/verify-umbrella/verify.sh" > "$EVAL_TMP/run.log" 2>&1; rc=$?
+tail -5 "$EVAL_TMP/run.log"; echo "verify.sh exit: $rc"; grep -E 'FAIL' "$EVAL_TMP/repo/scripts/verify-umbrella/evidence.md"
+[ $rc -eq 0 ] || fail "verify.sh failed on kind"

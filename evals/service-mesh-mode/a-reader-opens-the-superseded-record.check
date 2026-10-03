@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# scenario: service-mesh-mode / A reader opens the superseded record
+# level: L1
+# requirement: The mesh mode flip is recorded as a superseding decision record
+set -u; . "$EVAL_ROOT/evals/service-mesh-mode/fixtures/lib.sh"
+[ -f "$ADR_0001" ] || fail "ADR-0001 missing at $ADR_0001"
+line=$(grep -niE 'status' "$ADR_0001" | grep -iE 'superseded by' | head -1)
+[ -n "$line" ] || fail "no status line saying 'Superseded by' in ADR-0001"
+echo "status line: $line"
+rec=$(superseding_record) || fail "the status line does not link to an existing record (got '${rec:-none}')"
+echo "links to: ${rec#$EVAL_ROOT/}"
+# The rest of the text is as it was: compare with the record on main, ignoring the status line(s).
+base=$(git -C "$EVAL_ROOT" merge-base HEAD main) || fail "cannot find merge base with main"
+git -C "$EVAL_ROOT" show "$base:docs/adr/0001-service-mesh-mode-istio-ambient-with-cilium.md" > "$EVAL_TMP/0001.before" || fail "ADR-0001 not on main"
+filter() { grep -viE 'status|superseded' "$1"; }
+if diff -u <(filter "$EVAL_TMP/0001.before") <(filter "$ADR_0001") > "$EVAL_TMP/diff"; then
+  echo "text outside the status line is unchanged against $base"
+else
+  echo "text outside the status line changed:"; cat "$EVAL_TMP/diff"; fail "ADR-0001 body was edited"
+fi

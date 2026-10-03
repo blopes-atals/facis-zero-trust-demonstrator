@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# scenario: service-mesh-mode / The CI chart job
+# level: L1
+# requirement: The umbrella chart default follows the recorded mode
+# Replays the 'Chart lint and render' job of .github/workflows/ci.yml on the tree.
+set -u; . "$EVAL_ROOT/evals/service-mesh-mode/fixtures/lib.sh"
+command -v helm >/dev/null || unverifiable "helm not installed"
+echo "helm $(helm version --short) (CI pins v4.3.0)"
+cd "$EVAL_ROOT" || exit 1
+shopt -s nullglob
+charts=(deployment/helm/*/Chart.yaml features/fixtures/charts/*/Chart.yaml)
+[ ${#charts[@]} -gt 0 ] || fail "no chart found"
+for chart in "${charts[@]}"; do
+  directory=$(dirname "$chart"); values=()
+  [ -f "$directory/ci/values.yaml" ] && values=(-f "$directory/ci/values.yaml")
+  helm lint "$directory" "${values[@]}" > "$EVAL_TMP/lint.log" 2>&1 || { cat "$EVAL_TMP/lint.log"; fail "helm lint $directory failed"; }
+  helm template "$directory" "${values[@]}" > "$EVAL_TMP/render.yaml" 2> "$EVAL_TMP/render.err" || { cat "$EVAL_TMP/render.err"; fail "helm template $directory failed"; }
+  echo "ok: $directory ${values[*]:-}"
+done
+mode=$(python3 -c 'import sys,yaml; print(yaml.safe_load(open(sys.argv[1]))["mesh"]["mode"])' deployment/helm/ztd/values.yaml)
+echo "ztd default mesh.mode: $mode"; [ "$mode" = sidecar ] || fail "the job passed but the default is '$mode', not the new default sidecar"

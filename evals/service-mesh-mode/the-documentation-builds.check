@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# scenario: service-mesh-mode / The documentation builds
+# level: L1
+# requirement: The mesh mode flip is recorded as a superseding decision record
+set -u; . "$EVAL_ROOT/evals/service-mesh-mode/fixtures/lib.sh"
+cmd=$(mkdocs_cmd) || unverifiable "neither mkdocs nor uvx is installed"
+rec=$(superseding_record) || fail "ADR-0001 does not point at an existing superseding record"
+recfile=$(basename "$rec")
+cd "$EVAL_ROOT" || exit 1
+$cmd build --strict -d "$EVAL_TMP/site" > "$EVAL_TMP/build.log" 2>&1; rc=$?
+tail -3 "$EVAL_TMP/build.log"; echo "mkdocs build --strict: expected exit 0, got $rc"
+[ $rc -eq 0 ] || { cat "$EVAL_TMP/build.log"; fail "strict build failed"; }
+grep -qF "adr/$recfile" mkdocs.yml || fail "mkdocs.yml nav does not list adr/$recfile"
+[ -f "$EVAL_TMP/site/adr/${recfile%.md}/index.html" ] || fail "built site has no page for $recfile"
+grep -qF "adr/${recfile%.md}/" "$EVAL_TMP/site/index.html" || fail "the built nav on the home page does not link $recfile"
+echo "nav lists and site renders $recfile"

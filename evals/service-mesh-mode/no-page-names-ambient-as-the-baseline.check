@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# scenario: service-mesh-mode / No page names ambient as the baseline
+# level: L1
+# requirement: The documentation presents sidecar as the baseline
+# Heuristic by nature: the spec names six pages that must cite the superseding record and describe
+# ambient as parked; the tree-wide search then judges whole sentences (markdown wraps sentences
+# over several lines), not single lines.
+set -u; . "$EVAL_ROOT/evals/service-mesh-mode/fixtures/lib.sh"
+rec=$(superseding_record) || fail "ADR-0001 does not point at an existing superseding record"
+recfile=$(basename "$rec"); recnum=${recfile%%-*}
+cd "$EVAL_ROOT/docs" || exit 1
+pages=(umbrella-chart.md environments/osc.md environments/index.md deployment.md specifications.md troubleshooting.md)
+bad=0
+for p in "${pages[@]}"; do
+  [ -f "$p" ] || { echo "MISSING page $p"; bad=$((bad+1)); continue; }
+  if grep -qE "$recfile|ADR-?$recnum" "$p"; then echo "$p cites $recnum"; else echo "$p does NOT cite the superseding record $recnum"; bad=$((bad+1)); fi
+  if grep -qi 'ambient' "$p" && ! grep -qiE 'parked' "$p"; then echo "$p mentions ambient but never as parked"; bad=$((bad+1)); fi
+done
+echo "--- sentences presenting ambient as the current baseline (whole docs tree; ADR-0001 and the evidence records excluded):"
+python3 - "$recnum" > "$EVAL_TMP/hits" <<'PY'
+import re, sys, pathlib
+recnum = sys.argv[1]
+baseline_hits, cite_hits = [], []
+for f in sorted(pathlib.Path(".").rglob("*.md")):
+    s = str(f)
+    if s.startswith("adr/0001-") or s.startswith("evidences/"): continue
+    text = f.read_text(errors="replace")
+    for para in re.split(r"\n\s*\n", text):
+        flat = " ".join(para.split())
+        for sent in re.split(r"(?<=[.;:])\s+(?=[A-Z`*\[(])", flat):
+            low = sent.lower()
+            # a sentence that presents ambient as the baseline/default: mentions ambient and
+            # baseline|default, without naming sidecar in the same breath or marking ambient as parked
+            if "ambient" in low and re.search(r"\bbaseline\b|\bdefault\b(?!-)", low) and "sidecar" not in low \
+               and not re.search(r"parked|supersed|fallback|no longer|was the|formerly|previous|instead|rather than|excursion|switch|0001", low):
+                baseline_hits.append(f"{s}: {sent[:200]}")
+            # a citation of the mode decision that points to ADR-0001 without the superseding record
+            if not s.startswith("adr/") and re.search(r"0001-service-mesh-mode|adr-?0001", low) \
+               and not re.search(recnum + r"|supersed", low):
+                cite_hits.append(f"{s}: {sent[:200]}")
+print("BASELINE", len(baseline_hits)); [print(h) for h in baseline_hits]
+print("CITES", len(cite_hits)); [print(h) for h in cite_hits]
+PY
+nb=$(grep -E '^BASELINE ' "$EVAL_TMP/hits" | awk '{print $2}'); nc=$(grep -E '^CITES ' "$EVAL_TMP/hits" | awk '{print $2}')
+sed -n '/^BASELINE /,/^CITES /{/^BASELINE \|^CITES /d;p}' "$EVAL_TMP/hits"; [ "$nb" -eq 0 ] && echo "(none)" || bad=$((bad+1))
+echo "--- citations of the mode decision that still point to ADR-0001 without the superseding record (ADR files and evidence excluded):"
+sed -n '/^CITES /,${/^CITES /d;p}' "$EVAL_TMP/hits"; [ "$nc" -eq 0 ] && echo "(none)" || bad=$((bad+1))
+[ $bad -eq 0 ] || fail "$bad problem(s) above"
