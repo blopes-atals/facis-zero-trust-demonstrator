@@ -48,18 +48,23 @@ script proves.
 
 ## The mesh mode is one label
 
-ADR-0001 baselines Istio ambient and foresees a superseding decision for sidecar mode. Between the two,
-the layout differs in one namespace label — `istio.io/dataplane-mode=ambient` or
-`istio-injection=enabled`, never both on the same namespace — so `mesh.mode` in the zone file is the
-only thing that changes, and the chart is the same either way; the evidence script switches a live
-install from one mode to the other and back. Istio itself is installed by the mesh step after the
-umbrella; until then the label is inert.
+[ADR-0006](adr/0006-service-mesh-mode-istio-sidecar-with-cilium.md) baselines Istio sidecar mode
+with Cilium as the CNI, superseding the ambient baseline of ADR-0001 through the fallback clause
+that record foresaw: the mesh cannot take SPIRE-issued identities under ambient with community
+Istio. Ambient is parked, not abandoned. Between the two modes the layout differs in one namespace
+label — `istio-injection=enabled` or `istio.io/dataplane-mode=ambient`, never both on the same
+namespace — so `mesh.mode` in the zone file is the only thing that changes, and the chart is the
+same either way: the default is `sidecar`, the value `ambient` stays accepted, and the evidence
+script switches a live install from the sidecar baseline to ambient and back. Istio itself is
+installed by the mesh step after the umbrella; until then the label is inert.
 
-One piece is mode-specific. Under Istio ambient with Cilium as the CNI, the kubelet's health probes
-reach ambient pods SNAT-ed to `169.254.7.127`, an address Cilium does not exempt from policy, so a
-default-deny NetworkPolicy would fail every probe. Istio's platform prerequisites prescribe a
-cluster-wide Cilium policy admitting that address, and the chart renders it only when the mode is
-ambient and Cilium is enabled.
+One piece is mode-specific, and it belongs to the parked mode. Under Istio ambient with Cilium as
+the CNI, the kubelet's health probes reach ambient pods SNAT-ed to `169.254.7.127`, an address Cilium
+does not exempt from policy, so a default-deny NetworkPolicy would fail every probe. Istio's platform
+prerequisites prescribe a cluster-wide Cilium policy admitting that address, and the chart renders it
+only when the mode is ambient and Cilium is enabled; in the sidecar baseline of ADR-0006 nothing of
+the kind is rendered, and the template stays so that returning to ambient costs a zone value, not a
+chart change.
 
 ## The hook-weight scheme
 
@@ -135,9 +140,10 @@ namespaces belong to the release and go with `helm uninstall ztd -n ztd-system`;
 uninstall before the layout, in the reverse order of their installation.
 
 The chart is cluster-scoped by nature. It creates the plane namespaces, the cluster role and binding
-of its verification job, and, under ambient mode with Cilium, one cluster-wide Cilium policy; it
-ships no CRD (the Cilium policy is an instance of Cilium's own CRD and is rendered only where Cilium
-is enabled). An identity confined to one namespace cannot install it. That is the design point to
+of its verification job, and, only in the parked ambient mode with Cilium (not in the sidecar
+baseline of [ADR-0006](adr/0006-service-mesh-mode-istio-sidecar-with-cilium.md)), one cluster-wide
+Cilium policy; it ships no CRD (the Cilium policy is an instance of Cilium's own CRD and is rendered
+only where Cilium is enabled). An identity confined to one namespace cannot install it. That is the design point to
 settle before the umbrella replaces the fixture chart as the release under test of the
 deployment-lifecycle scenarios (TDR-BDD-01 to TDR-BDD-04), whose deployer works inside its pool
 namespaces and never creates one.
@@ -146,10 +152,13 @@ namespaces and never creates one.
 
 Locally, `scripts/dev/kind-cilium-up.sh` gives a kind cluster with Cilium chained the way
 the zones run it, and `scripts/verify-umbrella/verify.sh` produces the evidence: install from an
-empty cluster, install again to show nothing changes, read the layout back, prove with stand-in pods
-that a data-plane workload reaches nothing in the management plane except through a matrix lane,
-switch the mesh mode and back, and tear down without leaving a namespace behind. The last run's
-`evidence.md` sits next to the script.
+empty cluster in sidecar mode, the baseline, and assert the sidecar label with no ambient label and
+no host-probe policy; install again to show nothing changes; read the layout back; prove with
+stand-in pods that a data-plane workload reaches nothing in the management plane except through a
+matrix lane; switch the live release to the parked ambient mode with the script's excursion fixture
+(`ambient-values.yaml`) and assert the ambient label and the host-probe policy while the denial and
+the lane still hold; return to sidecar and assert the baseline layout again; and tear down without
+leaving a namespace behind. The last run's `evidence.md` sits next to the script.
 
 The evidence also carries the negative proof of the CI chart gate. Section 7 shows the chart refused
 without a zone file and with an unknown mesh mode by `helm lint` and by `helm template` alike, because
@@ -167,6 +176,6 @@ clusters — and the per-zone values the baseline records, including the API end
 management-plane lane. The two OSC clusters are not yet provided. The IONOS cluster is, and
 `zones/ionos.yaml` is recorded from it, but the chart is not installed there: that cluster holds no
 demonstration workload and runs no mesh, its CNI is the provider-managed Calico rather than the
-Cilium of [ADR-0001](adr/0001-service-mesh-mode-istio-ambient-with-cilium.md), and whether it needs
+Cilium of [ADR-0006](adr/0006-service-mesh-mode-istio-sidecar-with-cilium.md), and whether it needs
 Cilium and the mesh at all is a decision for its visualization stage. Until then the IONOS zone file
 is validated against that cluster's API with a server-side dry run, which persists nothing.

@@ -7,7 +7,10 @@ specific cluster, with the check that proves each stage, see [Environments](envi
 
 - Kubernetes **1.29 or later** on each target cluster.
 - A CNI that supports the mesh baseline recorded in
-  [ADR-0001](adr/0001-service-mesh-mode-istio-ambient-with-cilium.md).
+  [ADR-0006](adr/0006-service-mesh-mode-istio-sidecar-with-cilium.md): Cilium with
+  `cni.exclusive=false`, Istio in sidecar mode chained behind it.
+- Kubernetes **1.33 or later** on a cluster that runs the mesh, for the native sidecar containers
+  that record decides on; 1.29 stays the floor for a cluster without the mesh.
 - A container registry reachable from the clusters, with credentials available to the cluster.
 - DNS delegation for the trust zone.
 
