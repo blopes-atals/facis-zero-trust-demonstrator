@@ -37,6 +37,7 @@ done
 
 REPO=$(git -C "$(dirname "$0")" rev-parse --show-toplevel) || exit 2
 OUT_DIR=${OUT_DIR:-$REPO/docs/evidences/mesh-mode-upstream-state}
+mkdir -p "$OUT_DIR" && OUT_DIR=$(cd "$OUT_DIR" && pwd -P) || { echo "cannot create $OUT_DIR" >&2; exit 2; }
 RECORD=$OUT_DIR/upstream-state.md
 ENVIRONMENT=$OUT_DIR/environment.json
 NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -72,7 +73,14 @@ raw_get() { curl -sSL -m 30 "$1"; }
 
 unreachable=()  # sources that could not be fetched
 moved=()        # premises that no longer hold
+notes=()        # observations that do not change the verdict but belong in the record
 note() { printf '%s\n' "$*" >&2; }
+# Every fetched string is written through this: the record is a published docs page and
+# Python-Markdown passes raw HTML through, so markup, table pipes and line breaks in upstream
+# text (titles, labels, excerpts, quotes) must arrive as text, never as structure.
+esc() { printf '%s' "$1" | tr '\r\n' '  ' | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g; s/|/\&#124;/g'; }
+# A release tag is spliced into a URL path: accept only a version-shaped one.
+is_tag() { [[ $1 =~ ^v?[0-9]+(\.[0-9]+)*$ ]]; }
 
 # ---------------------------------------------------------------------------------------------
 # Condition 1 — Istio
@@ -81,7 +89,11 @@ istio_release_json=$(api_get repos/istio/istio/releases/latest) && [ -n "$istio_
   || { unreachable+=("istio/istio latest release (GitHub API)"); istio_release_json=; }
 istio_tag=$(jq -r '.tag_name // empty' <<<"$istio_release_json")
 istio_published=$(jq -r '.published_at // empty' <<<"$istio_release_json")
-[ -n "$istio_tag" ] || { [ -n "$istio_release_json" ] && unreachable+=("istio/istio latest release: no tag in the response"); }
+if [ -z "$istio_tag" ]; then
+  [ -n "$istio_release_json" ] && unreachable+=("istio/istio latest release: no tag in the response")
+elif ! is_tag "$istio_tag"; then
+  unreachable+=("istio/istio latest release: tag $(esc "$istio_tag") is not version-shaped; not recorded"); istio_tag=
+fi
 
 migrate_html=$(raw_get "$ISTIO_MIGRATE_URL") && [ -n "$migrate_html" ] \
   || { unreachable+=("Istio migration guide $ISTIO_MIGRATE_URL"); migrate_html=; }
@@ -95,7 +107,10 @@ import html, re, sys
 s = sys.stdin.read()
 s = re.sub(r"<script.*?</script>|<style.*?</style>", " ", s, flags=re.S)
 s = re.sub(r"<[^>]+>", " ", s)
-s = html.unescape(s)
+# entities are decoded after the tags are gone, and decoded a second time so that an
+# entity-encoded tag (&lt;img ...&gt;, or doubly encoded) comes out as text and is stripped too
+s = html.unescape(html.unescape(s))
+s = re.sub(r"<[^>]+>", " ", s)
 print(re.sub(r"\s+", " ", s).strip())
 ')
   migrate_version=$(grep -oE 'Version Istio [0-9]+\.[0-9]+(\.[0-9]+)?' <<<"$migrate_text" | head -1 | sed 's/Version Istio //')
@@ -109,10 +124,17 @@ needle = sys.argv[1]
 i = text.find(needle)
 start = max(0, i - 220)
 end = min(len(text), i + 160)
+# cut on word boundaries: forward to the next space after start, back to the last space before end
+if start > 0:
+    j = text.find(" ", start)
+    start = j + 1 if 0 <= j < i else start
+if end < len(text):
+    j = text.rfind(" ", i, end)
+    end = j if j > i else end
 print(("…" if start > 0 else "") + text[start:end].strip() + ("…" if end < len(text) else ""))
 ' "$ISTIO_STATEMENT" <<<"$migrate_text")
-    grep -qF "$ISTIO_STATEMENT_DETAIL" <<<"$migrate_text" || note "note: the entry is present but its explanatory sentence changed; see the excerpt"
-    grep -qF "What is not supported" <<<"$migrate_text" || note "note: the 'What is not supported' heading was not found; the entry is recorded from the page text"
+    grep -qF "$ISTIO_STATEMENT_DETAIL" <<<"$migrate_text" || notes+=("Istio: the entry is present but its explanatory sentence (\"$ISTIO_STATEMENT_DETAIL\") is not; the wording changed, see the excerpt")
+    grep -qF "What is not supported" <<<"$migrate_text" || notes+=("Istio: the heading \"What is not supported\" was not found on the page; the entry is recorded from the page text and its placement is not confirmed")
   else
     moved+=("Istio: the migration guide no longer contains \"$ISTIO_STATEMENT\" (condition 1 may have moved: check whether ambient mode now documents SPIRE as supported)")
   fi
@@ -154,7 +176,11 @@ spire_release_json=$(api_get repos/spiffe/spire/releases/latest) && [ -n "$spire
   || { unreachable+=("spiffe/spire latest release (GitHub API)"); spire_release_json=; }
 spire_tag=$(jq -r '.tag_name // empty' <<<"$spire_release_json")
 spire_published=$(jq -r '.published_at // empty' <<<"$spire_release_json")
-[ -n "$spire_tag" ] || { [ -n "$spire_release_json" ] && unreachable+=("spiffe/spire latest release: no tag in the response"); }
+if [ -z "$spire_tag" ]; then
+  [ -n "$spire_release_json" ] && unreachable+=("spiffe/spire latest release: no tag in the response")
+elif ! is_tag "$spire_tag"; then
+  unreachable+=("spiffe/spire latest release: tag $(esc "$spire_tag") is not version-shaped; the agent document was not fetched"); spire_tag=
+fi
 
 broker_documented=unknown     # yes | no | unknown
 broker_experimental=unknown   # yes | no | unknown
@@ -167,11 +193,21 @@ if [ -n "$spire_tag" ]; then
   if [ -n "$spire_doc" ]; then
     if grep -qiE '^## .*SPIFFE Broker API|^\| `broker`' <<<"$spire_doc"; then
       broker_documented=yes
-      # the table whose header is `| experimental`, up to its first blank line
-      experimental_block=$(awk '/^\| *experimental/{p=1} p&&/^[[:space:]]*$/{exit} p' <<<"$spire_doc")
+      # the table whose header is `| experimental` (any case), up to its first blank line
+      experimental_block=$(awk 'tolower($0) ~ /^\| *experimental/{p=1} p&&/^[[:space:]]*$/{exit} p' <<<"$spire_doc")
+      [ -n "$experimental_block" ] || notes+=("SPIRE: no table headed \"experimental\" was found in $SPIRE_AGENT_DOC_PATH at $spire_tag; the placement is judged against an empty table")
       if grep -qE '^\| `broker`' <<<"$experimental_block"; then broker_experimental=yes; else broker_experimental=no; fi
       # the status note is a block quote of several lines; join it
       broker_status_line=$(awk '/^> \*\*Status:\*\*/{p=1} p&&!/^>/{exit} p{sub(/^> ?/,""); printf "%s ", $0}' <<<"$spire_doc" | sed 's/ *$//')
+      # cross-check the table placement against the Broker API section's own status note
+      if [ -n "$broker_status_line" ]; then
+        status_says_experimental=no; grep -qi 'experimental' <<<"$broker_status_line" && status_says_experimental=yes
+        if [ "$broker_experimental" = no ] && [ "$status_says_experimental" = yes ]; then
+          notes+=("SPIRE: the broker key is not in the experimental table but the Broker API section's status note still says experimental; the table decides, the operator judges")
+        elif [ "$broker_experimental" = yes ] && [ "$status_says_experimental" = no ]; then
+          notes+=("SPIRE: the broker key is in the experimental table but the Broker API section's status note no longer says experimental; the table decides, the operator judges")
+        fi
+      fi
       if [ "$broker_experimental" = no ]; then
         moved+=("SPIRE: $SPIRE_AGENT_DOC_PATH at $spire_tag documents the Broker API outside the experimental block (condition 2 may have moved: check the release notes for the Broker API's stability)")
       fi
@@ -188,7 +224,13 @@ fi
 # ---------------------------------------------------------------------------------------------
 commit=$(git -C "$REPO" rev-parse HEAD 2>/dev/null)
 dirty=false
-[ -z "$(git -C "$REPO" status --porcelain -- . ":!${OUT_DIR#"$REPO"/}" 2>/dev/null)" ] || dirty=true
+exclude=()
+case $OUT_DIR in "$REPO"/*) exclude=(":!${OUT_DIR#"$REPO"/}");; esac   # outside the repo there is nothing to exclude
+if porcelain=$(git -C "$REPO" status --porcelain -- . "${exclude[@]}"); then
+  [ -z "$porcelain" ] || dirty=true
+else
+  dirty=true; notes+=("the working tree could not be inspected (git status failed); recorded as dirty")
+fi
 gh_version=$(command -v gh >/dev/null && gh --version 2>/dev/null | head -1 | sed 's/^gh version //')
 curl_version=$(curl --version | head -1 | awk '{print $2}')
 jq_version=$(jq --version 2>/dev/null | sed 's/^jq-//')
@@ -208,7 +250,6 @@ case $status in
   2) verdict="**No verdict.** A source could not be fetched; this run says nothing about what it could not read. Re-run when the source is reachable." ;;
 esac
 
-mkdir -p "$OUT_DIR"
 {
   echo "# Mesh mode: upstream state ($NOW)"
   echo
@@ -220,45 +261,49 @@ mkdir -p "$OUT_DIR"
   echo "$verdict"
   if [ ${#moved[@]} -gt 0 ]; then
     echo
-    for m in "${moved[@]}"; do echo "- MOVED: $m"; done
+    for m in "${moved[@]}"; do echo "- MOVED: $(esc "$m")"; done
   fi
   if [ ${#unreachable[@]} -gt 0 ]; then
     echo
-    for u in "${unreachable[@]}"; do echo "- UNREACHABLE: $u"; done
+    for u in "${unreachable[@]}"; do echo "- UNREACHABLE: $(esc "$u")"; done
+  fi
+  if [ ${#notes[@]} -gt 0 ]; then
+    echo
+    for n in "${notes[@]}"; do echo "- NOTE: $(esc "$n")"; done
   fi
   echo
   echo "## Condition 1: a community Istio release whose ztunnel takes workload certificates from the SPIRE agent, documented as supported in ambient mode"
   echo
-  echo "- Latest Istio release: ${istio_tag:-unreachable}${istio_published:+ ($istio_published)}"
+  echo "- Latest Istio release: ${istio_tag:-unreachable}${istio_published:+ ($(esc "$istio_published"))}"
   echo "- Migration guide: <$ISTIO_MIGRATE_URL>${migrate_version:+ (page version Istio $migrate_version)}"
   if [ -z "$migrate_html" ]; then
     echo "- Entry \"$ISTIO_STATEMENT\" under *What is not supported*: **unreachable, not judged**"
   elif [ "$statement_found" = yes ]; then
     echo "- Entry \"$ISTIO_STATEMENT\" under *What is not supported*: **present**"
     echo
-    echo "  > $statement_excerpt"
+    echo "  > $(esc "$statement_excerpt")"
   else
     echo "- Entry \"$ISTIO_STATEMENT\" under *What is not supported*: **not found on the page**"
   fi
-  echo "- Tracking issue istio/istio#$ISTIO_ISSUE${issue_title:+ \"$issue_title\"}: ${issue_state:-unreachable}${issue_reason:+ ($issue_reason)}${issue_updated:+, last updated $issue_updated}${issue_closed:+, closed $issue_closed}"
+  echo "- Tracking issue istio/istio#$ISTIO_ISSUE${issue_title:+ \"$(esc "$issue_title")\"}: $(esc "${issue_state:-unreachable}")${issue_reason:+ ($(esc "$issue_reason"))}${issue_updated:+, last updated $(esc "$issue_updated")}${issue_closed:+, closed $(esc "$issue_closed")}"
   echo
   echo "| ztunnel pull request | Role | State | Merged | Labels | Last updated |"
   echo "|---|---|---|---|---|---|"
   for n in "${ZTUNNEL_PRS[@]}"; do
-    st=${pr_state[$n]:-unreachable}
+    st=$(esc "${pr_state[$n]:-unreachable}")
     [ "${pr_draft[$n]}" = true ] && st="$st (draft)"
-    echo "| [#$n](https://github.com/istio/ztunnel/pull/$n)${pr_title[$n]:+ \"${pr_title[$n]}\"} | ${ZTUNNEL_PR_ROLE[$n]} | $st | ${pr_merged[$n]:-no} | ${pr_labels[$n]:-} | ${pr_updated[$n]:-} |"
+    echo "| [#$n](https://github.com/istio/ztunnel/pull/$n)${pr_title[$n]:+ \"$(esc "${pr_title[$n]}")\"} | ${ZTUNNEL_PR_ROLE[$n]} | $st | $(esc "${pr_merged[$n]:-no}") | $(esc "${pr_labels[$n]:-}") | $(esc "${pr_updated[$n]:-}") |"
   done
   echo
   echo "The premise moves when the entry disappears from the guide or when #1676 or #1936 merges; #2067 is groundwork and is recorded for context."
   echo
   echo "## Condition 2: a SPIRE release in which the Broker API is a stable agent feature, outside the \`experimental\` block"
   echo
-  echo "- Latest SPIRE release: ${spire_tag:-unreachable}${spire_published:+ ($spire_published)}"
+  echo "- Latest SPIRE release: ${spire_tag:-unreachable}${spire_published:+ ($(esc "$spire_published"))}"
   if [ -n "$spire_doc_url" ]; then echo "- Agent documentation read: <$spire_doc_url>"; fi
   case "$broker_documented/$broker_experimental" in
-    yes/yes) echo "- Broker API in \`$SPIRE_AGENT_DOC_PATH\` at ${spire_tag}: documented, **under the \`experimental\` block**${broker_status_line:+ (\"$broker_status_line\")}" ;;
-    yes/no)  echo "- Broker API in \`$SPIRE_AGENT_DOC_PATH\` at ${spire_tag}: documented, **outside the \`experimental\` block**${broker_status_line:+ (\"$broker_status_line\")}" ;;
+    yes/yes) echo "- Broker API in \`$SPIRE_AGENT_DOC_PATH\` at ${spire_tag}: documented, **under the \`experimental\` block**${broker_status_line:+ (\"$(esc "$broker_status_line")\")}" ;;
+    yes/no)  echo "- Broker API in \`$SPIRE_AGENT_DOC_PATH\` at ${spire_tag}: documented, **outside the \`experimental\` block**${broker_status_line:+ (\"$(esc "$broker_status_line")\")}" ;;
     no/*)    echo "- Broker API in \`$SPIRE_AGENT_DOC_PATH\` at ${spire_tag}: **not documented in this release** (the premise holds: no stable Broker API)" ;;
     *)       echo "- Broker API in \`$SPIRE_AGENT_DOC_PATH\`: **unreachable, not judged**" ;;
   esac
@@ -290,6 +335,7 @@ jq -n \
 note "record written to ${RECORD#"$REPO"/} and ${ENVIRONMENT#"$REPO"/}"
 for m in "${moved[@]}"; do note "MOVED: $m"; done
 for u in "${unreachable[@]}"; do note "UNREACHABLE: $u"; done
+for n in "${notes[@]}"; do note "NOTE: $n"; done
 case $status in
   0) note "premises hold (exit 0)";;
   1) note "a premise moved (exit 1)";;

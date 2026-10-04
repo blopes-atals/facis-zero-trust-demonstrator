@@ -18,8 +18,13 @@ VALUES=${VALUES:-$CHART/ci/values.yaml}
 AMBIENT_VALUES=${AMBIENT_VALUES:-$PWD/ambient-values.yaml}
 CONTEXT=${KUBE_CONTEXT:-kind-ztd}
 RELEASE=ztd; RNS=ztd-system
-MGMT=$(python3 -c "import yaml;print(yaml.safe_load(open('$CHART/values.yaml'))['planes']['management']['namespace'])")
-DATA=$(python3 -c "import yaml;print(yaml.safe_load(open('$CHART/values.yaml'))['planes']['data']['namespace'])")
+# yaml_get <file> <key>... : one value out of a YAML file; the path travels as an argument, never inside the source
+yaml_get() { python3 -c 'import sys,yaml
+v=yaml.safe_load(open(sys.argv[1]))
+for k in sys.argv[2:]: v=v[k]
+print(v)' "$@"; }
+MGMT=$(yaml_get "$CHART/values.yaml" planes management namespace)
+DATA=$(yaml_get "$CHART/values.yaml" planes data namespace)
 # Stand-in images for the probes; nothing here is consumed by a real zone.
 AGNHOST=registry.k8s.io/e2e-test-images/agnhost:2.53
 CURL=docker.io/curlimages/curl:8.10.1@sha256:d9b4541e214bcd85196d6e92e2753ac6d0ea699f0af5741f8c6cccbfcf00ef4b
@@ -47,13 +52,13 @@ expect_deny() { local r; r=$(probe "$1" "$2" "$3"); case $r in denied*) true;; *
 
 : > "$OUT"
 say "# Umbrella chart evidence ($(date -u +%Y-%m-%dT%H:%M:%SZ))" ''
-say "Cluster context \`$CONTEXT\`, chart \`deployment/helm/ztd\` $(grep '^version:' "$CHART/Chart.yaml" | cut -d' ' -f2), zone file \`${VALUES#"$REPO"/}\` (mesh mode $(python3 -c "import yaml;print(yaml.safe_load(open('$VALUES'))['mesh']['mode'])"), the installed baseline), excursion fixture \`${AMBIENT_VALUES#"$REPO"/}\`." ''
+say "Cluster context \`$CONTEXT\`, chart \`deployment/helm/ztd\` $(grep '^version:' "$CHART/Chart.yaml" | cut -d' ' -f2), zone file \`${VALUES#"$REPO"/}\` (mesh mode $(yaml_get "$VALUES" mesh mode), the installed baseline), excursion fixture \`${AMBIENT_VALUES#"$REPO"/}\`." ''
 say "Tools: helm $(h version --short 2>/dev/null), kubectl client $(k version --client -o json | python3 -c 'import sys,json;print(json.load(sys.stdin)["clientVersion"]["gitVersion"])'). The CI chart job pins Helm v4.3.0." ''
 say 'Probe results: `200` means the call went through; `denied(28)` means curl gave up after 5 s because the policy dropped the packets.' ''
 
 say '' '## 0. Preconditions' ''
 server=$(k version -o json | python3 -c 'import sys,json;print(json.load(sys.stdin)["serverVersion"]["gitVersion"])')
-recorded=$(python3 -c "import yaml;print(yaml.safe_load(open('$VALUES'))['zone']['kubernetesVersion'])")
+recorded=$(yaml_get "$VALUES" zone kubernetesVersion)
 [ "$server" = "$recorded" ]; check $? "the zone file records the server version the cluster runs" "server $server, recorded $recorded"
 cni=$(k -n kube-system get ds cilium -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null)
 [ -n "$cni" ]; check $? "Cilium is the CNI" "$cni"
