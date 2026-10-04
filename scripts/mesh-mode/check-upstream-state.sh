@@ -92,7 +92,7 @@ istio_published=$(jq -r '.published_at // empty' <<<"$istio_release_json")
 if [ -z "$istio_tag" ]; then
   [ -n "$istio_release_json" ] && unreachable+=("istio/istio latest release: no tag in the response")
 elif ! is_tag "$istio_tag"; then
-  unreachable+=("istio/istio latest release: tag $(esc "$istio_tag") is not version-shaped; not recorded"); istio_tag=
+  unreachable+=("istio/istio latest release: tag $istio_tag is not version-shaped; not recorded"); istio_tag=; istio_published=
 fi
 
 migrate_html=$(raw_get "$ISTIO_MIGRATE_URL") && [ -n "$migrate_html" ] \
@@ -179,7 +179,7 @@ spire_published=$(jq -r '.published_at // empty' <<<"$spire_release_json")
 if [ -z "$spire_tag" ]; then
   [ -n "$spire_release_json" ] && unreachable+=("spiffe/spire latest release: no tag in the response")
 elif ! is_tag "$spire_tag"; then
-  unreachable+=("spiffe/spire latest release: tag $(esc "$spire_tag") is not version-shaped; the agent document was not fetched"); spire_tag=
+  unreachable+=("spiffe/spire latest release: tag $spire_tag is not version-shaped; the agent document was not fetched"); spire_tag=; spire_published=
 fi
 
 broker_documented=unknown     # yes | no | unknown
