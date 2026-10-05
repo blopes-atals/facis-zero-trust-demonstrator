@@ -1,3 +1,0 @@
-# Created by ops-eval — review me.
-# 900 s: the upstream-state checks fetch live pages; the kind checks exit 77 without a kind cluster.
-timeout: 900
