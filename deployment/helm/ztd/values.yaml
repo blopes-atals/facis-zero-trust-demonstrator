@@ -29,21 +29,25 @@ planes:
   #   plane: management
 
 # --------------------------------------------------------------------------------------------
-# Mesh mode. ADR-0001 baselines ambient and foresees a superseding decision for sidecar. Only the
-# namespace label changes between the modes, so the chart is the same either way:
-#   ambient -> istio.io/dataplane-mode=ambient     sidecar -> istio-injection=enabled
+# Mesh mode. ADR-0006 baselines Istio sidecar mode with Cilium as the CNI, superseding the ambient
+# baseline of ADR-0001 (the mesh cannot take SPIRE-issued identities under ambient). Ambient is
+# parked, not abandoned: the value stays accepted and the Cilium host-probe exception below still
+# renders in that mode, so returning is a zone value, not a chart change. Only the namespace label
+# changes between the modes, so the chart is the same either way:
+#   sidecar -> istio-injection=enabled             ambient -> istio.io/dataplane-mode=ambient
 #   none    -> no mesh label (a cluster without Istio, such as a plain kind cluster)
 # Istio itself is installed by the mesh task after this chart; until then the label is inert.
 # --------------------------------------------------------------------------------------------
 mesh:
-  mode: ambient
+  mode: sidecar
   revision: ""  # sidecar mode may pin an Istio revision (istio.io/rev) instead of the default injector
 
 # --------------------------------------------------------------------------------------------
-# CNI-specific pieces. Under Istio ambient with Cilium, a default-deny NetworkPolicy blocks the
-# kubelet health probes, which Istio SNATs to 169.254.7.127; the documented remedy is a
-# cluster-wide Cilium policy admitting that address. Rendered only with cilium enabled AND mode
-# ambient. See https://istio.io/latest/docs/ambient/install/platform-prerequisites/ (istio/istio#49277).
+# CNI-specific pieces. Under Istio ambient (the parked mode) with Cilium, a default-deny
+# NetworkPolicy blocks the kubelet health probes, which Istio SNATs to 169.254.7.127; the documented
+# remedy is a cluster-wide Cilium policy admitting that address. Rendered only with cilium enabled
+# AND mode ambient; nothing is rendered in sidecar mode.
+# See https://istio.io/latest/docs/ambient/install/platform-prerequisites/ (istio/istio#49277).
 # --------------------------------------------------------------------------------------------
 cni:
   cilium:

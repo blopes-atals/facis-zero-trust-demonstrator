@@ -4,7 +4,9 @@
 #
 #   KUBE_CONTEXT       kubectl context           (default: kind-ztd)
 #   VALUES             zone file                 (default: deployment/helm/ztd/ci/values.yaml)
-#   SIDECAR_VALUES     zone file in sidecar mode (default: sidecar-values.yaml next to this script)
+#   AMBIENT_VALUES     zone file in ambient mode (default: ambient-values.yaml next to this script),
+#                      the excursion: sidecar is the installed baseline (ADR-0006), ambient the
+#                      parked mode the script switches to and back
 #
 # Every check is "<test>; check $? <title>": the status of the test is what the check records.
 # shellcheck disable=SC2319
@@ -13,11 +15,16 @@ cd "$(dirname "$0")" || exit 1
 REPO=$(git rev-parse --show-toplevel)
 CHART=$REPO/deployment/helm/ztd
 VALUES=${VALUES:-$CHART/ci/values.yaml}
-SIDECAR_VALUES=${SIDECAR_VALUES:-$PWD/sidecar-values.yaml}
+AMBIENT_VALUES=${AMBIENT_VALUES:-$PWD/ambient-values.yaml}
 CONTEXT=${KUBE_CONTEXT:-kind-ztd}
 RELEASE=ztd; RNS=ztd-system
-MGMT=$(python3 -c "import yaml;print(yaml.safe_load(open('$CHART/values.yaml'))['planes']['management']['namespace'])")
-DATA=$(python3 -c "import yaml;print(yaml.safe_load(open('$CHART/values.yaml'))['planes']['data']['namespace'])")
+# yaml_get <file> <key>... : one value out of a YAML file; the path travels as an argument, never inside the source
+yaml_get() { python3 -c 'import sys,yaml
+v=yaml.safe_load(open(sys.argv[1]))
+for k in sys.argv[2:]: v=v[k]
+print(v)' "$@"; }
+MGMT=$(yaml_get "$CHART/values.yaml" planes management namespace)
+DATA=$(yaml_get "$CHART/values.yaml" planes data namespace)
 # Stand-in images for the probes; nothing here is consumed by a real zone.
 AGNHOST=registry.k8s.io/e2e-test-images/agnhost:2.53
 CURL=docker.io/curlimages/curl:8.10.1@sha256:d9b4541e214bcd85196d6e92e2753ac6d0ea699f0af5741f8c6cccbfcf00ef4b
@@ -45,13 +52,13 @@ expect_deny() { local r; r=$(probe "$1" "$2" "$3"); case $r in denied*) true;; *
 
 : > "$OUT"
 say "# Umbrella chart evidence ($(date -u +%Y-%m-%dT%H:%M:%SZ))" ''
-say "Cluster context \`$CONTEXT\`, chart \`deployment/helm/ztd\` $(grep '^version:' "$CHART/Chart.yaml" | cut -d' ' -f2), zone file \`${VALUES#"$REPO"/}\`." ''
+say "Cluster context \`$CONTEXT\`, chart \`deployment/helm/ztd\` $(grep '^version:' "$CHART/Chart.yaml" | cut -d' ' -f2), zone file \`${VALUES#"$REPO"/}\` (mesh mode $(yaml_get "$VALUES" mesh mode), the installed baseline), excursion fixture \`${AMBIENT_VALUES#"$REPO"/}\`." ''
 say "Tools: helm $(h version --short 2>/dev/null), kubectl client $(k version --client -o json | python3 -c 'import sys,json;print(json.load(sys.stdin)["clientVersion"]["gitVersion"])'). The CI chart job pins Helm v4.3.0." ''
 say 'Probe results: `200` means the call went through; `denied(28)` means curl gave up after 5 s because the policy dropped the packets.' ''
 
 say '' '## 0. Preconditions' ''
 server=$(k version -o json | python3 -c 'import sys,json;print(json.load(sys.stdin)["serverVersion"]["gitVersion"])')
-recorded=$(python3 -c "import yaml;print(yaml.safe_load(open('$VALUES'))['zone']['kubernetesVersion'])")
+recorded=$(yaml_get "$VALUES" zone kubernetesVersion)
 [ "$server" = "$recorded" ]; check $? "the zone file records the server version the cluster runs" "server $server, recorded $recorded"
 cni=$(k -n kube-system get ds cilium -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null)
 [ -n "$cni" ]; check $? "Cilium is the CNI" "$cni"
@@ -86,7 +93,9 @@ say '' '## 3. The layout' ''
 code "$(k get ns "$MGMT" "$DATA" -L ztd.facis.io/plane,istio.io/dataplane-mode,istio-injection | sed 's/  */ /g')"
 code "$(k get netpol -A | grep -E "^(NAMESPACE|$MGMT|$DATA) " | sed 's/  */ /g')"
 for ns in "$MGMT" "$DATA"; do k -n "$ns" get netpol default-deny >/dev/null 2>&1; check $? "default-deny present in $ns"; done
-k get ciliumclusterwidenetworkpolicy "${RELEASE}-allow-ambient-hostprobes" >/dev/null 2>&1; check $? "ambient host-probe exception present (mode ambient, Cilium)"
+for ns in "$MGMT" "$DATA"; do [ "$(k get ns "$ns" -o jsonpath='{.metadata.labels.istio-injection}')" = enabled ]; check $? "sidecar mode (the baseline): istio-injection=enabled on $ns"; done
+for ns in "$MGMT" "$DATA"; do [ -z "$(k get ns "$ns" -o jsonpath='{.metadata.labels.istio\.io/dataplane-mode}')" ]; check $? "sidecar mode: no ambient label on $ns"; done
+k get ciliumclusterwidenetworkpolicy "${RELEASE}-allow-ambient-hostprobes" >/dev/null 2>&1; [ $? -ne 0 ]; check $? "sidecar mode: no ambient host-probe exception is rendered"
 
 say '' '## 4. Install again: idempotent' ''
 h get manifest "$RELEASE" -n "$RNS" > /tmp/ztd-manifest-1.yaml
@@ -115,18 +124,24 @@ expect_allow "$DATA" data-plain  "http://data-target.$DATA.svc:8080/hostname"   
 expect_deny  "$MGMT" mgmt-probe  "http://data-target.$DATA.svc:8080/hostname"        "management pod → data plane: DENIED (default deny is both directions)"
 r=$(k -n "$DATA" exec data-plain -- nslookup "tsa-policy-engine.$MGMT.svc.cluster.local" 2>&1 | tail -3 | tr '\n' ' '); k -n "$DATA" exec data-plain -- nslookup "tsa-policy-engine.$MGMT.svc.cluster.local" >/dev/null 2>&1; check $? "DNS bypass: the denied pod still resolves names" "$r"
 
-say '' '## 6. Mesh mode is one label' ''
-out=$(h upgrade --install "$RELEASE" "$CHART" -n "$RNS" -f "$SIDECAR_VALUES" --wait --timeout 5m 2>&1); rc=$?
-check $rc "upgrade to sidecar mode returns 0"
+say '' '## 6. Mesh mode is one label: the excursion to the parked ambient mode, and back' ''
+say 'Sidecar is the installed baseline (ADR-0006). The release is switched to ambient with the excursion fixture, which must bring the ambient label and the Cilium host-probe exception while the denial and the lane hold, and then back to sidecar, which must leave neither behind.' ''
+out=$(h upgrade --install "$RELEASE" "$CHART" -n "$RNS" -f "$AMBIENT_VALUES" --wait --timeout 5m 2>&1); rc=$?
+check $rc "upgrade to ambient mode returns 0"
 code "$(k get ns "$MGMT" "$DATA" -L ztd.facis.io/plane,istio.io/dataplane-mode,istio-injection | sed 's/  */ /g')"
-[ "$(k get ns "$DATA" -o jsonpath='{.metadata.labels.istio-injection}')" = enabled ]; check $? "sidecar mode: istio-injection=enabled on the plane namespaces"
-[ -z "$(k get ns "$DATA" -o jsonpath='{.metadata.labels.istio\.io/dataplane-mode}')" ]; check $? "sidecar mode: the ambient label is gone"
-k get ciliumclusterwidenetworkpolicy "${RELEASE}-allow-ambient-hostprobes" >/dev/null 2>&1; [ $? -ne 0 ]; check $? "sidecar mode: the ambient host-probe exception is gone"
-expect_deny  "$DATA" data-plain  "http://openbao.$MGMT.svc:8080/hostname"           "sidecar mode: cross-plane call still DENIED"
-expect_allow "$DATA" pdp-adapter "http://tsa-policy-engine.$MGMT.svc:8080/hostname" "sidecar mode: matrix lane still ALLOWED"
+for ns in "$MGMT" "$DATA"; do [ "$(k get ns "$ns" -o jsonpath='{.metadata.labels.istio\.io/dataplane-mode}')" = ambient ]; check $? "ambient mode: istio.io/dataplane-mode=ambient on $ns"; done
+[ -z "$(k get ns "$DATA" -o jsonpath='{.metadata.labels.istio-injection}')" ]; check $? "ambient mode: the sidecar label is gone"
+k get ciliumclusterwidenetworkpolicy "${RELEASE}-allow-ambient-hostprobes" >/dev/null 2>&1; check $? "ambient mode: the Cilium host-probe exception is rendered (mode ambient, Cilium)"
+expect_deny  "$DATA" data-plain  "http://openbao.$MGMT.svc:8080/hostname"           "ambient mode: cross-plane call still DENIED"
+expect_allow "$DATA" pdp-adapter "http://tsa-policy-engine.$MGMT.svc:8080/hostname" "ambient mode: matrix lane still ALLOWED"
 out=$(h upgrade --install "$RELEASE" "$CHART" -n "$RNS" -f "$VALUES" --wait --timeout 5m 2>&1); rc=$?
-check $rc "back to ambient mode returns 0"
-[ "$(k get ns "$DATA" -o jsonpath='{.metadata.labels.istio\.io/dataplane-mode}')" = ambient ]; check $? "ambient label restored"
+check $rc "back to sidecar mode returns 0"
+code "$(k get ns "$MGMT" "$DATA" -L ztd.facis.io/plane,istio.io/dataplane-mode,istio-injection | sed 's/  */ /g')"
+for ns in "$MGMT" "$DATA"; do [ "$(k get ns "$ns" -o jsonpath='{.metadata.labels.istio-injection}')" = enabled ]; check $? "sidecar mode restored: istio-injection=enabled on $ns"; done
+[ -z "$(k get ns "$DATA" -o jsonpath='{.metadata.labels.istio\.io/dataplane-mode}')" ]; check $? "sidecar mode restored: the ambient label is gone"
+k get ciliumclusterwidenetworkpolicy "${RELEASE}-allow-ambient-hostprobes" >/dev/null 2>&1; [ $? -ne 0 ]; check $? "sidecar mode restored: the ambient host-probe exception is gone"
+expect_deny  "$DATA" data-plain  "http://openbao.$MGMT.svc:8080/hostname"           "sidecar mode restored: cross-plane call still DENIED"
+expect_allow "$DATA" pdp-adapter "http://tsa-policy-engine.$MGMT.svc:8080/hostname" "sidecar mode restored: matrix lane still ALLOWED"
 
 say '' '## 7. Guards that refuse a wrong configuration: the lint and render steps of the CI chart gate' ''
 say 'The CI job runs `helm lint` and then `helm template`. Schema violations fail both steps; a `fail` call in a template fails the render step only, because lint mode renders `fail` as a no-op by design.' ''

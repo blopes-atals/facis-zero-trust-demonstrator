@@ -16,9 +16,12 @@ Where a step cannot be executed yet it says so, rather than reading as though it
 ## What is common to all three
 
 - **Kubernetes 1.29 or later.** Older versions are not supported; the mesh and admission baselines
-  assume it.
+  assume it. A cluster that runs the mesh needs **1.33 or later**, for the native sidecar containers
+  of [ADR-0006](../adr/0006-service-mesh-mode-istio-sidecar-with-cilium.md).
 - **Cilium as CNI**, configured with `cni.exclusive=false` so the Istio CNI plugin can chain behind
-  it ([ADR-0001](../adr/0001-service-mesh-mode-istio-ambient-with-cilium.md)).
+  it, and **Istio in sidecar mode** on top
+  ([ADR-0006](../adr/0006-service-mesh-mode-istio-sidecar-with-cilium.md); ambient is the parked
+  alternative).
 - **The clusters are client-provided.** Provisioning them is out of scope; these guides begin at the
   point where a kubeconfig is in hand.
 - **Nothing is applied by hand.** Every step below is a chart, a script in `scripts/` or a pipeline

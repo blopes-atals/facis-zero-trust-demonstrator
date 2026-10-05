@@ -39,7 +39,8 @@ Called with (dict "root" $ "endpoint" <endpoint>).
 
 {{/*
 Mesh label key and value for the plane namespaces, by mode. The only place the mode shapes the
-layout: ambient and sidecar differ in one namespace label, so the chart is the same either way.
+layout: sidecar (the ADR-0006 baseline) and ambient (parked) differ in one namespace label, so the
+chart is the same either way.
 */}}
 {{- define "ztd.meshLabelKey" -}}
 {{- if eq .Values.mesh.mode "ambient" -}}istio.io/dataplane-mode

@@ -15,7 +15,7 @@ whether the reason is the one you expected.
 |---|---|---|
 | A pod starts but no traffic reaches it | It never received an SVID, so the mesh has no identity to route to | Look for a SPIRE registration entry matching the pod's service account; a missing entry is the answer, not a mesh problem |
 | The SVID exists but the SPIFFE ID is wrong | The registration selector matches more, or less, than intended | Compare the SPIFFE ID in the workload's certificate with the selector that produced it |
-| Traffic works between two pods that should not be able to talk | L7 enforcement is owned by neither component on that path, or by both | Check which component owns L7 for that path in the mesh configuration — [ADR-0001](adr/0001-service-mesh-mode-istio-ambient-with-cilium.md) requires exactly one |
+| Traffic works between two pods that should not be able to talk | L7 enforcement is owned by neither component on that path, or by both | Check which component owns L7 for that path in the mesh configuration — [ADR-0006](adr/0006-service-mesh-mode-istio-sidecar-with-cilium.md) requires exactly one: where the sidecar enforces L7, Cilium is held to L3/L4 |
 | The Istio CNI plugin never chains | Cilium claimed the CNI configuration exclusively | Confirm Cilium is installed with `cni.exclusive=false` |
 
 ## Admission control rejections

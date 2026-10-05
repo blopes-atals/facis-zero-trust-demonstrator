@@ -73,14 +73,18 @@ receives an SVID whose SPIFFE ID matches its service account.
 
 ## 4. Mesh
 
-Istio is installed in the mode the zone's values file names (`mesh.mode`: ambient under
-ADR-0001, sidecar if a superseding decision flips it); the plane namespaces already carry the matching
-label. Exactly one component enforces L7 policy on any given traffic path — where a waypoint proxy
-does it, Cilium is held to L3/L4 for that path, and the assignment is recorded in the mesh
+Istio is installed in the mode the zone's values file names (`mesh.mode`: sidecar under
+[ADR-0006](../adr/0006-service-mesh-mode-istio-sidecar-with-cilium.md), which superseded the ambient
+baseline of ADR-0001; ambient is the parked alternative); the plane namespaces already carry the
+matching label, `istio-injection=enabled`. Sidecars are injected as native sidecar containers, which
+is why the cluster's Kubernetes version is recorded in the zone file against that requirement. The
+sidecar takes its certificate from the SPIRE agent over SDS, so a workload without a SPIRE entry
+has no mesh identity. Exactly one component enforces L7 policy on any given traffic path — where the
+sidecar does it, Cilium is held to L3/L4 for that path, and the assignment is recorded in the mesh
 configuration.
 
-**Verify:** the ztunnel daemonset is ready on every node, and a request between two meshed workloads
-carries an identity the waypoint can name.
+**Verify:** every pod in a plane namespace carries the injected proxy as a native sidecar, and a
+request between two meshed workloads carries a SPIRE-issued identity.
 
 ## 5. Admission control
 

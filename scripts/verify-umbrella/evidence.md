@@ -1,8 +1,8 @@
-# Umbrella chart evidence (2026-09-29T20:29:39Z)
+# Umbrella chart evidence (2026-10-04T13:45:56Z)
 
-Cluster context `kind-ztd`, chart `deployment/helm/ztd` 0.1.0, zone file `deployment/helm/ztd/ci/values.yaml`.
+Cluster context `kind-ztd`, chart `deployment/helm/ztd` 0.1.0, zone file `deployment/helm/ztd/ci/values.yaml` (mesh mode sidecar, the installed baseline), excursion fixture `scripts/verify-umbrella/ambient-values.yaml`.
 
-Tools: helm v4.3.0+gbec5b06, kubectl client v1.35.6. The CI chart job pins Helm v4.3.0.
+Tools: helm v4.3.0+gbec5b06, kubectl client v1.35.0. The CI chart job pins Helm v4.3.0.
 
 Probe results: `200` means the call went through; `denied(28)` means curl gave up after 5 s because the policy dropped the packets.
 
@@ -18,8 +18,8 @@ Probe results: `200` means the call went through; `denied(28)` means curl gave u
 
 ```
 NAME STATUS ROLES AGE VERSION INTERNAL-IP EXTERNAL-IP OS-IMAGE KERNEL-VERSION CONTAINER-RUNTIME
-ztd-control-plane Ready control-plane 4d13h v1.35.5 172.22.0.3 <none> Debian GNU/Linux 13 (trixie) 7.0.0-34-generic containerd://2.3.1
-ztd-worker Ready <none> 4d13h v1.35.5 172.22.0.2 <none> Debian GNU/Linux 13 (trixie) 7.0.0-34-generic containerd://2.3.1
+ztd-control-plane Ready control-plane 19h v1.35.5 172.30.0.2 <none> Debian GNU/Linux 13 (trixie) 7.0.0-34-generic containerd://2.3.1
+ztd-worker Ready <none> 19h v1.35.5 172.30.0.3 <none> Debian GNU/Linux 13 (trixie) 7.0.0-34-generic containerd://2.3.1
 ```
 
 
@@ -30,7 +30,7 @@ ztd-worker Ready <none> 4d13h v1.35.5 172.22.0.2 <none> Debian GNU/Linux 13 (tri
 ## 2. Install from zero
 
 - PASS: helm upgrade --install from an empty cluster returns 0
-  5s
+  6s
 
 ```
 Release "ztd" does not exist. Installing it now.
@@ -39,8 +39,8 @@ DESCRIPTION: Install complete
 ztd umbrella chart 0.1.0: release ztd in ztd-system, zone kind.
 
 Plane namespaces:
-  - ztd-mgmt  plane=management  istio.io/dataplane-mode=ambient
-  - ztd-data  plane=data  istio.io/dataplane-mode=ambient
+  - ztd-mgmt  plane=management  istio-injection=enabled
+  - ztd-data  plane=data  istio-injection=enabled
 
 Network layer: default-deny in both directions in every plane namespace, the DNS bypass, and
 5 allow-matrix lanes from the data plane into the management plane.
@@ -61,8 +61,8 @@ Evidence: scripts/verify-umbrella/verify.sh
 
 ```
 NAME STATUS AGE PLANE DATAPLANE-MODE ISTIO-INJECTION
-ztd-mgmt Active 5s management ambient 
-ztd-data Active 5s data ambient 
+ztd-mgmt Active 5s management enabled
+ztd-data Active 5s data enabled
 ```
 
 
@@ -88,7 +88,11 @@ ztd-mgmt default-deny <none> 5s
 
 - PASS: default-deny present in ztd-mgmt
 - PASS: default-deny present in ztd-data
-- PASS: ambient host-probe exception present (mode ambient, Cilium)
+- PASS: sidecar mode (the baseline): istio-injection=enabled on ztd-mgmt
+- PASS: sidecar mode (the baseline): istio-injection=enabled on ztd-data
+- PASS: sidecar mode: no ambient label on ztd-mgmt
+- PASS: sidecar mode: no ambient label on ztd-data
+- PASS: sidecar mode: no ambient host-probe exception is rendered
 
 ## 4. Install again: idempotent
 
@@ -115,27 +119,44 @@ Stand-in pods carry the matrix labels; nothing else about them is real. Targets 
 - PASS: management pod → data plane: DENIED (default deny is both directions)
   → denied(28)
 - PASS: DNS bypass: the denied pod still resolves names
-  Name:	tsa-policy-engine.ztd-mgmt.svc.cluster.local Address: 10.96.75.158  
+  Address: 10.96.136.0   
 
-## 6. Mesh mode is one label
+## 6. Mesh mode is one label: the excursion to the parked ambient mode, and back
 
-- PASS: upgrade to sidecar mode returns 0
+Sidecar is the installed baseline (ADR-0006). The release is switched to ambient with the excursion fixture, which must bring the ambient label and the Cilium host-probe exception while the denial and the lane hold, and then back to sidecar, which must leave neither behind.
+
+- PASS: upgrade to ambient mode returns 0
 
 ```
 NAME STATUS AGE PLANE DATAPLANE-MODE ISTIO-INJECTION
-ztd-mgmt Active 37s management enabled
-ztd-data Active 37s data enabled
+ztd-mgmt Active 43s management ambient 
+ztd-data Active 43s data ambient 
 ```
 
-- PASS: sidecar mode: istio-injection=enabled on the plane namespaces
-- PASS: sidecar mode: the ambient label is gone
-- PASS: sidecar mode: the ambient host-probe exception is gone
-- PASS: sidecar mode: cross-plane call still DENIED
+- PASS: ambient mode: istio.io/dataplane-mode=ambient on ztd-mgmt
+- PASS: ambient mode: istio.io/dataplane-mode=ambient on ztd-data
+- PASS: ambient mode: the sidecar label is gone
+- PASS: ambient mode: the Cilium host-probe exception is rendered (mode ambient, Cilium)
+- PASS: ambient mode: cross-plane call still DENIED
   → denied(28)
-- PASS: sidecar mode: matrix lane still ALLOWED
+- PASS: ambient mode: matrix lane still ALLOWED
   → 200
-- PASS: back to ambient mode returns 0
-- PASS: ambient label restored
+- PASS: back to sidecar mode returns 0
+
+```
+NAME STATUS AGE PLANE DATAPLANE-MODE ISTIO-INJECTION
+ztd-mgmt Active 55s management enabled
+ztd-data Active 55s data enabled
+```
+
+- PASS: sidecar mode restored: istio-injection=enabled on ztd-mgmt
+- PASS: sidecar mode restored: istio-injection=enabled on ztd-data
+- PASS: sidecar mode restored: the ambient label is gone
+- PASS: sidecar mode restored: the ambient host-probe exception is gone
+- PASS: sidecar mode restored: cross-plane call still DENIED
+  → denied(28)
+- PASS: sidecar mode restored: matrix lane still ALLOWED
+  → 200
 
 ## 7. Guards that refuse a wrong configuration: the lint and render steps of the CI chart gate
 
