@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# scenario: workload-identity / The pin is recorded
+# level: L1
+# requirement: SPIRE is installed into a zone as pinned upstream releases
+. "$(dirname "$0")/../lib.sh"
+row=$(grep -i '^| *SPIRE' "$REPO/docs/dependencies.md" | head -1)
+echo "SPIRE row: $row"
+[ -n "$row" ] || { echo "FAIL: no SPIRE row in docs/dependencies.md"; exit 1; }
+rc=0
+sv=$(grep -o 'SPIRE v[0-9.]*' "$INSTALL" | head -1 | sed 's/SPIRE //'); c1=$(sed -n 's/^SPIRE_VERSION=\([0-9.]*\).*/\1/p' "$INSTALL"); c2=$(sed -n 's/^SPIRE_CRDS_VERSION=//p' "$INSTALL")
+echo "installer pins: SPIRE $sv, spire $c1, spire-crds $c2"
+grep -q "| *${sv} *|\|| *${sv#v} *|" <<<"$row" && echo "PASS: SPIRE version $sv" || { echo "FAIL: SPIRE version $sv not named"; rc=1; }
+grep -q "\`spire\` $c1" <<<"$row" && echo "PASS: chart spire $c1" || { echo "FAIL: chart spire $c1 not named"; rc=1; }
+grep -q "\`spire-crds\` $c2" <<<"$row" && echo "PASS: chart spire-crds $c2" || { echo "FAIL: chart spire-crds $c2 not named"; rc=1; }
+why=$(awk -F'|' '{print $(NF-1)}' <<<"$row" | sed 's/^ *//;s/ *$//')
+[ ${#why} -gt 20 ] && echo "PASS: why: $why" || { echo "FAIL: no reason given ($why)"; rc=1; }
+exit $rc

@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# scenario: mesh-identity-enrolment / A step fails
+# level: L2
+# requirement: A zone installs from an empty cluster in one order, idempotently
+# The release is made to miss Ready by a 1 s step timeout (STEP_TIMEOUT=1s) on an empty cluster.
+. "$(dirname "$0")/../lib.sh"
+need_state
+S=$ZTD_STATE
+rc_=$(cat "$S/failstep.rc"); echo "installer with STEP_TIMEOUT=1s: exit $rc_"; tail -4 "$S/failstep.log"
+echo "helm releases afterwards:"; cat "$S/helm-after-failstep.txt"
+[ "$rc_" != 0 ] || { echo "FAIL: exited 0"; exit 1; }
+order="ztd spire-crds spire istio-base istiod istio-cni zone-policy"
+named=$(grep -iE 'fail' "$S/failstep.log" | grep -oE 'release [a-z][a-z-]*' | head -1 | awk '{print $2}')
+case " $order " in *" $named "*) ;; *) named="" ;; esac
+[ -n "$named" ] || { echo "FAIL: the output does not name the failing release"; exit 1; }
+echo "named release: $named"
+after=0; bad=0
+for r in $order; do
+  [ $after = 1 ] && awk 'NR>1{print $1}' "$S/helm-after-failstep.txt" | grep -qx "$r" && { echo "FAIL: release $r after the failed step was installed"; bad=1; }
+  [ "$r" = "$named" ] && after=1
+done
+[ $bad = 0 ] && echo "PASS: stopped at $named"
+exit $bad

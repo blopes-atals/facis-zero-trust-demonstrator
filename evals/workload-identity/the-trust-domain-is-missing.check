@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# scenario: workload-identity / The trust domain is missing
+# level: L1
+# requirement: The `spire` release installs the identity components and requires the trust domain
+. "$(dirname "$0")/../lib.sh"
+python3 - "$KIND_ZONE" "$EVAL_TMP/zone.yaml" <<'PY'
+import sys, yaml
+v = yaml.safe_load(open(sys.argv[1])); v["zone"].pop("trustDomain", None)
+yaml.safe_dump(v, open(sys.argv[2], "w"))
+PY
+out=$(ZONE_VALUES=$EVAL_TMP/zone.yaml RENDER_DIR=$EVAL_TMP/r "$INSTALL" render spire 2>&1); rc=$?
+echo "render spire without zone.trustDomain: exit $rc"; echo "$out" | tail -5
+[ $rc -ne 0 ] || { echo "FAIL: expected rendering to fail, it exited 0"; exit 1; }
+grep -q 'zone\.trustDomain' <<<"$out" || { echo "FAIL: message does not name the zone fact zone.trustDomain"; exit 1; }
+echo "PASS"

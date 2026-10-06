@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# scenario: workload-identity / A labelled pod in a plane namespace gets an entry
+# level: L2
+# requirement: Registration is by selector, switched by the identity label, and never a hook
+. "$(dirname "$0")/../lib.sh"
+need_live
+uid=$(k -n "$DATA" get pod ev-client -o jsonpath='{.metadata.uid}')
+want="spiffe://$TD_KIND/ns/$DATA/sa/ev-client"
+spire_server entry show -output json > "$EVAL_TMP/e.json" || { echo "FAIL: entry show"; exit 1; }
+hit=$(jq -r --arg u "$uid" '.entries[] | select(any(.selectors[]; .value == "pod-uid:\($u)")) | "spiffe://\(.spiffe_id.trust_domain)\(.spiffe_id.path)"' "$EVAL_TMP/e.json")
+echo "entries for pod ev-client (uid $uid): ${hit:-none}"
+[ "$hit" = "$want" ] && echo "PASS: $want" || { echo "FAIL: want exactly $want"; exit 1; }

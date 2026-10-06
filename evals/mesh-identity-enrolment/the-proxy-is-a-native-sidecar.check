@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# scenario: mesh-identity-enrolment / The proxy is a native sidecar
+# level: L2
+# requirement: The native-sidecar version requirement is enforced
+. "$(dirname "$0")/../lib.sh"
+need_live
+rc=0
+j=$(k -n "$DATA" get pod ev-client -o json)
+init=$(jq -c '[(.spec.initContainers // [])[] | select(.name == "istio-proxy") | {name, restartPolicy}]' <<<"$j")
+main=$(jq -r '[.spec.containers[].name] | join(",")' <<<"$j")
+ready=$(jq -r '.status.conditions[] | select(.type == "Ready") | .status' <<<"$j")
+echo "initContainers istio-proxy: $init; containers: $main; Ready=$ready"
+[ "$init" = '[{"name":"istio-proxy","restartPolicy":"Always"}]' ] || { echo "FAIL: istio-proxy not an init container with restartPolicy Always"; rc=1; }
+grep -q istio-proxy <<<"$main" && { echo "FAIL: istio-proxy is also a regular container"; rc=1; }
+[ "$ready" = True ] || { echo "FAIL: pod not Ready"; rc=1; }
+evidence_section_passed native-sidecar-version || { echo "FAIL: the proof's evidence does not show it passed"; rc=1; }
+exit $rc

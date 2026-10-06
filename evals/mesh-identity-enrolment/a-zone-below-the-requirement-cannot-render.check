@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# scenario: mesh-identity-enrolment / A zone below the requirement cannot render
+# level: L1
+# requirement: The native-sidecar version requirement is enforced
+. "$(dirname "$0")/../lib.sh"
+out=$(helm template ztd "$ZTD_CHART" -n ztd-system -f "$KIND_ZONE" --set mesh.mode=sidecar --set zone.kubernetesVersion=v1.32.0 2>&1); rc=$?
+echo "helm template with mesh.mode=sidecar zone.kubernetesVersion=v1.32.0: exit $rc"; grep -i 'error' <<<"$out" | head -5
+[ $rc -ne 0 ] || { echo "FAIL: rendering succeeded"; exit 1; }
+grep -qi 'native sidecar' <<<"$out" || { echo "FAIL: message does not name native sidecar containers"; exit 1; }
+grep -q '1\.33' <<<"$out" || { echo "FAIL: message does not name 1.33"; exit 1; }
+echo "PASS"

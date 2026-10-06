@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# scenario: workload-identity / Nothing else opens
+# level: L2
+# requirement: No other opening is rendered for SPIRE and the openings are documented
+. "$(dirname "$0")/../lib.sh"
+need_live
+probe_control
+rc=0
+s=$(classify_policies "$SPIRE_NS" | sort | xargs); echo "$SPIRE_NS policies by class: $s"
+[ "$s" = "api-lane default-deny dns-bypass entity-ingress:8081 entity-ingress:9443 intra-plane" ] && echo "PASS: default deny, DNS bypass, intra-plane, API lane, two entity-sourced ingress openings" || { echo "FAIL: other set"; rc=1; }
+sip=$(k -n "$SPIRE_NS" get pod spire-server-0 -o jsonpath='{.status.podIP}')
+for p in $( { pod_ports "$SPIRE_NS" spire-server-0; printf '%s\n' 80 443 8080 8081 8082 8083 8443 9443 9988; } | sort -un); do
+  r=$(tcp_probe "$DATA" ev-probe app "$sip" "$p"); echo "  $DATA/ev-probe -> SPIRE server $sip:$p $r"; [ "$r" = dropped ] || rc=1
+done
+exit $rc

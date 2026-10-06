@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# scenario: workload-identity / The SPIRE namespace is a plane without injection
+# level: L1
+# requirement: The identity control plane is a management-plane namespace under the default deny
+. "$(dirname "$0")/../lib.sh"
+helm template ztd "$ZTD_CHART" -n ztd-system -f "$KIND_ZONE" > "$EVAL_TMP/ztd.yaml" 2>&1 || { echo "FAIL: render"; tail "$EVAL_TMP/ztd.yaml"; exit 1; }
+python3 - "$EVAL_TMP/ztd.yaml" <<'PY'
+import sys, yaml
+docs = [x for x in yaml.safe_load_all(open(sys.argv[1])) if x]
+fails = []
+def ok(c, m):
+    print(("PASS: " if c else "FAIL: ") + m)
+    if not c: fails.append(m)
+ns = next((x for x in docs if x["kind"] == "Namespace" and x["metadata"]["name"] == "spire-system"), None)
+ok(ns is not None, "Namespace spire-system rendered")
+lab = (ns or {}).get("metadata", {}).get("labels", {}) or {}
+print("labels:", lab)
+ok(lab.get("ztd.facis.io/plane") == "management", "management-plane label")
+ok("istio-injection" not in lab and "istio.io/rev" not in lab, "no istio-injection label")
+dd = [x for x in docs if x["kind"] == "NetworkPolicy" and x["metadata"].get("namespace") == "spire-system" and x["metadata"]["name"] == "default-deny"]
+ok(len(dd) == 1 and dd[0]["spec"].get("podSelector") == {} and set(dd[0]["spec"].get("policyTypes", [])) == {"Ingress", "Egress"}
+   and not dd[0]["spec"].get("ingress") and not dd[0]["spec"].get("egress"), f"default-deny policy in spire-system: {[d['spec'] for d in dd]}")
+sys.exit(1 if fails else 0)
+PY

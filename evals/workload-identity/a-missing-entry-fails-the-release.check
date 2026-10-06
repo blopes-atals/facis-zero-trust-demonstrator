@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# scenario: workload-identity / A missing entry fails the release
+# level: L2
+# requirement: Identity-band checks fail the release when identity is not there
+# setup upgraded zone-policy so that its declared registration (a ClusterSPIFFEID of a class no
+# controller-manager serves) is never reconciled into entries while labelled pods run.
+. "$(dirname "$0")/../lib.sh"
+need_live
+S=$ZTD_STATE; rc=0
+echo "helm upgrade --wait-for-jobs: exit $(cat "$S/missing.rc")"; tail -2 "$S/missing.log"
+st=$(jq -r .info.status "$S/missing-status.json"); echo "release status: $st"
+echo "hook job logs:"; sed 's/^/  /' "$S/missing-joblogs.txt" | tail -8
+[ "$(cat "$S/missing.rc")" != 0 ] || { echo "FAIL: the upgrade succeeded"; rc=1; }
+[ "$st" = failed ] || { echo "FAIL: release not marked failed"; rc=1; }
+grep -qi 'registrations-reconciled.*Failed\|Job Failed' "$S/missing.log" || { echo "FAIL: no failed hook job named"; rc=1; }
+[ $rc = 0 ] && echo PASS
+exit $rc

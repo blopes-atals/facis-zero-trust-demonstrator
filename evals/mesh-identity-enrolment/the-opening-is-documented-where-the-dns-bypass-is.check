@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# scenario: mesh-identity-enrolment / The opening is documented where the DNS bypass is
+# level: L1
+# requirement: The mesh control-plane placement and openings are documented as declared openings of the network baseline
+. "$(dirname "$0")/../lib.sh"
+git -C "$REPO" show "$(git -C "$REPO" merge-base HEAD main):docs/architecture.md" > "$EVAL_TMP/base.md" 2>/dev/null || : > "$EVAL_TMP/base.md"
+python3 - "$REPO/docs/architecture.md" "$EVAL_TMP/base.md" "$REPO/scripts/verify-mesh-identity/README.md" <<'PY'
+import re, sys
+arch, base, proof = (open(p).read() for p in sys.argv[1:])
+fails = []
+def ok(c, m):
+    print(("PASS: " if c else "FAIL: ") + m)
+    if not c: fails.append(m)
+def sections(t):
+    out, cur = {}, None
+    for l in t.splitlines():
+        if l.startswith("#"): cur = l.strip("# ").strip(); out[cur] = []
+        elif cur: out[cur].append(l)
+    return out
+def rows(lines):
+    r = [[c.strip() for c in l.strip().strip("|").split("|")] for l in lines if l.strip().startswith("|")]
+    return r[0] if r else [], [x for x in r[2:]]
+secs = sections(arch)
+op = [s for s in secs if "opening" in s.lower()]
+ok(bool(op), f"a declared-openings section exists: {op}")
+if op:
+    body = secs[op[0]]
+    ok(any("DNS bypass" in l for l in body), "the section places the openings beside the DNS bypass")
+    head, rs = rows(body)
+    print("columns:", head)
+    col = lambda name: next((i for i, h in enumerate(head) if name in h.lower()), None)
+    ci = {n: col(n) for n in ("source", "destination", "port", "check")}
+    ok(all(v is not None for v in ci.values()), f"columns source/destination/port/check: {ci}")
+    checks = set(re.findall(r"^\| `([a-z0-9-]+)` \|", proof, re.M))
+    for name in ("meshControlPlane", "controlPlaneWebhooks", "identityServer"):
+        r = next((x for x in rs if name in x[0]), None)
+        ok(r is not None, f"opening {name} listed")
+        if r and all(v is not None for v in ci.values()):
+            ok(all(r[ci[n]] for n in ("source", "destination")), f"  {name}: source={r[ci['source']]!r} destination={r[ci['destination']]!r}")
+            ok(re.search(r"\d", r[ci["port"]]) is not None, f"  {name}: port={r[ci['port']]!r}")
+            named = set(re.findall(r"`([a-z0-9-]+)`", r[ci["check"]]))
+            ok(bool(named & checks), f"  {name}: proving check {sorted(named)} (proof checks: {sorted(checks)})")
+m_now = [s for s in secs if "allow matrix" in s.lower()]
+m_base = [s for s in sections(base) if "allow matrix" in s.lower()]
+if m_now and m_base:
+    now = [r[0] for r in rows(secs[m_now[0]])[1]]; was = [r[0] for r in rows(sections(base)[m_base[0]])[1]]
+    print("matrix rows now:", now); print("matrix rows at merge base:", was)
+    ok(now == was, "the allow matrix has no new row")
+else:
+    ok(False, "allow matrix section found now and at the merge base")
+sys.exit(1 if fails else 0)
+PY

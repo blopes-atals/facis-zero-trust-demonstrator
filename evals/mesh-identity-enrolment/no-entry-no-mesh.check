@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# scenario: mesh-identity-enrolment / No entry, no mesh
+# level: L2
+# requirement: An unregistered workload is proven to be cut off from the mesh
+. "$(dirname "$0")/../lib.sh"
+need_live
+rc=0
+url=http://ev-peer.$DATA:8080/
+# The unlabelled pod's proxy: dump its secrets through the Envoy admin API inside the pod.
+certs=$(k -n "$DATA" exec ev-unlabelled -c istio-proxy -- pilot-agent request GET config_dump?resource=dynamic_active_secrets 2>/dev/null | jq -r '[.configs[]?.dynamic_active_secrets[]? | select(.secret.tls_certificate.certificate_chain != null) | .name] | join(",")')
+echo "ev-unlabelled proxy: workload certificates held: '${certs}'"
+[ -z "$certs" ] && echo "PASS: no workload certificate" || { echo "FAIL: it holds a certificate"; rc=1; }
+out=$(k -n "$DATA" exec ev-unlabelled -c istio-proxy -- curl -sS -m 10 -o /dev/null -w '%{http_code}' "$url" 2>&1); r=$?
+echo "ev-unlabelled -> $url: exit $r, $out"
+[ $r -ne 0 ] || [ "${out: -3}" != 200 ] && echo "PASS: refused" || { echo "FAIL: the call succeeded"; rc=1; }
+code=$(k -n "$DATA" exec ev-client -c app -- curl -sS -m 10 -o /dev/null -w '%{http_code}' "$url" 2>&1)
+echo "ev-client (labelled) -> $url: $code"
+[ "$code" = 200 ] && echo "PASS: labelled pod's call succeeds" || { echo "FAIL"; rc=1; }
+evidence_section_passed unregistered-workload-cut-off || { echo "FAIL: the proof's evidence does not show it"; rc=1; }
+exit $rc

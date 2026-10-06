@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# scenario: workload-identity / The names are fixed in the render
+# level: L1
+# requirement: The agent serves the SDS resource names the mesh asks for
+# Note: "no own-bundle name" is read as the own-bundle resource being disabled; SPIRE's agent
+# disables it with default_bundle_name "null" (left unset it defaults to ROOTCA), so absent fails.
+. "$(dirname "$0")/../lib.sh"
+render_all "$EVAL_TMP/r" || { echo "FAIL: render"; tail "$EVAL_TMP/r.log"; exit 1; }
+python3 - "$EVAL_TMP/r/spire.yaml" <<'PY'
+import sys, yaml, json
+docs = [x for x in yaml.safe_load_all(open(sys.argv[1])) if x]
+cm = [x for x in docs if x["kind"] == "ConfigMap" and "agent" in x["metadata"]["name"] and any(k.endswith(".conf") for k in (x.get("data") or {}))]
+if not cm: print("FAIL: no agent ConfigMap"); sys.exit(1)
+conf = next(v for k, v in cm[0]["data"].items() if k.endswith(".conf"))
+agent = json.loads(conf)["agent"]
+sds = agent.get("sds")
+print(f"{cm[0]['metadata']['name']}: agent.sds = {sds}")
+ok = isinstance(sds, dict) and sds.get("default_svid_name") == "default" and sds.get("default_all_bundles_name") == "ROOTCA" \
+     and sds.get("default_bundle_name") == "null"
+print("PASS" if ok else "FAIL: want default_svid_name=default, default_all_bundles_name=ROOTCA, own bundle disabled (default_bundle_name=\"null\")")
+sys.exit(0 if ok else 1)
+PY

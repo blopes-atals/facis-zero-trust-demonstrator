@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# scenario: workload-identity / No Cilium, no render
+# level: L1
+# requirement: The identity control-plane openings are Cilium network policies and require Cilium
+. "$(dirname "$0")/../lib.sh"
+out=$(helm template ztd "$ZTD_CHART" -n ztd-system -f "$KIND_ZONE" --set cni.cilium.enabled=false --set mesh.mode=sidecar 2>&1); rc=$?
+echo "helm template with cni.cilium.enabled=false mesh.mode=sidecar: exit $rc"; grep -i error <<<"$out" | head -3
+[ $rc -ne 0 ] || { echo "FAIL: rendering succeeded"; exit 1; }
+grep -qi 'opening' <<<"$out" || { echo "FAIL: message does not name the control-plane openings"; exit 1; }
+grep -qi 'derogation' <<<"$out" || { echo "FAIL: message does not name the derogation another CNI needs"; exit 1; }
+echo PASS

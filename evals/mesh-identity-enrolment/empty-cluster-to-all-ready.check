@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# scenario: mesh-identity-enrolment / Empty cluster to all Ready
+# level: L2
+# requirement: A zone installs from an empty cluster in one order, idempotently
+. "$(dirname "$0")/../lib.sh"
+need_state
+S=$ZTD_STATE
+echo "installer run #1 from the empty cluster: exit $(cat "$S/install1.rc")"; tail -3 "$S/install1.log"
+rc=0; [ "$(cat "$S/install1.rc")" = 0 ] || rc=1
+for ns in "$SPIRE_NS" "$ISTIO_NS" "$DATA" "$MGMT"; do
+  r=$(jq -r '[.items[] | select(.status.phase != "Succeeded") | {n: .metadata.name, ready: ([.status.conditions[]? | select(.type == "Ready") | .status] | first // "False")}]
+             | "\(length) pods, not Ready: \([.[] | select(.ready != "True") | .n] | join(","))"' "$S/pods1-$ns.json" 2>/dev/null) || r="unreadable"
+  echo "$ns: $r"
+  case $r in *"not Ready: ") ;; *) rc=1 ;; esac
+done
+for ns in "$SPIRE_NS" "$ISTIO_NS"; do
+  [ "$(jq '.items | length' "$S/pods1-$ns.json")" -gt 0 ] || { echo "FAIL: no pod in $ns"; rc=1; }
+done
+exit $rc

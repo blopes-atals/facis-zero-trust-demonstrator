@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# scenario: mesh-identity-enrolment / The documentation builds
+# level: L1
+# requirement: The workload-identity page presents the mesh configuration
+. "$(dirname "$0")/../lib.sh"
+command -v uvx >/dev/null || PATH=$HOME/.local/bin:$PATH
+if command -v mkdocs >/dev/null; then MK=(mkdocs); elif command -v uvx >/dev/null; then MK=(uvx --from mkdocs==1.6.1 mkdocs); else echo "needs mkdocs or uvx"; exit 77; fi
+(cd "$REPO" && "${MK[@]}" build --strict -f mkdocs.yml -d "$EVAL_TMP/site") > "$EVAL_TMP/log" 2>&1; rc=$?
+tail -5 "$EVAL_TMP/log"; echo "mkdocs build --strict: exit $rc"
+[ $rc -eq 0 ] || exit 1
+python3 - "$REPO/mkdocs.yml" <<'PY'
+import sys, yaml
+nav = yaml.safe_load(open(sys.argv[1]))["nav"]
+pages = []
+def walk(n):
+    if isinstance(n, str): pages.append(n)
+    elif isinstance(n, list): [walk(x) for x in n]
+    elif isinstance(n, dict): [walk(v) for v in n.values()]
+walk(nav)
+need = ["workload-identity.md", "evidences/mesh-identity/README.md", "evidences/mesh-identity/evidence.md"]
+miss = [p for p in need if p not in pages]
+print("nav has:", [p for p in need if p in pages]); print("missing:", miss)
+sys.exit(1 if miss else 0)
+PY

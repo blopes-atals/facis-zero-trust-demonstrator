@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# scenario: mesh-identity-enrolment / Cross-plane denial with proxies
+# level: L2
+# requirement: The default deny holds with the Istio CNI plugin chained behind Cilium and both control planes inside it
+. "$(dirname "$0")/../lib.sh"
+need_live
+rc=0
+url=http://ev-verif.$MGMT:8080/
+# ev-crossplane: meshed, registered, but no matrix role; ev-client: matrix role `backend`, lane backend-to-verification-service.
+out=$(k -n "$DATA" exec ev-crossplane -c app -- curl -sS -m 20 -w '\n%{http_code}' "$url" 2>&1); r=$?
+echo "ev-crossplane (no matrix role) -> $url: exit $r; $(tr '\n' ' ' <<<"$out" | cut -c1-200)"
+if [ $r -eq 28 ] || { [ "${out: -3}" = 503 ] && grep -qi 'connect\|timeout' <<<"$out"; }; then
+  echo "PASS: denied at the network layer (connection never established)"
+else echo "FAIL: not a network-layer denial"; rc=1; fi
+code=$(k -n "$DATA" exec ev-client -c app -- curl -sS -m 10 -o /dev/null -w '%{http_code}' "$url" 2>&1)
+echo "ev-client (backend, matrix lane) -> $url: $code"
+[ "$code" = 200 ] && echo "PASS: the lane's pair succeeds" || { echo "FAIL"; rc=1; }
+evidence_section_passed default-deny-with-chained-cni || { echo "FAIL: the proof's evidence does not show it"; rc=1; }
+exit $rc

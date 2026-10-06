@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# scenario: mesh-identity-enrolment / Traffic goes through the proxies
+# level: L2
+# requirement: Traffic between meshed pods is proven to carry the caller's SPIFFE identity
+. "$(dirname "$0")/../lib.sh"
+need_live
+rc=0
+metric() { k -n "$DATA" exec "$1" -c istio-proxy -- pilot-agent request GET stats/prometheus 2>/dev/null | awk -v r="reporter=\"$2\"" '/^istio_requests_total/ && index($0, r) { s += $NF } END { print s + 0 }'; }
+s0=$(metric ev-client source); d0=$(metric ev-peer destination)
+body=$(k -n "$DATA" exec ev-client -c app -- curl -sS -m 10 "http://ev-peer.$DATA:8080/header?key=X-Forwarded-Client-Cert" 2>&1)
+echo "peer saw X-Forwarded-Client-Cert: $body"
+want="URI=spiffe://$TD_KIND/ns/$DATA/sa/ev-client"
+grep -qF "$want" <<<"$body" && echo "PASS: the caller's SPIFFE identity" || { echo "FAIL: want $want"; rc=1; }
+for _ in $(seq 1 15); do s1=$(metric ev-client source); d1=$(metric ev-peer destination); [ "$s1" -gt "$s0" ] && [ "$d1" -gt "$d0" ] && break; sleep 2; done
+echo "istio_requests_total caller(source) $s0 -> $s1; peer(destination) $d0 -> $d1"
+[ "$s1" -gt "$s0" ] && [ "$d1" -gt "$d0" ] && echo "PASS: both proxies counted it" || { echo "FAIL: counters did not increase"; rc=1; }
+evidence_section_passed traffic-through-the-proxies || { echo "FAIL: the proof's evidence does not show it"; rc=1; }
+exit $rc

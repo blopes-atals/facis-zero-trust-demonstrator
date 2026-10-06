@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# scenario: workload-identity / An operator follows the guide
+# level: L1
+# requirement: The zone installation guide's workload-identity step names the releases, facts and verification
+# Literal reading: the workload-identity step itself (docs/environments/osc.md, "## 3. Workload
+# identity") names the releases in order, the zone facts, the installer command and the verification.
+. "$(dirname "$0")/../lib.sh"
+sec=$(awk '/^## /{ on = ($0 ~ /^## [0-9]+\. Workload identity/); next } on' "$REPO/docs/environments/osc.md")
+[ -n "$sec" ] || { echo "FAIL: no workload-identity step in docs/environments/osc.md"; exit 1; }
+rc=0
+p1=$(grep -bo '`spire-crds`' <<<"$sec" | head -1 | cut -d: -f1); p2=$(grep -bo '`spire`' <<<"$sec" | head -1 | cut -d: -f1)
+if [ -n "$p1" ] && [ -n "$p2" ] && [ "$p1" -lt "$p2" ]; then echo "PASS: names spire-crds then spire"; else echo "FAIL: the step does not name the releases spire-crds then spire (positions: '${p1}' '${p2}')"; rc=1; fi
+grep -q 'zone-policy' <<<"$sec" && echo "PASS: names zone-policy" || { echo "FAIL: zone-policy not named"; rc=1; }
+grep -q 'zone\.trustDomain' <<<"$sec" && echo "PASS: names the zone fact zone.trustDomain" || { echo "FAIL: the step names no zone fact to fill in (zone.trustDomain)"; rc=1; }
+grep -q 'install-zone/install.sh' <<<"$sec" && echo "PASS: names the installer command" || { echo "FAIL: the step does not name the installer command"; rc=1; }
+grep -q '\*\*Verify:\*\*' <<<"$sec" && echo "PASS: has a verification" || { echo "FAIL: no verification"; rc=1; }
+exit $rc

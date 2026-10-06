@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# scenario: mesh-identity-enrolment / Uninstall leaves no custom resource definition behind
+# level: L2
+# requirement: A zone installs from an empty cluster in one order, idempotently
+. "$(dirname "$0")/../lib.sh"
+need_state
+S=$ZTD_STATE
+echo "uninstall in reverse order: exit $(cat "$S/uninstall.rc")"; grep -i uninstall "$S/uninstall.log" | head -8
+order=$(grep -o 'uninstall [a-z-]*' "$S/uninstall.log" | awk '{print $2}' | awk '!s[$0]++' | xargs)
+echo "order: $order"
+rc=0
+[ "$(cat "$S/uninstall.rc")" = 0 ] || rc=1
+[ "$order" = "zone-policy istio-cni istiod istio-base spire spire-crds ztd" ] || { echo "FAIL: not the reverse order"; rc=1; }
+left=$(grep -E '\.(spiffe\.io|istio\.io)$' "$S/crds-after-uninstall.txt")
+before=$(grep -cE '\.(spiffe\.io|istio\.io)$' "$S/crds-before.txt")
+echo "SPIRE/Istio CRDs before install: $before; after uninstall: $(grep -c . <<<"$left")"
+[ -z "$left" ] || { echo "FAIL: left behind:"; echo "$left"; rc=1; }
+exit $rc

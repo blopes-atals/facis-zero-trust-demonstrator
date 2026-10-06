@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# scenario: mesh-identity-enrolment / Refused under CI
+# level: L1
+# requirement: The mesh-identity proof refuses CI and the umbrella's evidence is regenerated in the same change
+. "$(dirname "$0")/../lib.sh"
+# Run a copy of the tree, pointed at a context that does not exist, so a script that does not
+# refuse can neither touch a cluster nor the real evidence.
+W=$EVAL_TMP/repo; mkdir -p "$W"
+(cd "$REPO" && git ls-files -z -- scripts deployment docs | tar --null -T - -cf -) | tar -xf - -C "$W"
+git -C "$W" init -q && git -C "$W" add -A && git -C "$W" -c user.email=e@e -c user.name=eval commit -qm snap
+before=$(cd "$W" && sha256sum docs/evidences/mesh-identity/* | sha256sum)
+CI=true KUBE_CONTEXT=ztd-eval-no-such-context timeout 60 "$W/scripts/verify-mesh-identity/verify.sh" > "$EVAL_TMP/out" 2>&1; rc=$?
+after=$(cd "$W" && sha256sum docs/evidences/mesh-identity/* | sha256sum)
+echo "verify.sh with CI=true: exit $rc"; head -5 "$EVAL_TMP/out"
+[ $rc -ne 0 ] || { echo "FAIL: exited 0"; exit 1; }
+[ "$before" = "$after" ] && [ -z "$(git -C "$W" status --porcelain)" ] || { echo "FAIL: files changed"; git -C "$W" status --porcelain; exit 1; }
+echo "PASS: refused, nothing written"

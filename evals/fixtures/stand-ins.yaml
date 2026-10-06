@@ -1,0 +1,262 @@
+# Stand-in pods of the eval suite (evals/), written from the spec scenarios; not the proof's fixtures.
+#   ztd-data/ev-client      identity label, matrix role `backend`, curl + an SVID client on the CSI socket
+#   ztd-data/ev-peer        identity label, agnhost netexec: the meshed peer
+#   ztd-data/ev-unlabelled  no identity label, meshed: must get no certificate and no mesh
+#   ztd-data/ev-crossplane  identity label, no matrix role: cross-plane calls must be denied
+#   ztd-data/ev-probe       no sidecar, no identity label: raw TCP probes of the control planes
+#   ztd-data/ev-nosidecar   no sidecar, no identity label, SVID client on the CSI socket: must get no SVID
+#   ztd-mgmt/ev-verif       identity label, matrix role `verification-service`: the lane's target
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ev-client
+  namespace: ztd-data
+  labels:
+    ztd-eval: stand-in
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ev-client
+  namespace: ztd-data
+  labels:
+    spiffe.io/spire-managed-identity: 'true'
+    app.kubernetes.io/name: backend
+    ztd-eval: stand-in
+spec:
+  serviceAccountName: ev-client
+  terminationGracePeriodSeconds: 1
+  containers:
+  - name: app
+    image: docker.io/curlimages/curl:8.10.1@sha256:d9b4541e214bcd85196d6e92e2753ac6d0ea699f0af5741f8c6cccbfcf00ef4b
+    command:
+    - sleep
+    - '86400'
+  - name: svid
+    image: ghcr.io/spiffe/spire-agent:1.15.3
+    command:
+    - /opt/spire/bin/spire-agent
+    args:
+    - api
+    - watch
+    - -socketPath
+    - /spiffe-workload-api/spire-agent.sock
+    volumeMounts:
+    - name: spiffe
+      mountPath: /spiffe-workload-api
+      readOnly: true
+  volumes:
+  - name: spiffe
+    csi:
+      driver: csi.spiffe.io
+      readOnly: true
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ev-peer
+  namespace: ztd-data
+  labels:
+    ztd-eval: stand-in
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ev-peer
+  namespace: ztd-data
+  labels:
+    spiffe.io/spire-managed-identity: 'true'
+    app.kubernetes.io/name: ev-peer
+    ztd-eval: stand-in
+spec:
+  serviceAccountName: ev-peer
+  terminationGracePeriodSeconds: 1
+  containers:
+  - name: app
+    image: registry.k8s.io/e2e-test-images/agnhost:2.53
+    args:
+    - netexec
+    - --http-port=8080
+    ports:
+    - containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ev-peer
+  namespace: ztd-data
+  labels:
+    ztd-eval: stand-in
+spec:
+  selector:
+    app.kubernetes.io/name: ev-peer
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ev-unlabelled
+  namespace: ztd-data
+  labels:
+    ztd-eval: stand-in
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ev-unlabelled
+  namespace: ztd-data
+  labels:
+    app.kubernetes.io/name: ev-unlabelled
+    ztd-eval: stand-in
+spec:
+  serviceAccountName: ev-unlabelled
+  terminationGracePeriodSeconds: 1
+  containers:
+  - name: app
+    image: docker.io/curlimages/curl:8.10.1@sha256:d9b4541e214bcd85196d6e92e2753ac6d0ea699f0af5741f8c6cccbfcf00ef4b
+    command:
+    - sleep
+    - '86400'
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ev-crossplane
+  namespace: ztd-data
+  labels:
+    ztd-eval: stand-in
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ev-crossplane
+  namespace: ztd-data
+  labels:
+    spiffe.io/spire-managed-identity: 'true'
+    app.kubernetes.io/name: ev-crossplane
+    ztd-eval: stand-in
+spec:
+  serviceAccountName: ev-crossplane
+  terminationGracePeriodSeconds: 1
+  containers:
+  - name: app
+    image: docker.io/curlimages/curl:8.10.1@sha256:d9b4541e214bcd85196d6e92e2753ac6d0ea699f0af5741f8c6cccbfcf00ef4b
+    command:
+    - sleep
+    - '86400'
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ev-probe
+  namespace: ztd-data
+  labels:
+    ztd-eval: stand-in
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ev-probe
+  namespace: ztd-data
+  labels:
+    app.kubernetes.io/name: ev-probe
+    ztd-eval: stand-in
+  annotations:
+    sidecar.istio.io/inject: 'false'
+spec:
+  serviceAccountName: ev-probe
+  terminationGracePeriodSeconds: 1
+  containers:
+  - name: app
+    image: docker.io/curlimages/curl:8.10.1@sha256:d9b4541e214bcd85196d6e92e2753ac6d0ea699f0af5741f8c6cccbfcf00ef4b
+    command:
+    - sleep
+    - '86400'
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ev-nosidecar
+  namespace: ztd-data
+  labels:
+    ztd-eval: stand-in
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ev-nosidecar
+  namespace: ztd-data
+  labels:
+    app.kubernetes.io/name: ev-nosidecar
+    ztd-eval: stand-in
+  annotations:
+    sidecar.istio.io/inject: 'false'
+spec:
+  serviceAccountName: ev-nosidecar
+  terminationGracePeriodSeconds: 1
+  containers:
+  - name: svid
+    image: ghcr.io/spiffe/spire-agent:1.15.3
+    command:
+    - /opt/spire/bin/spire-agent
+    args:
+    - api
+    - watch
+    - -socketPath
+    - /spiffe-workload-api/spire-agent.sock
+    volumeMounts:
+    - name: spiffe
+      mountPath: /spiffe-workload-api
+      readOnly: true
+  volumes:
+  - name: spiffe
+    csi:
+      driver: csi.spiffe.io
+      readOnly: true
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ev-verif
+  namespace: ztd-mgmt
+  labels:
+    ztd-eval: stand-in
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ev-verif
+  namespace: ztd-mgmt
+  labels:
+    spiffe.io/spire-managed-identity: 'true'
+    app.kubernetes.io/name: verification-service
+    ztd-eval: stand-in
+spec:
+  serviceAccountName: ev-verif
+  terminationGracePeriodSeconds: 1
+  containers:
+  - name: app
+    image: registry.k8s.io/e2e-test-images/agnhost:2.53
+    args:
+    - netexec
+    - --http-port=8080
+    ports:
+    - containerPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ev-verif
+  namespace: ztd-mgmt
+  labels:
+    ztd-eval: stand-in
+spec:
+  selector:
+    app.kubernetes.io/name: verification-service
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080

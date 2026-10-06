@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# scenario: workload-identity / The three agree on the live cluster
+# level: L2
+# requirement: SPIRE and the mesh read one trust domain from the zone file
+. "$(dirname "$0")/../lib.sh"
+need_live
+zone=$(python3 -c 'import sys,yaml; print(yaml.safe_load(open(sys.argv[1]))["zone"]["trustDomain"])' "$KIND_ZONE")
+srv=$(k -n "$SPIRE_NS" get cm spire-server -o json | jq -r '.data["server.conf"]' | jq -r '.server.trust_domain')
+svid=$(fetch_svid "$DATA" ev-client | jq -r '.svids[0].spiffe_id' | sed -E 's#^spiffe://([^/]+)/.*#\1#')
+mesh=$(k -n "$ISTIO_NS" get cm istio -o jsonpath='{.data.mesh}' | python3 -c 'import sys,yaml; print(yaml.safe_load(sys.stdin).get("trustDomain"))')
+echo "zone file: $zone; SPIRE server: $srv; SVID: $svid; mesh: $mesh"
+[ "$zone" = "$TD_KIND" ] && [ "$srv" = "$zone" ] && [ "$svid" = "$zone" ] && [ "$mesh" = "$zone" ] && echo PASS || { echo "FAIL: they differ (want $TD_KIND)"; exit 1; }

@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# scenario: workload-identity / The proxy holds the bundle under that name
+# level: L2
+# requirement: The agent serves the SDS resource names the mesh asks for
+. "$(dirname "$0")/../lib.sh"
+need_live
+T=$EVAL_TMP; rc=0
+istioctl --context "$CTX" proxy-config secret ev-client."$DATA" -o json > "$T/sec.json" || { echo "FAIL: istioctl"; exit 1; }
+names=$(jq -r '[.dynamicActiveSecrets[].name] | join(",")' "$T/sec.json"); echo "proxy secrets: $names"
+cert=$(jq -r '[.dynamicActiveSecrets[] | select(.name == "default" and .secret.tlsCertificate != null)] | length' "$T/sec.json")
+[ "$cert" = 1 ] && echo "PASS: workload certificate named default" || { echo "FAIL: no workload certificate named default"; rc=1; }
+jq -r '.dynamicActiveSecrets[] | select(.name == "ROOTCA") | .secret.validationContext | (.trustedCa.inlineBytes // empty), (.customValidatorConfig.typedConfig.trustDomains[]?.trustBundle.inlineBytes)' "$T/sec.json" | while read -r b; do base64 -d <<<"$b"; echo; done > "$T/root.pem"
+spire_bundle_pem > "$T/bundle.pem"
+r=$(pem_fingerprints "$T/root.pem" | xargs); b=$(pem_fingerprints "$T/bundle.pem" | xargs)
+echo "ROOTCA: ${r:-none}"; echo "SPIRE server CA: $b"
+[ -n "$r" ] && [ "$r" = "$b" ] && echo "PASS: root bundle ROOTCA is the SPIRE server's CA" || { echo "FAIL"; rc=1; }
+exit $rc

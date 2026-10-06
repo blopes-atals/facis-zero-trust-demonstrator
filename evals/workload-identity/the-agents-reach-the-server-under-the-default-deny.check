@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# scenario: workload-identity / The agents reach the server under the default deny
+# level: L2
+# requirement: The identity control plane has declared openings by entity, not a wider deny
+. "$(dirname "$0")/../lib.sh"
+need_live
+rc=0
+dd=$(k -n "$SPIRE_NS" get networkpolicy default-deny -o name 2>/dev/null); echo "default deny in $SPIRE_NS: ${dd:-none}"; [ -n "$dd" ] || rc=1
+want=$(k -n "$SPIRE_NS" get ds spire-agent -o jsonpath='{.status.desiredNumberScheduled}'); ready=$(k -n "$SPIRE_NS" get ds spire-agent -o jsonpath='{.status.numberReady}')
+att=$(spire_server agent list -output json | jq '.agents | length')
+echo "agents desired $want Ready $ready attested $att"
+[ "$want" -gt 0 ] && [ "$ready" = "$want" ] && [ "$att" = "$want" ] && echo "PASS: every agent Ready and attested" || { echo FAIL; rc=1; }
+cls=$(k -n "$ISTIO_NS" get clusterspiffeid -o jsonpath='{.items[0].spec.className}' 2>/dev/null)
+cls=${cls:-$(k get clusterspiffeid -o jsonpath='{.items[0].spec.className}')}
+cat > "$EVAL_TMP/csid.yaml" <<YAML
+apiVersion: spire.spiffe.io/v1alpha1
+kind: ClusterSPIFFEID
+metadata: { name: ztd-eval-admission-probe }
+spec:
+  className: "$cls"
+  spiffeIDTemplate: "spiffe://{{ .TrustDomain }}/ztd-eval/{{ .PodMeta.Name }}"
+  podSelector: { matchLabels: { ztd-eval/no-such-pod: "true" } }
+YAML
+out=$(k create --dry-run=server -f "$EVAL_TMP/csid.yaml" 2>&1); r=$?
+echo "server-side dry-run create of a ClusterSPIFFEID (through the controller-manager's webhook): exit $r: $out"
+wh=$(k get validatingwebhookconfigurations -o json | jq -r '[.items[] | select(any(.webhooks[]; any(.rules[]?; any(.resources[]?; test("clusterspiffeids"))))) | .metadata.name] | join(",")')
+echo "validating webhooks for clusterspiffeids: ${wh:-none}"
+[ $r -eq 0 ] && [ -n "$wh" ] && echo "PASS: the webhook admits a registration" || { echo "FAIL"; rc=1; }
+sv=$(fetch_svid "$DATA" ev-client | jq -r '.svids[0].spiffe_id'); echo "labelled pod's SVID: $sv"
+[ "$sv" = "spiffe://$TD_KIND/ns/$DATA/sa/ev-client" ] && echo "PASS: SVID received" || { echo FAIL; rc=1; }
+exit $rc
