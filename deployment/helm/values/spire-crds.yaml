@@ -1,0 +1,12 @@
+# Release `spire-crds` of the zone: the custom resource definitions of the SPIRE controller-manager
+# (ClusterSPIFFEID, ClusterStaticEntry, ClusterFederatedTrustDomain), installed as the upstream
+# chart ships them, in templates/, so that this release installs, upgrades and removes them.
+#   chart repository  https://spiffe.github.io/helm-charts-hardened/
+#   chart             spire-crds 0.6.1 (with spire 0.30.2, SPIRE v1.15.3)
+#   namespace         spire-system (created by the umbrella chart, never by this release)
+# Pinned in scripts/install-zone/install.sh and docs/dependencies.md. Every value set here is
+# listed with its reason in README.md next to this file.
+
+# The chart annotates its CRDs helm.sh/resource-policy: keep by default, which would leave them on
+# the cluster after `helm uninstall`. The CRDs belong to this release and leave with it.
+annotations: {}

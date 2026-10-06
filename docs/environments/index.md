@@ -27,6 +27,17 @@ Where a step cannot be executed yet it says so, rather than reading as though it
 - **Nothing is applied by hand.** Every step below is a chart, a script in `scripts/` or a pipeline
   run. A step that cannot be expressed that way is a defect in the step, not a reason to click.
 
+## Installing a zone
+
+A zone is installed by one command from one zone file: `scripts/install-zone/install.sh install`,
+which runs seven Helm releases in order — the umbrella `ztd`, `spire-crds`, `spire`, `istio-base`,
+`istiod`, `istio-cni`, `zone-policy` — each through the deployment lifecycle step, and exits 0 only
+when every pod of the zone is Ready. The zone file records the cluster's facts (Kubernetes version,
+storage class, load balancer) and, where the mesh runs, the zone's trust domain (the DNS zone
+delegated to the trust zone) and the API server endpoint. The [OSC guide](osc.md#2-the-zone-layout)
+walks through it step by step with each step's verification; the identity path is described in
+[Workload identity](../workload-identity.md).
+
 ## Reproduction and verification
 
 ZT-16 asks for documentation from which the setup of each cluster can be reproduced step by step.

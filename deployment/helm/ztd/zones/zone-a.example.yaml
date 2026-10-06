@@ -5,10 +5,27 @@ zone:
   storageClass: csi-default    # `kubectl get storageclass`
   loadBalancer:
     type: cloud                # cloud | metallb | none
+  # The zone's SPIFFE trust domain: the DNS zone delegated to this trust zone, in which the trust
+  # framework publishes its records (not read off the cluster; the Technical Design Authority
+  # confirms it). Required where the mesh runs; fixed at the first SPIRE install.
+  trustDomain: zone-a.example
 mesh:
   mode: sidecar                # the mesh decision of ADR-0006; ambient is the parked alternative
+cni:
+  cilium:
+    enabled: true              # `kubectl -n kube-system get ds cilium`; another CNI needs a declared derogation
+planes:
+  extra:                       # the control planes: management plane, no mesh label
+    - { name: spire-system, plane: management, mesh: false }
+    - { name: istio-system, plane: management, mesh: false }
 networkPolicy:
   kubeApi:
-    enabled: true              # management components that talk to the API need this lane
-    cidrs: ["10.0.0.1/32"]     # the API endpoint of this cluster, recorded by the baseline
-    ports: [443]
+    enabled: true              # required where the mesh runs: SPIRE and istiod call the API
+    cidrs: ["10.0.0.1/32"]     # `kubectl get endpointslices -n default -l kubernetes.io/service-name=kubernetes`; used only without Cilium
+    ports: [443]               # the port in that endpoint slice (the API server's, not the Service's)
+  meshControlPlane:
+    enabled: true
+  controlPlaneWebhooks:
+    enabled: true
+  identityServer:
+    enabled: true
