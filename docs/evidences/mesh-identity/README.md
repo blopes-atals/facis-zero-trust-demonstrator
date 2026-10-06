@@ -18,8 +18,10 @@ releases in order (the umbrella, SPIRE's `spire-crds` and `spire`, Istio's `base
   SPIRE server's CA; a pod without the label has no entry and gets no SVID.
 - **`mesh-identity-issued-by-spire`**: the certificate the proxy presents in mesh mTLS has
   `O = SPIRE`, the SPIRE CA as issuer and the SVID's URI SAN; the proxy's root bundle (`ROOTCA`) is
-  the SPIRE CA; istiod's CA issued nothing; a pod that chooses its injection templates, or brings
-  its own proxy without the SPIRE socket, is refused at admission.
+  the SPIRE CA; istiod's CA issued nothing; a pod that chooses its injection templates, brings its
+  own proxy without the SPIRE socket, or runs Istio's agent under another container name, is
+  refused at admission; and a certificate signed with istiod's CA key for an enrolled SPIFFE ID is
+  refused by a meshed peer, which accepts that workload's SPIRE SVID.
 - **`unregistered-workload-cut-off`**: without an entry the proxy has no certificate, the
   application never starts, and the peer refuses the pod under STRICT.
 - **`traffic-through-the-proxies`**: the peer sees the caller's SPIFFE ID and both proxies count

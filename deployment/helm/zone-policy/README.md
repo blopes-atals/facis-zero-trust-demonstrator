@@ -12,11 +12,15 @@ installs into `istio-system`, the mesh root namespace:
   workload without a SPIRE entry has no mesh connection.
 - **`ValidatingAdmissionPolicy` `proxy-takes-spire-socket`** and its binding: in every namespace
   with the plane label, a pod may not choose its injection templates (`inject.istio.io/templates`),
-  and a pod with an `istio-proxy` container is admitted only when that proxy mounts the
-  `csi.spiffe.io` volume `workload-socket` at `/var/run/secrets/workload-spiffe-uds`. Without it a
-  pod could drop the `spire` injection template and its proxy would take a certificate from
+  and every mesh proxy of a pod (a container, init container or ephemeral container named
+  `istio-proxy`, running the `proxyv2` image, or naming `pilot-agent`; the injector's
+  `istio-validation` init container aside) must mount the `csi.spiffe.io` volume `workload-socket`
+  at `/var/run/secrets/workload-spiffe-uds`. Without it a pod could drop the `spire` injection
+  template, or run Istio's agent under another name, and that agent would take a certificate from
   istiod's CA, which stays on because it also signs istiod's own serving certificates. Evaluated
-  after injection; pods without a proxy are not concerned (STRICT leaves them outside the mesh).
+  after injection, on pod creation, pod updates and ephemeral containers; pods without a proxy are
+  not concerned (STRICT leaves them outside the mesh). A program without these marks can still ask
+  istiod's CA for a certificate; no peer trusts it (docs/workload-identity.md, "The proxy").
 - **The identity-band checks**: three post-install and post-upgrade Jobs in the `identity` band of
   the hook-weight scheme (`templates/_hooks.tpl` is a copy of the umbrella's helper). They only read,
   through the Kubernetes API, with a read-only ServiceAccount, and a failure fails the release:
@@ -47,7 +51,7 @@ The design is in [docs/workload-identity.md](../../../docs/workload-identity.md)
 | `registration.planeLabel` | `ztd.facis.io/plane` | The umbrella's plane label; namespaces that carry it are selected |
 | `peerAuthentication.mode` | `STRICT` | The only value accepted |
 | `proxySocketPolicy.name` | `proxy-takes-spire-socket` | Name of the admission policy and its binding |
-| `proxySocketPolicy.volume`, `proxySocketPolicy.mountPath`, `proxySocketPolicy.driver` | `workload-socket`, `/var/run/secrets/workload-spiffe-uds`, `csi.spiffe.io` | The volume, mount path and CSI driver an `istio-proxy` must have; those of Istio's `sidecar` template and the istiod values file |
+| `proxySocketPolicy.volume`, `proxySocketPolicy.mountPath`, `proxySocketPolicy.driver` | `workload-socket`, `/var/run/secrets/workload-spiffe-uds`, `csi.spiffe.io` | The volume, mount path and CSI driver every mesh proxy must have; those of Istio's `sidecar` template and the istiod values file |
 | `checks.enabled` | `true` | The identity-band jobs |
 | `checks.image` | `curlimages/curl` by digest | Image of the jobs (the umbrella's verification image) |
 | `checks.timeoutSeconds` | `180` | How long each check waits before it fails the release |

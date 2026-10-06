@@ -1,17 +1,36 @@
 {{- /*
 No mesh proxy without the SPIRE socket. istiod adds the `spire` injection template to every
 injection, but a pod can name its own templates with the annotation inject.istio.io/templates
-(for example `sidecar` alone), or override the injected istio-proxy container. Its proxy would then
-find no SPIRE socket and ask istiod's CA for a certificate, which istiod cannot stop issuing: its CA
-also signs istiod's own serving certificates, and istiod does not start its webhooks without it.
-This policy closes that path at admission: in a namespace carrying the umbrella's plane label, a
+(for example `sidecar` alone), override the injected istio-proxy container, or run Istio's agent
+(pilot-agent, the proxyv2 image) itself under another container name with its own istio-token
+volume. Its agent would then find no SPIRE socket and ask istiod's CA for a certificate, which
+istiod cannot stop issuing: its CA also signs istiod's own serving certificates, and istiod does
+not start its webhooks without it.
+This policy closes those paths at admission: in a namespace carrying the umbrella's plane label, a
 pod may not carry the templates annotation at all (which also rules out the proxyless gRPC
-templates), and a pod (after injection, which runs before validation) that has an istio-proxy
-container is admitted only when the volume the proxy reads its certificate from is the SPIFFE CSI
-driver's and the proxy mounts it where Istio looks for the SPIRE socket. Pods without a proxy are
-not concerned: under the mesh-wide STRICT policy they reach no meshed peer.
+templates), and a pod (after injection, which runs before validation) is admitted only when each
+of its mesh proxies takes the SPIFFE CSI driver's volume where Istio looks for the SPIRE socket. A
+mesh proxy is any container, init container or ephemeral container that is named istio-proxy, runs
+the proxyv2 image (whatever its name, registry or tag), or names pilot-agent in its command or
+arguments; the one exception is the CNI validation init container that the injector adds
+(istio-validation: the proxyv2 image, no command, first argument istio-iptables), which runs no
+agent. Pod updates and ephemeral containers are checked too, so a container cannot become a proxy
+after creation. What stays open (design D7, docs/workload-identity.md): a program that is none of
+these and calls istiod's CA on 15012 itself; the certificate it gets is refused by every peer,
+because every proxy trusts SPIRE's bundle only, and the proof shows that refusal.
+Pods without a proxy are not concerned: under the mesh-wide STRICT policy they reach no meshed peer.
 */ -}}
 {{- $p := .Values.proxySocketPolicy }}
+{{- define "zone-policy.isProxy" -}}
+(c.name == 'istio-proxy'
+  || (has(c.command) && c.command.exists(a, a.contains('pilot-agent')))
+  || (has(c.args) && c.args.exists(a, a.contains('pilot-agent')))
+  || (has(c.image) && c.image.matches('(^|/)proxyv2([:@]|$)')
+      && !(!has(c.command) && has(c.args) && size(c.args) > 0 && c.args[0] == 'istio-iptables')))
+{{- end }}
+{{- define "zone-policy.takesSocket" -}}
+(has(c.volumeMounts) && c.volumeMounts.exists(m, m.name == {{ .volume | squote }} && m.mountPath == {{ .mountPath | squote }}))
+{{- end }}
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
 metadata:
@@ -24,13 +43,20 @@ spec:
     resourceRules:
       - apiGroups: [""]
         apiVersions: ["v1"]
-        operations: ["CREATE"]
-        resources: ["pods"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["pods", "pods/ephemeralcontainers"]
   variables:
     - name: proxies
       expression: >-
-        object.spec.containers.filter(c, c.name == 'istio-proxy') +
-        (has(object.spec.initContainers) ? object.spec.initContainers.filter(c, c.name == 'istio-proxy') : [])
+        object.spec.containers.filter(c, {{ include "zone-policy.isProxy" . | nindent 10 | trim }}) +
+        (has(object.spec.initContainers) ? object.spec.initContainers.filter(c, {{ include "zone-policy.isProxy" . | nindent 10 | trim }}) : [])
+    - name: ephemeralProxies
+      expression: >-
+        has(object.spec.ephemeralContainers) ? object.spec.ephemeralContainers.filter(c, {{ include "zone-policy.isProxy" . | nindent 10 | trim }}) : []
+    - name: socketVolume
+      expression: >-
+        has(object.spec.volumes) && object.spec.volumes.exists(v, v.name == {{ $p.volume | squote }}
+          && has(v.csi) && v.csi.driver == {{ $p.driver | squote }})
   validations:
     - expression: >-
         !has(object.metadata.annotations) || !('inject.istio.io/templates' in object.metadata.annotations)
@@ -39,14 +65,14 @@ spec:
         (inject.istio.io/templates): every injection is the sidecar template with the SPIRE socket
       reason: Forbidden
     - expression: >-
-        size(variables.proxies) == 0 ||
-        (has(object.spec.volumes) && object.spec.volumes.exists(v, v.name == {{ $p.volume | squote }}
-          && has(v.csi) && v.csi.driver == {{ $p.driver | squote }})
-         && variables.proxies.all(c, has(c.volumeMounts) && c.volumeMounts.exists(m,
-              m.name == {{ $p.volume | squote }} && m.mountPath == {{ $p.mountPath | squote }})))
+        (size(variables.proxies) == 0 && size(variables.ephemeralProxies) == 0) ||
+        (variables.socketVolume
+         && variables.proxies.all(c, {{ include "zone-policy.takesSocket" $p }})
+         && variables.ephemeralProxies.all(c, {{ include "zone-policy.takesSocket" $p }}))
       message: >-
-        a mesh proxy in a plane namespace must take its certificate from SPIRE: the pod's
-        istio-proxy must mount the {{ $p.driver }} volume {{ $p.volume }} at {{ $p.mountPath }};
+        a mesh proxy in a plane namespace must take its certificate from SPIRE: every container
+        named istio-proxy, running the proxyv2 image or naming pilot-agent must mount the
+        {{ $p.driver }} volume {{ $p.volume }} at {{ $p.mountPath }};
         leave out the inject.istio.io/templates annotation and any istio-proxy override
       reason: Forbidden
 ---

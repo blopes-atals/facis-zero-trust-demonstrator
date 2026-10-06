@@ -2,7 +2,8 @@
 # Evidence that the zone's mesh identities are SPIRE's, on the local kind cluster with Cilium chained
 # (scripts/dev/kind-cilium-up.sh). Installs the zone from an empty cluster with
 # scripts/install-zone/install.sh, twice, then proves with stand-in pods: an SVID over the CSI socket,
-# the proxy's certificate and root bundle issued by SPIRE, an unregistered workload cut off, traffic
+# the proxy's certificate and root bundle issued by SPIRE, no proxy without the SPIRE socket and a
+# certificate from istiod's CA refused by a meshed peer, an unregistered workload cut off, traffic
 # through the proxies, the default deny intact with the chained CNI and both control planes inside
 # it, the native-sidecar version rule, the identity-band checks, and a teardown that leaves nothing
 # behind. Writes docs/evidences/mesh-identity/evidence.md and environment.json; the exit status is
@@ -85,17 +86,26 @@ check() { # check <PASS-condition exit status> <title> <detail...>
 }
 section() { say '' "## $1" ''; echo "== $1"; }
 spire_server() { k -n "$SPIRE_NS" exec spire-server-0 -c spire-server -- /opt/spire/bin/spire-server "$@"; }
-# http <ns> <pod> <container> <url>: HTTP code and the first line of the body, or denied(<curl exit>)
+# http <ns> <pod> <container> <url>: HTTP code and the first line of the body; denied(<curl exit>)
+# only when the network refused the call (7 refused, 28 timed out, 52 empty reply, 56 reset);
+# error(<exit>) for anything else (a name that does not resolve, an exec that failed, ...), which
+# a negative check does not count as a denial.
 http() {
   local out rc
   out=$(k -n "$1" exec "$2" -c "$3" -- curl -sS -m 15 -w '\n%{http_code}' "$4" 2>/dev/null); rc=$?
-  if [ $rc -eq 0 ]; then printf '%s %s' "$(tail -1 <<<"$out")" "$(head -1 <<<"$out" | cut -c1-110)"; else echo "denied($rc)"; fi
+  case $rc in
+    0) printf '%s %s' "$(tail -1 <<<"$out")" "$(head -1 <<<"$out" | cut -c1-110)";;
+    7|28|52|56) echo "denied($rc)";;
+    *) echo "error($rc)";;
+  esac
 }
-# tcp <ns> <pod> <ip> <port>: "connected" when a TCP connection is established, else denied(<curl exit>)
+# tcp <ns> <pod> <ip> <port>: "connected" when a TCP connection is established, denied(<curl exit>)
+# when it was refused or timed out (7, 28), error(<exit>) when the probe itself failed (1: the exec
+# failed, as curl never returns 1 for http://; 6: no such name; 126, 127: no curl)
 tcp() {
   local rc
   k -n "$1" exec "$2" -c app -- curl -s -o /dev/null --connect-timeout 4 -m 6 "http://$3:$4/" >/dev/null 2>&1; rc=$?
-  case $rc in 7|28) echo "denied($rc)";; *) echo connected;; esac
+  case $rc in 7|28) echo "denied($rc)";; 1|6|126|127) echo "error($rc)";; *) echo connected;; esac
 }
 fingerprint() { openssl x509 -noout -fingerprint -sha256 -in "$1" | cut -d= -f2; }
 # metric <ns> <pod> <reporter>: istio_requests_total of the proxy for one reporter, summed
@@ -107,7 +117,7 @@ metric() {
 : > "$OUT"
 say "# Mesh identity evidence ($started)" ''
 say "Cluster context \`$CONTEXT\`, zone file \`${ZONE_VALUES#"$REPO"/}\` (trust domain \`$TD\`), installed with \`scripts/install-zone/install.sh\`: the seven releases \`ztd\`, \`spire-crds\`, \`spire\`, \`istio-base\`, \`istiod\`, \`istio-cni\`, \`zone-policy\`. Commit \`$commit\`, tree dirty: $dirty. Versions in \`environment.json\`." ''
-say 'Probe results: an HTTP code with the first line of the body when the call went through its proxies; `denied(28)` when a raw TCP connection timed out because the policy dropped the packets; `denied(56)` when the peer reset the connection.' ''
+say 'Probe results: an HTTP code with the first line of the body when the call went through its proxies; `denied(28)` when a raw TCP connection timed out because the policy dropped the packets; `denied(56)` when the peer reset the connection; `error(<exit>)`, which fails a negative check, for any other failure (a name that does not resolve, an exec that failed).' ''
 
 # --------------------------------------------------------------------------------------------
 section "0. Preconditions"
@@ -279,9 +289,55 @@ out=$(printf '%s\n' 'apiVersion: v1' 'kind: Pod' 'metadata: { name: optout-proxy
   'spec: { containers: [ { name: istio-proxy, image: "registry.k8s.io/e2e-test-images/agnhost:2.53" } ] }' | k -n "$DATA" create --dry-run=server -f - 2>&1); rc=$?
 [ $rc -ne 0 ] && grep -q "proxy-takes-spire-socket" <<<"$out"
 check $? "a pod that brings its own istio-proxy without the csi.spiffe.io socket is refused at admission" "$(grep -o 'denied request: .*' <<<"$out" | cut -c1-220)"
+out=$(printf '%s\n' 'apiVersion: v1' 'kind: Pod' 'metadata: { name: optout-agent, annotations: { sidecar.istio.io/inject: "false" } }' \
+  "spec: { containers: [ { name: mesh, image: \"$images_proxy\", args: [proxy, sidecar], volumeMounts: [ { name: istio-token, mountPath: /var/run/secrets/tokens } ] } ]," \
+  '  volumes: [ { name: istio-token, projected: { sources: [ { serviceAccountToken: { audience: istio-ca, path: istio-token } } ] } } ] }' \
+  | k -n "$DATA" create --dry-run=server -f - 2>&1); rc=$?
+[ $rc -ne 0 ] && grep -q "proxy-takes-spire-socket" <<<"$out"
+check $? "a pod that runs Istio's agent itself (proxyv2, proxy sidecar) under another container name, with its own istio-token volume and no injection, is refused at admission" "$(grep -o 'denied request: .*' <<<"$out" | cut -c1-220)"
 out=$(k -n "$DATA" run optout-none --image=registry.k8s.io/e2e-test-images/agnhost:2.53 --restart=Never --dry-run=server -o json 2>&1)
 jq -e '.spec.volumes[] | select(.name == "workload-socket" and .csi.driver == "csi.spiffe.io")' <<<"$out" >/dev/null
 check $? "an ordinary pod in the same namespace is admitted, its proxy on the SPIRE socket"
+
+say '' "Outside the plane namespaces the policy does not apply, and istiod's injector still injects a pod labelled \`sidecar.istio.io/inject: \"true\"\` with the templates it names. A pod in a scratch namespace without the plane label:" ''
+OUTSIDE=mesh-identity-outside
+k create namespace "$OUTSIDE" >/dev/null
+out=$(k -n "$OUTSIDE" run outside --image=registry.k8s.io/e2e-test-images/agnhost:2.53 --restart=Never --labels=sidecar.istio.io/inject=true \
+  --annotations=inject.istio.io/templates=sidecar --dry-run=server -o json 2>&1)
+jq -e '[(.spec.initContainers // [])[].name] | index("istio-proxy")' <<<"$out" >/dev/null \
+  && ! jq -e '.spec.volumes[] | select(.csi.driver == "csi.spiffe.io")' <<<"$out" >/dev/null
+check $? "there it is admitted with a proxy and no SPIRE socket: that proxy would ask istiod's CA" "containers: $(jq -r '[(.spec.initContainers // [])[].name, .spec.containers[].name] | join(",")' <<<"$out" 2>/dev/null)"
+printf '%s\n' 'apiVersion: v1' 'kind: Pod' 'metadata: { name: probe }' \
+  'spec: { terminationGracePeriodSeconds: 2, containers: [ { name: app, image: "docker.io/curlimages/curl:8.10.1@sha256:d9b4541e214bcd85196d6e92e2753ac6d0ea699f0af5741f8c6cccbfcf00ef4b", command: [sleep, "3600"] } ] }' \
+  | k -n "$OUTSIDE" create -f - >/dev/null
+k -n "$OUTSIDE" wait --for=condition=Ready pod/probe --timeout=120s >/dev/null 2>&1
+ISTIOD_IP=$(k -n "$ISTIO_NS" get pod -l app=istiod -o jsonpath='{.items[0].status.podIP}')
+r=$(tcp "$OUTSIDE" probe "$ISTIOD_IP" 15012)
+case $r in denied*) true;; *) false;; esac; check $? "but istiod's CA (15012) is not reachable from a namespace without the plane label: the meshControlPlane opening admits the plane namespaces only" "→ $r"
+k delete namespace "$OUTSIDE" --wait=true >/dev/null 2>&1
+
+say '' "What no admission rule can close is a program that is not a mesh proxy by any of the policy's marks and calls istiod's CA on 15012 from a plane namespace itself. The guarantee against it is that no peer trusts istiod's CA. A certificate for the labelled caller's own SPIFFE ID, signed with istiod's CA key (read from \`istio-ca-secret\`, the key istiod signs every certificate with), is presented to the meshed peer's proxy from the proxy-less \`probe\` pod, next to the caller's SPIRE SVID:" ''
+k -n "$ISTIO_NS" get secret istio-ca-secret -o jsonpath='{.data.ca-cert\.pem}' | base64 -d >"$work/istiod-ca.pem" 2>/dev/null
+k -n "$ISTIO_NS" get secret istio-ca-secret -o jsonpath='{.data.ca-key\.pem}' | base64 -d >"$work/istiod-ca.key" 2>/dev/null
+openssl req -new -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -subj / -keyout "$work/istiod-leaf.key" -out "$work/istiod-leaf.csr" >/dev/null 2>&1
+printf 'subjectAltName=critical,URI:%s\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth,clientAuth\nbasicConstraints=critical,CA:FALSE\n' "$SA_ID" >"$work/istiod-leaf.ext"
+openssl x509 -req -in "$work/istiod-leaf.csr" -CA "$work/istiod-ca.pem" -CAkey "$work/istiod-ca.key" -set_serial "0x$(openssl rand -hex 8)" \
+  -days 1 -extfile "$work/istiod-leaf.ext" -out "$work/istiod-leaf.pem" >/dev/null 2>&1
+rm -f "$work/istiod-ca.key"
+il_uri=$(openssl x509 -noout -ext subjectAltName -in "$work/istiod-leaf.pem" 2>/dev/null | grep -o 'URI:[^,]*' | sed 's/URI://')
+openssl verify -CAfile "$work/istiod-root.pem" "$work/istiod-leaf.pem" >/dev/null 2>&1 && [ "$il_uri" = "$SA_ID" ]
+check $? "the certificate verifies against istiod's root (istio-ca-root-cert) and carries the caller's SPIFFE ID" "$il_uri, $(openssl x509 -noout -issuer -nameopt RFC2253 -in "$work/istiod-leaf.pem" 2>/dev/null)"
+jq -r '.svids[0].x509_svid_key' "$work/svid.json" | base64 -d | openssl pkey -inform DER -out "$work/svid.key" 2>/dev/null
+for f in istiod-leaf.pem istiod-leaf.key svid.pem svid.key; do k -n "$DATA" exec -i probe -c app -- tee "/tmp/$f" <"$work/$f" >/dev/null; done
+PEER_IP=$(k -n "$DATA" get pod peer -o jsonpath='{.status.podIP}')
+# mtls <cert> <key>: an HTTPS request straight to the peer's proxy, presenting that client certificate
+mtls() { k -n "$DATA" exec probe -c app -- curl -sS -k -m 15 --cert "/tmp/$1" --key "/tmp/$2" -w '\n%{http_code}' "https://$PEER_IP:8080/hostname" 2>&1; }
+out=$(mtls svid.pem svid.key)
+[ "$(tail -1 <<<"$out")" = 200 ]; check $? "with the caller's SPIRE SVID the peer's proxy completes the handshake and the request succeeds" "→ $(tr '\n' ' ' <<<"$out")"
+out=$(mtls istiod-leaf.pem istiod-leaf.key)
+[ "$(tail -1 <<<"$out")" != 200 ] && grep -q 'alert' <<<"$out"
+check $? "with the istiod-signed certificate for the same SPIFFE ID the peer's proxy refuses the handshake: its ROOTCA is SPIRE's bundle only" "→ $(grep -o 'curl: .*' <<<"$out" | head -1)"
+k -n "$DATA" exec probe -c app -- rm -f /tmp/istiod-leaf.pem /tmp/istiod-leaf.key /tmp/svid.pem /tmp/svid.key >/dev/null 2>&1
 
 # --------------------------------------------------------------------------------------------
 section "9. unregistered-workload-cut-off"

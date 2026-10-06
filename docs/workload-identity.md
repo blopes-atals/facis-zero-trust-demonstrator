@@ -181,19 +181,34 @@ The `istiod` release configures the mesh for SPIRE:
 - **SPIRE as the only certificate source.** The `spire` injection template, added to the default
   templates mesh-wide rather than chosen per pod (so a workload does not leave it out by leaving out
   an annotation), turns the proxy's `workload-socket` volume into the CSI driver's read-only volume
-  at `/run/secrets/workload-spiffe-uds`. When the proxy finds the agent's socket there, it takes its
+  at `/var/run/secrets/workload-spiffe-uds`. When the proxy finds the agent's socket there, it takes its
   certificate (`default`) and its trust bundle (`ROOTCA`) over SDS and never asks istiod's CA.
-- **No way round it in a plane namespace.** istiod's CA cannot be switched off: it also signs
-  istiod's own serving certificates (xDS on 15012, the webhooks on 15017), and with
+- **No mesh proxy without the socket in a plane namespace.** istiod's CA cannot be switched off: it
+  also signs istiod's own serving certificates (xDS on 15012, the webhooks on 15017), and with
   `ENABLE_CA_SERVER=false` istiod starts without them and its webhooks fail. A pod that named its
-  own injection templates (`inject.istio.io/templates: sidecar`) would get a proxy without the
-  socket, and that proxy would take a certificate from istiod's CA. The `zone-policy` release
-  therefore installs the admission policy `proxy-takes-spire-socket`: in every namespace with the
-  plane label, a pod may not carry `inject.istio.io/templates`, and a pod with an `istio-proxy`
-  container is admitted only when that proxy mounts the `csi.spiffe.io` volume at
-  `/var/run/secrets/workload-spiffe-uds`. What remains is a pod in a meshed plane namespace that
-  calls istiod's CA on 15012 itself, without a proxy: it can obtain a certificate signed by istiod's
-  root, which no proxy trusts (every `ROOTCA` is SPIRE's bundle), so it opens no mesh connection.
+  own injection templates (`inject.istio.io/templates: sidecar`), overrode the `istio-proxy`
+  container, or ran Istio's agent itself (the `proxyv2` image, `proxy sidecar`) under another
+  container name with its own `istio-token` volume would get an agent without the socket, and that
+  agent would take a certificate from istiod's CA. The `zone-policy` release therefore installs the
+  admission policy `proxy-takes-spire-socket`: in every namespace with the plane label, a pod may
+  not carry `inject.istio.io/templates`, and every mesh proxy of a pod must mount the
+  `csi.spiffe.io` volume at `/var/run/secrets/workload-spiffe-uds`. A mesh proxy is any container,
+  init container or ephemeral container named `istio-proxy`, running the `proxyv2` image (any
+  registry or tag), or naming `pilot-agent` in its command or arguments; the injector's
+  `istio-validation` init container, which only checks the traffic redirection, is exempt. Pod
+  creation, pod updates and ephemeral containers are all checked.
+- **What the policy does not cover, and why it holds anyway.** Outside the plane namespaces the
+  policy does not apply, and istiod still injects a pod labelled `sidecar.istio.io/inject: "true"`
+  there with the templates it names, but such a proxy cannot reach istiod's CA: the
+  `meshControlPlane` opening admits the plane namespaces only. Inside a plane namespace, a program
+  that bears none of the policy's marks (Istio's agent copied into another image under another
+  name, or any other client of the CA API) can still call istiod's CA on 15012 with its pod's
+  service-account token and obtain a certificate under istiod's root. No peer trusts that root:
+  every proxy's `ROOTCA` is SPIRE's bundle only, so such a certificate opens no mesh connection.
+  The proof shows it: a certificate signed with istiod's CA key for an enrolled pod's own SPIFFE
+  ID is refused by a meshed peer, while that pod's SPIRE SVID is accepted
+  ([evidence](evidences/mesh-identity/README.md)). Closing the CA itself needs istiod's serving
+  certificates from another issuer, left to a later change.
 - **STRICT.** The mesh-wide `PeerAuthentication` `default` in `istio-system` is `STRICT`. A workload
   without an entry gets no certificate, so its proxy never becomes ready and, being a native
   sidecar, holds the application container back; any plaintext connection from its network

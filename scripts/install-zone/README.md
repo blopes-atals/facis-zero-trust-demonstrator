@@ -55,6 +55,9 @@ scripts/install-zone/install.sh install
   stops it with a non-zero exit and the list of valid names, before anything is rendered.
 - **`plan`** lists the seven steps without touching a cluster; `install` against an unreachable
   cluster prints the same list and refuses to continue, changing nothing.
+- Every command first checks that the zone file exists, and stops with `zone file not found:
+  <path>` and a non-zero exit when it does not. `help` (or `-h`, `--help`) prints the usage and
+  exits 0; any other word prints the usage and `unknown command '<word>'` on stderr and exits 2.
 - **`uninstall`** removes the releases in reverse order (`zone-policy`, `istio-cni`, `istiod`,
   `istio-base`, `spire`, `spire-crds`, then the umbrella, which takes the namespaces with it) and
   removes the CRDs each release owned, including the ones Istio's `base` chart marks to be kept by

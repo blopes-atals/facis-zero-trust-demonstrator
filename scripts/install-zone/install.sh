@@ -20,6 +20,7 @@
 #                                                    the merged values; touches no cluster (CI);
 #                                                    an unknown release name is an error
 #   scripts/install-zone/install.sh uninstall        uninstall in reverse order
+#   scripts/install-zone/install.sh help             this text (also -h, --help)
 #
 # Environment:
 #   ZONE_VALUES   zone file             (default: deployment/helm/ztd/ci/values.yaml, the kind zone)
@@ -75,9 +76,15 @@ trap 'rm -rf "$work"' EXIT
 say() { printf '%s\n' "$*"; }
 die() { printf 'install-zone: %s\n' "$*" >&2; exit 1; }
 
+usage() { sed -n '2,/^#   INSTALL_ZONE_CACHE/p' "$0" | sed 's/^# \{0,1\}//'; }
+
+# zone_file: the zone file must exist before anything reads it.
+zone_file() { [ -f "$ZONE_VALUES" ] || die "zone file not found: $ZONE_VALUES"; }
+
 sha256() { if command -v sha256sum >/dev/null; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -d' ' -f1; }
 
 plan() {
+  zone_file
   say "Zone file: ${ZONE_VALUES#"$REPO"/}   context: $KUBE_CONTEXT"
   local i=0 step release ns chart values facts extra label
   for step in "${STEPS[@]}"; do
@@ -176,6 +183,7 @@ PY
 
 render() {
   local want=("$@") step release ns chart values facts extra path out name names=""
+  zone_file
   for step in "${STEPS[@]}"; do names="$names ${step%%|*}"; done
   for name in "${want[@]}"; do
     [[ "$names " == *" $name "* ]] || die "render: unknown release '$name'; the releases are $(sed 's/^ //; s/ /, /g' <<<"$names")"
@@ -233,7 +241,7 @@ preflight() {
     command -v "$tool" >/dev/null || die "missing tool: $tool"
   done
   python3 -c 'import yaml' 2>/dev/null || die "python3 needs PyYAML"
-  [ -f "$ZONE_VALUES" ] || die "zone file not found: $ZONE_VALUES"
+  zone_file
   if ! kctx version --request-timeout=10s >/dev/null 2>&1; then
     plan
     die "the cluster of context $KUBE_CONTEXT cannot be reached; refusing to continue (nothing was changed)"
@@ -309,5 +317,7 @@ case "${1:-}" in
   plan) plan ;;
   render) shift; render "$@" ;;
   uninstall) uninstall ;;
-  *) sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+  help|-h|--help) usage ;;
+  '') usage >&2; exit 2 ;;
+  *) usage >&2; printf "install-zone: unknown command '%s'\n" "$1" >&2; exit 2 ;;
 esac
