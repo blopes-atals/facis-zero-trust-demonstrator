@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# scenario: workload-identity / The agent's metrics are not open on the node
+# level: L2
+# requirement: The SPIRE agents' metrics endpoint is bound to the node's loopback
+# The node's listening sockets are read from /proc/net/tcp{,6} through a host-network pod on that
+# node (the Cilium agent), and 127.0.0.1:9988 is requested through `kubectl port-forward` to the
+# host-network agent pod, which dials the loopback of the node's network namespace.
+. "$(dirname "$0")/../lib.sh"
+need_live
+rc=0
+nodes=$(k -n "$SPIRE_NS" get pods -o json | jq -r '.items[] | select(.metadata.ownerReferences[]?.kind == "DaemonSet" and (.metadata.name | test("agent"))) | "\(.spec.nodeName) \(.metadata.name)"' | sort -u)
+[ -n "$nodes" ] || { echo "FAIL: no SPIRE agent pod"; exit 1; }
+while read -r node agent; do
+  hp=$(k -n kube-system get pods -l k8s-app=cilium --field-selector "spec.nodeName=$node" -o name | head -1)
+  [ -n "$hp" ] || { echo "UNVERIFIABLE: no host-network pod to read the sockets of $node"; exit 77; }
+  socks=$(k -n kube-system exec "${hp#pod/}" -c cilium-agent -- cat /proc/net/tcp /proc/net/tcp6 2>/dev/null \
+    | awk -v port="$(printf %04X 9988)" '$4 == "0A" { split($2, a, ":"); if (a[2] == port) print a[1] }' | sort -u)
+  echo "node $node: listeners on :9988 (hex local addresses): ${socks:-none}"
+  if [ -z "$socks" ]; then echo "  FAIL: nothing listens on 9988"; rc=1
+  elif grep -qvxE '0100007F|0000000000000000FFFF00000100007F|00000000000000000000000001000000' <<<"$socks"; then
+    echo "  FAIL: 9988 listens on an address other than the loopback"; rc=1
+  else echo "  PASS: 9988 on the loopback only"; fi
+  pf=$EVAL_TMP/pf-$node.log
+  k -n "$SPIRE_NS" port-forward "pod/$agent" :9988 > "$pf" 2>&1 & pid=$!
+  lp=""; for _ in $(seq 1 30); do lp=$(sed -n 's/^Forwarding from 127.0.0.1:\([0-9]*\) .*/\1/p' "$pf" | head -1); [ -n "$lp" ] && break; sleep 0.5; done
+  body=""; [ -n "$lp" ] && body=$(curl -s -m 10 "http://127.0.0.1:$lp/metrics")
+  kill $pid 2>/dev/null; wait $pid 2>/dev/null
+  n=$(grep -c '^spire_agent' <<<"$body")
+  echo "  127.0.0.1:9988/metrics on $node (via $agent): $n spire_agent series; $(grep -m1 '^spire_agent' <<<"$body" | cut -c1-120)"
+  [ "$n" -gt 0 ] && echo "  PASS: SPIRE agent metrics" || { echo "  FAIL: no SPIRE agent metrics on the loopback"; rc=1; }
+done <<<"$nodes"
+exit $rc

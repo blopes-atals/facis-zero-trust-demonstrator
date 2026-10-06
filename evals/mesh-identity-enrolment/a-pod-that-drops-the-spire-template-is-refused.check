@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# scenario: mesh-identity-enrolment / A pod that drops the SPIRE template is refused
+# level: L2
+# requirement: No proxy in a plane namespace can take its certificate from istiod
+# Pods are created with a server-side dry run, so admission (injection and policies) runs in full
+# and nothing is persisted. "Its own istio-proxy without the socket" is a pod that opts out of
+# injection and carries a container named istio-proxy without the csi.spiffe.io volume.
+. "$(dirname "$0")/../lib.sh"
+need_live
+rc=0
+IMG=docker.io/curlimages/curl:8.10.1@sha256:d9b4541e214bcd85196d6e92e2753ac6d0ea699f0af5741f8c6cccbfcf00ef4b
+pols=$(k get validatingadmissionpolicies -o jsonpath='{.items[*].metadata.name}' 2>/dev/null)
+echo "validating admission policies: ${pols:-none}"
+pod() { # pod <name> <annotations-json> <extra-containers-json>
+  cat <<JSON
+{"apiVersion":"v1","kind":"Pod","metadata":{"name":"$1","namespace":"$DATA","labels":{"spiffe.io/spire-managed-identity":"true","ztd-eval":"stand-in"},"annotations":$2},
+ "spec":{"terminationGracePeriodSeconds":1,"containers":[{"name":"app","image":"$IMG","command":["sleep","60"]}$3]}}
+JSON
+}
+refused() { # refused <label> <json>
+  local out r; out=$(k create --dry-run=server -o json -f - <<<"$2" 2>&1); r=$?
+  echo "$1: exit $r: $(head -c 400 <<<"$out" | tr '\n' ' ')"
+  if [ $r -ne 0 ] && grep -qi 'denied\|forbidden' <<<"$out"; then
+    local named=""; for p in $pols; do grep -q "$p" <<<"$out" && named=$p; done
+    [ -n "$named" ] && echo "  PASS: refused, naming the admission policy $named" || { echo "  FAIL: refused but no admission policy named"; rc=1; }
+  else echo "  FAIL: admitted"; rc=1; fi
+}
+refused "pod annotated inject.istio.io/templates: sidecar" "$(pod ev-dryrun-tpl '{"inject.istio.io/templates":"sidecar"}' '')"
+refused "pod with its own istio-proxy, no socket" "$(pod ev-dryrun-own '{"sidecar.istio.io/inject":"false"}' ',{"name":"istio-proxy","image":"'"$IMG"'","command":["sleep","60"]}')"
+out=$(k create --dry-run=server -o json -f - <<<"$(pod ev-dryrun-ok '{}' '')" 2>&1); r=$?
+echo "ordinary pod: exit $r"
+if [ $r -ne 0 ]; then echo "  FAIL: an ordinary pod is refused: $(head -c 300 <<<"$out")"; rc=1
+else
+  res=$(jq -r '. as $p | [($p.spec.initContainers // [])[], $p.spec.containers[]] | map(select(.name == "istio-proxy")) | .[0] as $c
+        | if $c == null then "no-proxy" else
+          [$c.volumeMounts[]? | . as $m | ($p.spec.volumes[] | select(.name == $m.name and .csi.driver == "csi.spiffe.io")) | "\($m.name)@\($m.mountPath)"] | if length > 0 then join(",") else "no-socket" end end' <<<"$out")
+  echo "  istio-proxy csi.spiffe.io mounts: $res"
+  case $res in no-proxy|no-socket|"") echo "  FAIL: the ordinary pod's proxy is not on the SPIRE socket"; rc=1 ;; *) echo "  PASS: admitted with its proxy on the SPIRE socket" ;; esac
+fi
+exit $rc

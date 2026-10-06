@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# scenario: mesh-identity-enrolment / Help and a foreign context touch nothing
+# level: L1
+# requirement: The mesh-identity proof touches only a kind cluster and only when run without arguments
+# Runs a copy of the tree with helm, kubectl, kind and istioctl wrapped to log every call, against a
+# throw-away kubeconfig whose only context is not a kind cluster (an unreachable server). Nothing
+# here can reach the real cluster. Literal reading: the foreign-context refusal exits non-zero.
+. "$(dirname "$0")/../lib.sh"
+W=$EVAL_TMP/repo; B=$EVAL_TMP/bin; L=$EVAL_TMP/calls.log; mkdir -p "$W" "$B" "$EVAL_TMP/home"
+(cd "$REPO" && git ls-files -z -- scripts deployment docs | tar --null -T - -cf -) | tar -xf - -C "$W"
+git -C "$W" init -q && git -C "$W" add -A && git -C "$W" -c user.email=e@e -c user.name=eval commit -qm snap
+for t in helm kubectl kind istioctl cilium; do
+  real=$(command -v "$t") || real=/bin/false
+  printf '#!/bin/sh\necho "%s $*" >> "%s"\nexec "%s" "$@"\n' "$t" "$L" "$real" > "$B/$t"; chmod +x "$B/$t"
+done
+cat > "$EVAL_TMP/kubeconfig" <<'YAML'
+apiVersion: v1
+kind: Config
+clusters: [{name: foreign, cluster: {server: "https://127.0.0.1:1"}}]
+users: [{name: foreign, user: {token: x}}]
+contexts: [{name: ztd-eval-foreign, context: {cluster: foreign, user: foreign}}]
+current-context: ztd-eval-foreign
+YAML
+snap() { (cd "$W" && sha256sum docs/evidences/mesh-identity/* | sha256sum); }
+run() { # run <label> <env...> -- <args...>
+  local label=$1; shift; : > "$L"; local before; before=$(snap)
+  env -u CI PATH="$B:$PATH" HOME="$EVAL_TMP/home" KUBECONFIG="$EVAL_TMP/kubeconfig" "$@" > "$EVAL_TMP/out" 2>&1; local r=$?
+  echo "$label: exit $r"; head -3 "$EVAL_TMP/out" | sed 's/^/  out: /'; sed 's/^/  call: /' "$L"
+  OUT=$(cat "$EVAL_TMP/out"); RC=$r
+  bad=$(grep -E '^(helm (uninstall|delete|install|upgrade|rollback)|kubectl .*(delete|apply|create|patch|replace|label|annotate|scale|drain)|kind (delete|create))' "$L")
+  [ -z "$bad" ] || { echo "  FAIL: mutating calls: $bad"; rc=1; }
+  [ "$before" = "$(snap)" ] && [ -z "$(git -C "$W" status --porcelain)" ] || { echo "  FAIL: files changed"; git -C "$W" status --porcelain | sed 's/^/  /'; rc=1; }
+}
+rc=0; V=$W/scripts/verify-mesh-identity/verify.sh
+for a in --help -h; do
+  run "verify.sh $a" KUBE_CONTEXT=ztd-eval-foreign timeout 60 "$V" "$a"
+  [ $RC -eq 0 ] && grep -qi usage <<<"$OUT" && echo "  PASS: usage, exit 0" || { echo "  FAIL: want the usage and exit 0"; rc=1; }
+  ! grep -qE '^(helm|kind|istioctl|cilium) |^kubectl ' "$L" || { grep -qvE '^kubectl (config|version --client)' "$L" && { echo "  FAIL: --help called a cluster tool"; rc=1; }; }
+done
+run "verify.sh --no-such-arg" KUBE_CONTEXT=ztd-eval-foreign timeout 60 "$V" --no-such-arg
+[ $RC -ne 0 ] && grep -qi usage <<<"$OUT" && echo "  PASS: usage, non-zero" || { echo "  FAIL: want the usage and a non-zero exit"; rc=1; }
+! grep -qE '^(helm|kind|istioctl|cilium) ' "$L" && ! grep -E '^kubectl ' "$L" | grep -qvE '^kubectl (config|version --client)' || { echo "  FAIL: an unknown argument called a cluster tool"; rc=1; }
+run "verify.sh with KUBE_CONTEXT=ztd-eval-foreign (not kind)" KUBE_CONTEXT=ztd-eval-foreign timeout 120 "$V"
+[ $RC -ne 0 ] && grep -qiE 'refus|not a kind|kind cluster' <<<"$OUT" && echo "  PASS: refused" || { echo "  FAIL: want a refusal and a non-zero exit"; rc=1; }
+[ $rc -eq 0 ] && echo "PASS"
+exit $rc

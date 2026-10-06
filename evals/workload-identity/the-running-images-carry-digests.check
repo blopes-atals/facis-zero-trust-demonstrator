@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# scenario: workload-identity / The running images carry digests
+# level: L2
+# requirement: The SPIRE and Istio images are pinned by digest
+# Images of every container (init, regular, ephemeral) of the pods in the SPIRE and mesh
+# namespaces, and the injected istio-proxy of the meshed stand-in pod.
+. "$(dirname "$0")/../lib.sh"
+need_live
+list() { jq -r --arg ns "$1" '.items[] | .metadata.name as $p | ((.spec.initContainers // []) + .spec.containers + (.spec.ephemeralContainers // []))[] | "\($ns)/\($p)/\(.name) \(.image)"'; }
+out=$( { k -n "$SPIRE_NS" get pods -o json | list "$SPIRE_NS"; k -n "$ISTIO_NS" get pods -o json | list "$ISTIO_NS";
+         k -n "$DATA" get pod ev-client -o json | jq '{items: [.]}' | list "$DATA" | grep '/istio-proxy '; } )
+[ -n "$out" ] || { echo "FAIL: no pod listed"; exit 1; }
+grep -q "^$DATA/ev-client/istio-proxy " <<<"$out" || { echo "FAIL: no injected istio-proxy on ev-client"; exit 1; }
+bad=$(grep -vE '@sha256:[0-9a-f]{64}$' <<<"$out")
+echo "$out" | sed 's/^/  /'
+[ -z "$bad" ] || { echo "FAIL: images without a digest:"; sed 's/^/  /' <<<"$bad"; exit 1; }
+echo "PASS: $(wc -l <<<"$out") image references, all by digest"
