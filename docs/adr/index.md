@@ -21,6 +21,12 @@ its text and is read through the record that supersedes it.
 | [0005](0005-three-cluster-reading-of-the-target-environment.md) | Three-cluster reading of the target environment | Accepted |
 | [0006](0006-service-mesh-mode-istio-sidecar-with-cilium.md) | Service mesh mode — Istio sidecar with Cilium (supersedes 0001) | Proposed |
 
+## TDR decisions
+
+The six decisions the Technical Development Requirements prescribe (ADR 001–006: Helm, ORCE, the
+automation stack, Keycloak, the security baseline, logging) are binding. How each is applied is
+recorded in [TDR decisions ADR 001–006](tdr-decisions.md).
+
 ## Implementation decisions
 
 Implementation decisions are taken by the delivery team as the work proceeds, usually as the outcome
