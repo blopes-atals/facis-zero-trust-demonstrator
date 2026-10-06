@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# scenario: mesh-identity-enrolment / A certificate from istiod's CA opens no mesh connection
+# level: L2
+# requirement: No proxy in a plane namespace can take its certificate from istiod
+# Live: a leaf for the labelled caller's (ev-client) SPIFFE ID is signed with istiod's CA key
+# (istio-ca-secret, or cacerts when a plugged-in CA is used) and presented over mTLS to the meshed
+# peer's proxy (ev-peer:8080) from the sidecar-less probe pod; the caller's SPIRE SVID is presented
+# the same way. "The evidence shows" is checked against the committed proof evidence as well.
+. "$(dirname "$0")/../lib.sh"
+need_live
+T=$EVAL_TMP; rc=0
+probe_control
+
+# istiod's CA key and certificate
+sec=""
+for s in istio-ca-secret cacerts; do k -n "$ISTIO_NS" get secret "$s" >/dev/null 2>&1 && { sec=$s; break; }; done
+[ -n "$sec" ] || { echo "UNVERIFIABLE: no istiod CA secret (istio-ca-secret / cacerts) in $ISTIO_NS"; exit 77; }
+k -n "$ISTIO_NS" get secret "$sec" -o jsonpath='{.data.ca-key\.pem}' | base64 -d > "$T/ca-key.pem"
+k -n "$ISTIO_NS" get secret "$sec" -o jsonpath='{.data.ca-cert\.pem}' | base64 -d > "$T/ca-cert.pem"
+[ -s "$T/ca-key.pem" ] && [ -s "$T/ca-cert.pem" ] || { echo "BROKEN CHECK: could not read the CA from $sec"; exit 1; }
+echo "istiod CA ($sec): $(openssl x509 -in "$T/ca-cert.pem" -noout -subject)"
+
+# the caller's SPIRE SVID over the CSI socket
+fetch_svid "$DATA" ev-client > "$T/svid.json" || { echo "FAIL: no SVID for ev-client"; exit 1; }
+id=$(jq -r '.svids[0].spiffe_id' "$T/svid.json")
+echo "caller SPIFFE ID: $id"
+python3 - "$T/svid.json" "$T" <<'PY' || { echo "BROKEN CHECK: cannot decode the SVID"; exit 1; }
+import json, sys, base64, subprocess
+j = json.load(open(sys.argv[1])); d = sys.argv[2]; s = j["svids"][0]
+def der2pem(der, kind):
+    return "-----BEGIN %s-----\n%s\n-----END %s-----\n" % (kind, "\n".join(base64.b64encode(der).decode()[i:i+64] for i in range(0, len(base64.b64encode(der)), 64)), kind)
+chain = base64.b64decode(s["x509_svid"])
+# x509_svid is the concatenated DER chain: split it with openssl-free ASN.1 length parsing
+certs, i = [], 0
+while i < len(chain):
+    l = chain[i+1]
+    if l & 0x80:
+        n = l & 0x7f; ln = int.from_bytes(chain[i+2:i+2+n], "big"); h = 2 + n
+    else:
+        ln, h = l, 2
+    certs.append(chain[i:i+h+ln]); i += h + ln
+open(d + "/svid.pem", "w").write("".join(der2pem(c, "CERTIFICATE") for c in certs))
+open(d + "/svid-key.pem", "w").write(der2pem(base64.b64decode(s["x509_svid_key"]), "PRIVATE KEY"))
+PY
+
+# a leaf for the same SPIFFE ID signed with istiod's CA key
+openssl req -new -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -keyout "$T/forged-key.pem" -subj "/O=forged" -out "$T/forged.csr" 2>/dev/null
+printf 'subjectAltName=URI:%s\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=clientAuth,serverAuth\n' "$id" > "$T/ext.cnf"
+openssl x509 -req -in "$T/forged.csr" -CA "$T/ca-cert.pem" -CAkey "$T/ca-key.pem" -CAcreateserial -days 1 -extfile "$T/ext.cnf" -out "$T/forged.pem" 2>/dev/null
+cat "$T/forged.pem" "$T/ca-cert.pem" > "$T/forged-chain.pem"
+openssl verify -CAfile "$T/ca-cert.pem" "$T/forged.pem" >/dev/null 2>&1 && echo "forged leaf verifies against istiod's CA, SAN $(openssl x509 -in "$T/forged.pem" -noout -ext subjectAltName | tail -1 | xargs)" \
+  || { echo "BROKEN CHECK: forged leaf does not verify against istiod's CA"; exit 1; }
+
+# present both from the sidecar-less probe pod
+put() { k -n "$DATA" exec -i ev-probe -c app -- sh -c "cat > /tmp/$2" < "$1"; }
+put "$T/svid.pem" svid.pem; put "$T/svid-key.pem" svid-key.pem; put "$T/forged-chain.pem" forged.pem; put "$T/forged-key.pem" forged-key.pem
+ip=$(k -n "$DATA" get pod ev-peer -o jsonpath='{.status.podIP}')
+call() { k -n "$DATA" exec ev-probe -c app -- curl -sS -k -m 10 -o /dev/null -w '%{http_code}' --cert "/tmp/$1" --key "/tmp/$2" "https://$ip:8080/" 2>&1; }
+good=$(call svid.pem svid-key.pem); gr=$?
+echo "with the SPIRE SVID -> https://$ip:8080/: exit $gr, $good"
+bad=$(call forged.pem forged-key.pem); br=$?
+echo "with the istiod-signed cert -> https://$ip:8080/: exit $br, $bad"
+k -n "$DATA" exec ev-probe -c app -- rm -f /tmp/svid.pem /tmp/svid-key.pem /tmp/forged.pem /tmp/forged-key.pem >/dev/null 2>&1
+[ $gr -eq 0 ] && [ "${good: -3}" = 200 ] && echo "PASS: the SPIRE SVID is accepted" || { echo "FAIL: the caller's SPIRE SVID is not accepted (the control of this check)"; rc=1; }
+if [ $br -ne 0 ] && [ "${bad: -3}" != 200 ]; then echo "PASS: the istiod-signed certificate is refused"
+else echo "FAIL: the peer's proxy accepted a certificate signed by istiod's CA"; rc=1; fi
+
+# the evidence
+sec8=$(evidence_section mesh-identity-issued-by-spire)
+if grep -qi 'istiod' <<<"$sec8" && grep -i 'istiod-signed\|istiod.s CA' <<<"$sec8" | grep -qi 'refus' && grep -i 'SPIRE SVID' <<<"$sec8" | grep -q '^- PASS'; then
+  echo "PASS: the evidence shows the istiod-signed handshake refused and the SPIRE SVID accepted"
+  grep -i 'istiod-signed\|SPIRE SVID' <<<"$sec8" | grep '^- ' | sed 's/^/  /'
+else echo "FAIL: the evidence does not show the istiod-signed handshake refused next to the SVID accepted"; rc=1; fi
+evidence_section_passed mesh-identity-issued-by-spire || rc=1
+exit $rc

@@ -4,7 +4,8 @@
 # requirement: No proxy in a plane namespace can take its certificate from istiod
 # Pods are created with a server-side dry run, so admission (injection and policies) runs in full
 # and nothing is persisted. "Its own istio-proxy without the socket" is a pod that opts out of
-# injection and carries a container named istio-proxy without the csi.spiffe.io volume.
+# injection and carries a container named istio-proxy without the csi.spiffe.io volume; the third
+# case opts out of injection and runs pilot-agent from the proxyv2 image as container "mesh-agent".
 . "$(dirname "$0")/../lib.sh"
 need_live
 rc=0
@@ -27,6 +28,8 @@ refused() { # refused <label> <json>
 }
 refused "pod annotated inject.istio.io/templates: sidecar" "$(pod ev-dryrun-tpl '{"inject.istio.io/templates":"sidecar"}' '')"
 refused "pod with its own istio-proxy, no socket" "$(pod ev-dryrun-own '{"sidecar.istio.io/inject":"false"}' ',{"name":"istio-proxy","image":"'"$IMG"'","command":["sleep","60"]}')"
+PROXYV2=docker.io/istio/proxyv2:1.31.1
+refused "pod running pilot-agent from proxyv2 under another container name" "$(pod ev-dryrun-agent '{"sidecar.istio.io/inject":"false"}' ',{"name":"mesh-agent","image":"'"$PROXYV2"'","command":["/usr/local/bin/pilot-agent"],"args":["proxy","sidecar"]}')"
 out=$(k create --dry-run=server -o json -f - <<<"$(pod ev-dryrun-ok '{}' '')" 2>&1); r=$?
 echo "ordinary pod: exit $r"
 if [ $r -ne 0 ]; then echo "  FAIL: an ordinary pod is refused: $(head -c 300 <<<"$out")"; rc=1
