@@ -40,6 +40,18 @@ registration:
 peerAuthentication:
   mode: STRICT
 
+# No mesh proxy without the SPIRE socket (templates/validatingadmissionpolicy-proxy-spire-socket.yaml).
+# In a plane namespace, a pod may not choose its injection templates (inject.istio.io/templates),
+# and a pod with an istio-proxy container is admitted only when the proxy mounts the SPIFFE CSI
+# driver's volume where Istio looks for the SPIRE socket, so a pod cannot drop the `spire`
+# injection template and take a certificate from istiod's CA.
+# The volume name and path are those of Istio's `sidecar` template and the istiod values file.
+proxySocketPolicy:
+  name: proxy-takes-spire-socket
+  volume: workload-socket
+  mountPath: /var/run/secrets/workload-spiffe-uds
+  driver: csi.spiffe.io
+
 # Identity-band checks (hook-weight band "identity", 20-39): post-install and post-upgrade Jobs that
 # only read, through the Kubernetes API, and fail the release when identity is not there. They run
 # in the release namespace under its default deny, through the DNS bypass and the API lane.

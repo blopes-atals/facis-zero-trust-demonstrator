@@ -11,7 +11,14 @@
 # zone file does not state them.
 meshConfig:
   trustDomain: ""            # zone fact: zone.trustDomain (required); the SPIRE server's trust domain
+# Images, pinned by tag and digest (the multi-arch index digest of the 1.31.1 tag, read from its
+# registry). A value that contains "/" is used by the chart as the whole image reference.
+global:
+  proxy:
+    # The injected proxy; the injector uses the full reference as it stands.
+    image: docker.io/istio/proxyv2:1.31.1@sha256:d86cba0dd1eb15c00b6901c69ce5ae3d2d5f8427a47751098cf8c3ab2a4a62e9
 pilot:
+  image: docker.io/istio/pilot:1.31.1@sha256:212ca088ada22f48be1576e6b688972b8aa7495710abb7c5f1febca856a15577
   env:
     # Native sidecar containers: the proxy is injected as an init container with
     # restartPolicy: Always, so it starts before and stops after the application, and Jobs end.

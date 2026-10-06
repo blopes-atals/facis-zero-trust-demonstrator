@@ -50,6 +50,9 @@ scripts/install-zone/install.sh install
   error; the failed release is rolled back. It exits 0 only when every pod in the plane and
   control-plane namespaces is Ready (finished Job pods aside).
 - **Idempotent.** Run again, it upgrades every release in place with identical manifests.
+- **`render`** renders every release, or only the ones named; a name that is not one of the seven
+  releases (`ztd`, `spire-crds`, `spire`, `istio-base`, `istiod`, `istio-cni`, `zone-policy`)
+  stops it with a non-zero exit and the list of valid names, before anything is rendered.
 - **`plan`** lists the seven steps without touching a cluster; `install` against an unreachable
   cluster prints the same list and refuses to continue, changing nothing.
 - **`uninstall`** removes the releases in reverse order (`zone-policy`, `istio-cni`, `istiod`,
@@ -78,7 +81,8 @@ A release whose zone fact is missing does not render, and the message names the 
 
 ## Pins
 
-The versions and digests are at the top of `install.sh` and in `docs/dependencies.md`. The SPIRE
+The chart versions and digests are at the top of `install.sh` and in `docs/dependencies.md`; the
+container images are pinned by tag and digest in the values files under `deployment/helm/values/`. The SPIRE
 charts come from `https://spiffe.github.io/helm-charts-hardened/` and are checked against their
 sha256. The Istio 1.31 charts are not in Istio's Helm repository or OCI registry; they come from
 the release archive `istio-1.31.1-linux-amd64.tar.gz`, checked against its published sha256. An

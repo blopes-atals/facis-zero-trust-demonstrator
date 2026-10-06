@@ -1,10 +1,35 @@
 # Values of the upstream releases
 
 The SPIRE and Istio releases of a zone are the upstream charts, installed as they ship, one Helm
-release per chart, pinned by version (and digest) in `scripts/install-zone/install.sh` and in
-`docs/dependencies.md`. No wrapper chart and no subchart: each release installs, upgrades and
-removes its own CRDs. This folder holds one values file per release; this README lists every
-upstream value the repository sets and why. Anything not listed is the chart's default.
+release per chart. The charts are pinned by version and by the sha256 of their archive in
+`scripts/install-zone/install.sh` and in `docs/dependencies.md`; the container images they run are
+pinned by tag and digest here, in the values files (see "Images" below). No wrapper chart and no
+subchart: each release installs, upgrades and removes its own CRDs. This folder holds one values
+file per release; this README lists every upstream value the repository sets and why. Anything not
+listed is the chart's default.
+
+**Images.** Every image a release runs is pinned by tag and digest, the digest being the
+multi-arch index digest of that tag as its registry serves it (`docker buildx imagetools inspect
+<image>:<tag>`). The tags are the charts' own defaults for the pinned chart versions, except the
+SPIRE server's `kubectl` hook image (below). The SPIRE charts take the pin in the image's `tag`
+value as `<tag>@sha256:<digest>`; the Istio charts take a full reference in their `image` value.
+Images the charts already pin by digest (`cgr.dev/chainguard/bash`) are left as they ship. One
+image stays a tag: `busybox:1.28` in Istio's `grpc-simple` injection template, which runs only in a
+pod that chooses its injection templates, which the `zone-policy` admission policy refuses in every
+plane namespace. An upgrade of a chart re-reads every digest.
+
+| Release | Value | Image |
+|---|---|---|
+| `spire` | `spire-server.image.tag` | `ghcr.io/spiffe/spire-server:1.15.3` |
+| `spire` | `spire-server.controllerManager.image.tag` | `ghcr.io/spiffe/spire-controller-manager:0.7.0` |
+| `spire` | `spire-server.chown.image.tag` | `busybox:1.37.0-uclibc` (the datastore volume's ownership, init container) |
+| `spire` | `spire-server.tools.kubectl.image.tag` | `registry.k8s.io/kubectl:v1.35.5` (install, upgrade and delete hooks); the chart's default follows the cluster's version, so the image would change with the cluster; the pin is the kind node's version, within kubectl's one-minor skew of zones at 1.34 to 1.36 |
+| `spire` | `spire-agent.image.tag` | `ghcr.io/spiffe/spire-agent:1.15.3` |
+| `spire` | `spiffe-csi-driver.image.tag` | `ghcr.io/spiffe/spiffe-csi-driver:0.2.7` |
+| `spire` | `spiffe-csi-driver.nodeDriverRegistrar.image.tag` | `registry.k8s.io/sig-storage/csi-node-driver-registrar:v2.15.0` |
+| `istiod` | `pilot.image` | `docker.io/istio/pilot:1.31.1` |
+| `istiod` | `global.proxy.image` | `docker.io/istio/proxyv2:1.31.1`, the injected proxy |
+| `istio-cni` | `cni.image` | `docker.io/istio/install-cni:1.31.1` |
 
 | Release | Chart | Source | Namespace |
 |---|---|---|---|
@@ -63,13 +88,14 @@ naming the fact:
 | `spire-agent.sds.defaultSVIDName` | `default` | the name Istio's proxy asks for its workload certificate (the SDS contract) |
 | `spire-agent.sds.defaultBundleName` | `"null"` | the string `null` disables the own-bundle resource, which would otherwise also answer `ROOTCA` |
 | `spire-agent.sds.defaultAllBundlesName` | `ROOTCA` | the name Istio's proxy asks for its validation context, served with every bundle so that federation later changes nothing |
-| `spire-agent.telemetry.prometheus.enabled` | `true` | the agents' metrics on port 9988 of each node (host network), the contract with the observability collector |
+| `spire-agent.telemetry.prometheus.enabled` | `true` | the agents' metrics on port 9988 of each node, the contract with the observability collector |
+| `spire-agent.telemetry.prometheus.host` | `127.0.0.1` | the agent runs on the host network, where the chart's `0.0.0.0` would open an unauthenticated metrics endpoint on every node address, out of reach of any network policy; on the loopback it answers only a collector on the node's host network |
 | `spiffe-csi-driver.enabled` | `true` | mounts the agent's Workload API socket into pods as the read-only `csi.spiffe.io` volume |
 | `spiffe-oidc-discovery-provider.enabled` | `false` | no JWT consumer outside the zone |
 | `tornjak-frontend.enabled` | `false` | no management UI |
 | `upstream.enabled` | `false` | no nested SPIRE |
 
-The telemetry endpoints (server 9988, agents 9988 on the node, controller-manager 8082) are switched
+The telemetry endpoints (server 9988, agents 127.0.0.1:9988 on the node, controller-manager 8082) are switched
 on and their ports fixed here as the contract the observability work scrapes with its collector;
 the collector and its lane into `spire-system` are not part of this folder.
 
@@ -92,7 +118,7 @@ installer's uninstall removes the CRDs the release owned.
 | `pilot.cni.enabled` | `true` | traffic redirection by the Istio CNI plugin (release `istio-cni`), so the injected pod has no privileged `istio-init` container |
 | `sidecarInjectorWebhook.templates.spire` | a patch of the pod's `workload-socket` volume into the `csi.spiffe.io` read-only volume | the default sidecar template mounts `workload-socket` into the proxy at `/run/secrets/workload-spiffe-uds`; with the SPIRE agent's socket there the proxy takes its certificate and bundle from SPIRE over SDS and never from istiod's CA |
 | `base.validationFailurePolicy` | `Fail` | as in `istio-base`: identical manifests on every run, and the webhook fails closed |
-| `sidecarInjectorWebhook.defaultTemplates` | `[sidecar, spire]` | the `spire` template applies to every injection, so a workload cannot opt out of the SPIRE socket by leaving out an annotation |
+| `sidecarInjectorWebhook.defaultTemplates` | `[sidecar, spire]` | the `spire` template applies to every injection, so a workload does not lose the SPIRE socket by leaving out an annotation; a pod that names its own templates (`inject.istio.io/templates`) is refused in the plane namespaces by the `zone-policy` admission policy `proxy-takes-spire-socket`, because istiod's CA, which also signs istiod's own serving certificates, cannot be switched off |
 
 ## `istio-cni.yaml`
 

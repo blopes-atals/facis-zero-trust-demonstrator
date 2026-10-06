@@ -1,0 +1,66 @@
+{{- /*
+No mesh proxy without the SPIRE socket. istiod adds the `spire` injection template to every
+injection, but a pod can name its own templates with the annotation inject.istio.io/templates
+(for example `sidecar` alone), or override the injected istio-proxy container. Its proxy would then
+find no SPIRE socket and ask istiod's CA for a certificate, which istiod cannot stop issuing: its CA
+also signs istiod's own serving certificates, and istiod does not start its webhooks without it.
+This policy closes that path at admission: in a namespace carrying the umbrella's plane label, a
+pod may not carry the templates annotation at all (which also rules out the proxyless gRPC
+templates), and a pod (after injection, which runs before validation) that has an istio-proxy
+container is admitted only when the volume the proxy reads its certificate from is the SPIFFE CSI
+driver's and the proxy mounts it where Istio looks for the SPIRE socket. Pods without a proxy are
+not concerned: under the mesh-wide STRICT policy they reach no meshed peer.
+*/ -}}
+{{- $p := .Values.proxySocketPolicy }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ $p.name }}
+  labels:
+    {{- include "zone-policy.labels" . | nindent 4 }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE"]
+        resources: ["pods"]
+  variables:
+    - name: proxies
+      expression: >-
+        object.spec.containers.filter(c, c.name == 'istio-proxy') +
+        (has(object.spec.initContainers) ? object.spec.initContainers.filter(c, c.name == 'istio-proxy') : [])
+  validations:
+    - expression: >-
+        !has(object.metadata.annotations) || !('inject.istio.io/templates' in object.metadata.annotations)
+      message: >-
+        a pod in a plane namespace may not choose its injection templates
+        (inject.istio.io/templates): every injection is the sidecar template with the SPIRE socket
+      reason: Forbidden
+    - expression: >-
+        size(variables.proxies) == 0 ||
+        (has(object.spec.volumes) && object.spec.volumes.exists(v, v.name == {{ $p.volume | squote }}
+          && has(v.csi) && v.csi.driver == {{ $p.driver | squote }})
+         && variables.proxies.all(c, has(c.volumeMounts) && c.volumeMounts.exists(m,
+              m.name == {{ $p.volume | squote }} && m.mountPath == {{ $p.mountPath | squote }})))
+      message: >-
+        a mesh proxy in a plane namespace must take its certificate from SPIRE: the pod's
+        istio-proxy must mount the {{ $p.driver }} volume {{ $p.volume }} at {{ $p.mountPath }};
+        leave out the inject.istio.io/templates annotation and any istio-proxy override
+      reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ $p.name }}
+  labels:
+    {{- include "zone-policy.labels" . | nindent 4 }}
+spec:
+  policyName: {{ $p.name }}
+  validationActions: [Deny]
+  matchResources:
+    namespaceSelector:
+      matchExpressions:
+        - key: {{ .Values.registration.planeLabel }}
+          operator: Exists

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "zone-policy chart values",
   "type": "object",
-  "required": ["trustDomain", "spire", "mesh", "registration", "peerAuthentication", "checks"],
+  "required": ["trustDomain", "spire", "mesh", "registration", "peerAuthentication", "proxySocketPolicy", "checks"],
   "properties": {
     "trustDomain": {
       "type": "string",
@@ -48,6 +48,16 @@
       "type": "object",
       "required": ["mode"],
       "properties": { "mode": { "type": "string", "enum": ["STRICT"] } }
+    },
+    "proxySocketPolicy": {
+      "type": "object",
+      "required": ["name", "volume", "mountPath", "driver"],
+      "properties": {
+        "name": { "$ref": "#/$defs/name" },
+        "volume": { "$ref": "#/$defs/name" },
+        "mountPath": { "type": "string", "pattern": "^/[A-Za-z0-9._/-]+$" },
+        "driver": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$" }
+      }
     },
     "checks": {
       "type": "object",

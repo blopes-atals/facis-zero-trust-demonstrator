@@ -18,16 +18,19 @@ releases in order (the umbrella, SPIRE's `spire-crds` and `spire`, Istio's `base
   SPIRE server's CA; a pod without the label has no entry and gets no SVID.
 - **`mesh-identity-issued-by-spire`**: the certificate the proxy presents in mesh mTLS has
   `O = SPIRE`, the SPIRE CA as issuer and the SVID's URI SAN; the proxy's root bundle (`ROOTCA`) is
-  the SPIRE CA; istiod's CA issued nothing.
+  the SPIRE CA; istiod's CA issued nothing; a pod that chooses its injection templates, or brings
+  its own proxy without the SPIRE socket, is refused at admission.
 - **`unregistered-workload-cut-off`**: without an entry the proxy has no certificate, the
   application never starts, and the peer refuses the pod under STRICT.
 - **`traffic-through-the-proxies`**: the peer sees the caller's SPIFFE ID and both proxies count
   the request as mTLS.
 - **`default-deny-with-chained-cni`** and **`control-planes-under-default-deny`**: the Istio CNI
   plugin chained after Cilium, the umbrella's cross-plane denial and matrix lane intact with the
-  proxies, both control planes reachable only through their declared openings.
+  proxies, both control planes reachable only through their declared openings, and the SPIRE
+  agents' metrics bound to each node's loopback.
 - **`native-sidecar-version`** and **`install-order-idempotent`**: Kubernetes 1.33 or later with
-  the proxy as a native sidecar; the install order from zero, all Ready, idempotent.
+  the proxy as a native sidecar; the install order from zero, all Ready, idempotent, with every
+  SPIRE and Istio image pinned by digest.
 
 It also records the identity-band checks failing a release when a declared registration has no
 entry, the render guards, and a teardown that leaves no plane or control-plane namespace, CRD or

@@ -17,7 +17,8 @@
 #   scripts/install-zone/install.sh plan             list the steps; touches no cluster
 #   scripts/install-zone/install.sh render [release...]
 #                                                    render the releases from the pinned charts and
-#                                                    the merged values; touches no cluster (CI)
+#                                                    the merged values; touches no cluster (CI);
+#                                                    an unknown release name is an error
 #   scripts/install-zone/install.sh uninstall        uninstall in reverse order
 #
 # Environment:
@@ -174,7 +175,11 @@ PY
 }
 
 render() {
-  local want=("$@") step release ns chart values facts extra path out
+  local want=("$@") step release ns chart values facts extra path out name names=""
+  for step in "${STEPS[@]}"; do names="$names ${step%%|*}"; done
+  for name in "${want[@]}"; do
+    [[ "$names " == *" $name "* ]] || die "render: unknown release '$name'; the releases are $(sed 's/^ //; s/ /, /g' <<<"$names")"
+  done
   [ -n "${RENDER_DIR:-}" ] && mkdir -p "$RENDER_DIR"
   for step in "${STEPS[@]}"; do
     IFS='|' read -r release ns chart values facts extra <<<"$step"

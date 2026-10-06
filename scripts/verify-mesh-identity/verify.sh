@@ -8,12 +8,26 @@
 # behind. Writes docs/evidences/mesh-identity/evidence.md and environment.json; the exit status is
 # non-zero if any check failed. Never run by CI: the evidence is the record of a run on a cluster.
 #
-#   KUBE_CONTEXT   kubectl context   (default: kind-ztd)
+# Usage:
+#   scripts/verify-mesh-identity/verify.sh           run the proof: DESTRUCTIVE, it uninstalls the zone
+#                                                    from the cluster first and again at the end
+#   scripts/verify-mesh-identity/verify.sh --help    this text; touches nothing
+# Any other argument prints this text and exits 2 without touching the cluster.
+#
+# Environment:
+#   KUBE_CONTEXT   kubectl context   (default: kind-ztd); refused unless it is a kind cluster (the
+#                  context is named kind-<name> and every node's provider ID is kind://...)
 #   ZONE_VALUES    zone file         (default: deployment/helm/ztd/ci/values.yaml, the kind zone)
 #
 # Every check is "<test>; check $? <title>": the status of the test is what the check records.
 # shellcheck disable=SC2319,SC2016,SC2181,SC1091
 set -uo pipefail
+usage() { sed -n '2,/^# Every check/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; }
+case $# in
+  0) ;;
+  1) case $1 in -h|--help) usage; exit 0;; esac; usage >&2; echo "verify-mesh-identity: unknown argument: $1" >&2; exit 2;;
+  *) usage >&2; echo "verify-mesh-identity: takes no arguments" >&2; exit 2;;
+esac
 if [ -n "${CI:-}" ]; then
   echo "verify-mesh-identity: refusing to run under CI; the evidence is written from a run on a cluster" >&2
   exit 2
@@ -23,6 +37,17 @@ REPO=$(git rev-parse --show-toplevel)
 CHART=$REPO/deployment/helm/ztd
 ZONE_VALUES=${ZONE_VALUES:-$CHART/ci/values.yaml}
 CONTEXT=${KUBE_CONTEXT:-kind-ztd}
+# The run uninstalls and reinstalls the zone: refuse any cluster that is not a local kind cluster,
+# before anything is read from it or written to it.
+case $CONTEXT in
+  kind-?*) ;;
+  *) echo "verify-mesh-identity: refusing context '$CONTEXT': not a kind cluster (kind-<name>); the run uninstalls the zone" >&2; exit 2;;
+esac
+providers=$(kubectl --context "$CONTEXT" get nodes -o jsonpath='{range .items[*]}{.spec.providerID}{"\n"}{end}' 2>/dev/null)
+if [ -z "$providers" ] || grep -qv '^kind://' <<<"$providers"; then
+  echo "verify-mesh-identity: refusing context '$CONTEXT': unreachable, or a node whose provider ID is not kind://" >&2
+  exit 2
+fi
 INSTALL=$REPO/scripts/install-zone/install.sh
 EVID=$REPO/docs/evidences/mesh-identity
 export ZONE_VALUES KUBE_CONTEXT=$CONTEXT
@@ -128,8 +153,11 @@ done
 [ "$same" -eq 7 ]; check $? "helm get manifest of every release is identical between the two runs" "$same of 7 identical${diffs:+; differ:$diffs}"
 tail -1 "$work/install2.log" | grep -q '^zone installed: every pod'; check $? "every pod in the plane and control-plane namespaces is Ready (the installer's exit condition)" "$(tail -1 "$work/install2.log")"
 code "$(h list -A -o json | jq -r '(["RELEASE","NAMESPACE","REVISION","STATUS","CHART"] | join(" ")), (.[] | [.name, .namespace, .revision, .status, .chart] | join(" "))')"
-images_spire=$(k -n "$SPIRE_NS" get pods -o jsonpath='{.items[*].spec.containers[*].image}' | tr ' ' '\n' | sort -u | paste -sd, -)
-images_istio=$(k -n "$ISTIO_NS" get pods -o jsonpath='{.items[*].spec.containers[*].image}' | tr ' ' '\n' | sort -u | paste -sd, -)
+images_spire=$(k -n "$SPIRE_NS" get pods -o jsonpath='{.items[*].spec.containers[*].image} {.items[*].spec.initContainers[*].image}' | tr ' ' '\n' | grep . | sort -u | paste -sd, -)
+images_istio=$(k -n "$ISTIO_NS" get pods -o jsonpath='{.items[*].spec.containers[*].image} {.items[*].spec.initContainers[*].image}' | tr ' ' '\n' | grep . | sort -u | paste -sd, -)
+unpinned=$(tr ',' '\n' <<<"$images_spire,$images_istio" | grep -v '@sha256:[0-9a-f]\{64\}$' || true)
+[ -n "$images_spire" ] && [ -n "$images_istio" ] && [ -z "$unpinned" ]
+check $? "every image the SPIRE and Istio pods run (containers and init containers) is pinned by digest" "$(tr ',' '\n' <<<"$images_spire,$images_istio" | grep -c .) images; not pinned: ${unpinned:-none}"
 code "$(k get pods -n "$SPIRE_NS" -o wide | sed 's/  */ /g'; echo; k get pods -n "$ISTIO_NS" -o wide | sed 's/  */ /g')"
 
 # --------------------------------------------------------------------------------------------
@@ -215,6 +243,7 @@ jq -e '[.spec.initContainers[] | select(.name == "istio-proxy" and .restartPolic
   && jq -e '[.spec.containers[] | select(.name == "istio-proxy")] | length == 0' <<<"$pod" >/dev/null
 check $? "istio-proxy is an init container with restartPolicy Always (a native sidecar), not a regular container" "$(jq -r '[.spec.initContainers[] | "\(.name)(restartPolicy=\(.restartPolicy // "-"))"] | join(", ")' <<<"$pod")"
 [ "$(jq -r '.status.conditions[] | select(.type == "Ready") | .status' <<<"$pod")" = True ]; check $? "the meshed pod is Ready"
+grep -q '@sha256:[0-9a-f]\{64\}$' <<<"$images_proxy"; check $? "the injected proxy's image is pinned by digest" "$images_proxy"
 
 # --------------------------------------------------------------------------------------------
 section "8. mesh-identity-issued-by-spire"
@@ -241,6 +270,18 @@ check $? "the proxy holds a root bundle under ROOTCA, and it is the SPIRE server
 k -n "$SPIRE_NS" get cm istio-ca-root-cert -o jsonpath='{.data.root-cert\.pem}' >"$work/istiod-root.pem"
 [ -s "$work/istiod-root.pem" ] && openssl x509 -noout -in "$work/istiod-root.pem" >/dev/null 2>&1 \
   && ! openssl verify -CAfile "$work/istiod-root.pem" "$work/proxy-leaf.pem" >/dev/null 2>&1; check $? "istiod's own CA did not issue it (istiod's root is a certificate, and the leaf does not verify against it)" "istiod root $(openssl x509 -noout -subject -nameopt RFC2253 -in "$work/istiod-root.pem")"
+say '' "istiod's CA stays on, because it also signs istiod's own serving certificates. A proxy that found no SPIRE socket would ask it for a certificate; the admission policy \`proxy-takes-spire-socket\` of zone-policy keeps such a proxy out of the plane namespaces. Server-side dry runs, which persist nothing:" ''
+out=$(k -n "$DATA" run optout-templates --image=registry.k8s.io/e2e-test-images/agnhost:2.53 --restart=Never \
+  --annotations=inject.istio.io/templates=sidecar --dry-run=server -o name 2>&1); rc=$?
+[ $rc -ne 0 ] && grep -q "proxy-takes-spire-socket" <<<"$out"
+check $? "a pod that chooses its injection templates (inject.istio.io/templates: sidecar, which drops the SPIRE socket) is refused at admission" "$(grep -o 'denied request: .*' <<<"$out" | cut -c1-220)"
+out=$(printf '%s\n' 'apiVersion: v1' 'kind: Pod' 'metadata: { name: optout-proxy, annotations: { sidecar.istio.io/inject: "false" } }' \
+  'spec: { containers: [ { name: istio-proxy, image: "registry.k8s.io/e2e-test-images/agnhost:2.53" } ] }' | k -n "$DATA" create --dry-run=server -f - 2>&1); rc=$?
+[ $rc -ne 0 ] && grep -q "proxy-takes-spire-socket" <<<"$out"
+check $? "a pod that brings its own istio-proxy without the csi.spiffe.io socket is refused at admission" "$(grep -o 'denied request: .*' <<<"$out" | cut -c1-220)"
+out=$(k -n "$DATA" run optout-none --image=registry.k8s.io/e2e-test-images/agnhost:2.53 --restart=Never --dry-run=server -o json 2>&1)
+jq -e '.spec.volumes[] | select(.name == "workload-socket" and .csi.driver == "csi.spiffe.io")' <<<"$out" >/dev/null
+check $? "an ordinary pod in the same namespace is admitted, its proxy on the SPIRE socket"
 
 # --------------------------------------------------------------------------------------------
 section "9. unregistered-workload-cut-off"
@@ -323,6 +364,17 @@ for ns in "$DATA" "$MGMT"; do
   done
   r=$(tcp "$ns" probe "$ISTIOD_IP" 15012)
   [ "$r" = connected ]; check $? "$ns → istiod :15012 (xDS) reachable: the declared meshControlPlane opening" "→ $r"
+done
+# The agents run on the host network, outside every network policy: their metrics endpoint must be
+# bound to the node's loopback. Their listening sockets are read in the host network namespace,
+# through the host-networked Cilium agent of the same node.
+for NODE in $(k -n "$SPIRE_NS" get pods -o json | jq -r '.items[] | select(.metadata.ownerReferences[0].name == "spire-agent") | .spec.nodeName'); do
+  C=$(k -n kube-system get pod -l k8s-app=cilium --field-selector "spec.nodeName=$NODE" -o jsonpath='{.items[0].metadata.name}')
+  listen=$(k -n kube-system exec "$C" -c cilium-agent -- cat /proc/net/tcp /proc/net/tcp6 2>/dev/null | awk '$4 == "0A" && $2 ~ /:2704$/ {print $2}' | sort -u | tr '\n' ' ')
+  [ -n "$listen" ] && ! grep -qvE '^(0100007F|00000000000000000000000001000000):2704$' <<<"$(tr ' ' '\n' <<<"$listen" | grep .)"
+  check $? "node $NODE: the SPIRE agent's metrics port 9988 listens on the loopback only, not on the node's addresses" "listening (hex address:port): ${listen:-none}"
+  n=$(k -n kube-system exec "$C" -c cilium-agent -- bash -c 'exec 3<>/dev/tcp/127.0.0.1/9988; printf "GET /metrics HTTP/1.0\r\nHost: localhost\r\n\r\n" >&3; cat <&3' 2>/dev/null | grep -c '^spire_agent')
+  [ "$n" -gt 0 ]; check $? "node $NODE: the agent's metrics answer on 127.0.0.1:9988 (the contract with a node-local collector)" "$n spire_agent samples"
 done
 
 # --------------------------------------------------------------------------------------------

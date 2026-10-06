@@ -10,19 +10,25 @@ in the repository are the output of the last run, on the commit and host `enviro
 ```bash
 sudo sysctl -w fs.inotify.max_user_instances=512   # kind hosts: the Istio CNI agent needs it
 scripts/dev/kind-cilium-up.sh
-scripts/verify-mesh-identity/verify.sh
+scripts/verify-mesh-identity/verify.sh             # destructive: uninstalls the zone first
+scripts/verify-mesh-identity/verify.sh --help      # usage; touches nothing
 ```
+
+The run uninstalls and reinstalls the zone, so it refuses any context that is not a kind cluster
+(the context must be named `kind-<name>` and every node's provider ID must start with `kind://`).
+It takes no arguments: `--help` or `-h` prints the usage, any other argument prints it and exits 2,
+in both cases before the cluster is touched.
 
 | Check | What it proves |
 |---|---|
-| `install-order-idempotent` | the seven releases install from an empty cluster with no manual step, every pod is Ready, and a second run leaves every release's manifest identical |
+| `install-order-idempotent` | the seven releases install from an empty cluster with no manual step, every pod is Ready, every SPIRE and Istio image is pinned by digest, and a second run leaves every release's manifest identical |
 | `svid-over-csi-socket` | a labelled pod mounts `csi.spiffe.io` and gets over that socket the SVID of its service account in the zone's trust domain, chained to the SPIRE CA; an unlabelled pod gets no entry and no SVID |
 | `native-sidecar-version` | the server is 1.33 or later; the proxy is an init container with `restartPolicy: Always` |
-| `mesh-identity-issued-by-spire` | read with `istioctl proxy-config secret`: the proxy's certificate has `O = SPIRE`, the SPIRE CA as issuer, the SVID's URI SAN; its `ROOTCA` bundle is the SPIRE CA, and istiod's CA did not issue it |
+| `mesh-identity-issued-by-spire` | read with `istioctl proxy-config secret`: the proxy's certificate has `O = SPIRE`, the SPIRE CA as issuer, the SVID's URI SAN; its `ROOTCA` bundle is the SPIRE CA, and istiod's CA did not issue it; a pod that chooses its injection templates or brings its own proxy without the SPIRE socket is refused at admission |
 | `unregistered-workload-cut-off` | an unlabelled pod's proxy has no certificate, its application never starts, and the peer refuses a call from its network namespace under STRICT; the labelled pod's call succeeds |
 | `traffic-through-the-proxies` | the peer sees the caller's SPIFFE ID in `X-Forwarded-Client-Cert`; both proxies count the request, as mTLS |
 | `default-deny-with-chained-cni` | the Istio plugin is chained after Cilium on the node, `cni-exclusive=false`, and the umbrella's cross-plane denial and matrix lane hold with the proxies in place |
-| `control-planes-under-default-deny` | `spire-system` and `istio-system` hold only the declared openings; no SPIRE pod has a sidecar; every agent is attested; the proxies are SYNCED; a stand-in pod's TCP probes to the SPIRE server and istiod on every port but istiod's xDS port are denied |
+| `control-planes-under-default-deny` | `spire-system` and `istio-system` hold only the declared openings; no SPIRE pod has a sidecar; every agent is attested; the proxies are SYNCED; a stand-in pod's TCP probes to the SPIRE server and istiod on every port but istiod's xDS port are denied; the agents' metrics port listens on each node's loopback only |
 
 It also shows the identity-band checks of `zone-policy` passing on the install and failing the
 release when a declared registration has no entry, the render guards (no trust domain, Kubernetes

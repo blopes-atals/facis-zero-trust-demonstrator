@@ -179,11 +179,21 @@ proxy, so a missing bundle cannot pass unnoticed.
 The `istiod` release configures the mesh for SPIRE:
 
 - **SPIRE as the only certificate source.** The `spire` injection template, added to the default
-  templates mesh-wide rather than chosen per pod (so a workload cannot opt out by leaving out an
-  annotation), turns the proxy's `workload-socket` volume into the CSI driver's read-only volume at
-  `/run/secrets/workload-spiffe-uds`. When the proxy finds the agent's socket there, it takes its
+  templates mesh-wide rather than chosen per pod (so a workload does not leave it out by leaving out
+  an annotation), turns the proxy's `workload-socket` volume into the CSI driver's read-only volume
+  at `/run/secrets/workload-spiffe-uds`. When the proxy finds the agent's socket there, it takes its
   certificate (`default`) and its trust bundle (`ROOTCA`) over SDS and never asks istiod's CA.
-  istiod keeps its own CA for its webhooks and its xDS serving certificate only.
+- **No way round it in a plane namespace.** istiod's CA cannot be switched off: it also signs
+  istiod's own serving certificates (xDS on 15012, the webhooks on 15017), and with
+  `ENABLE_CA_SERVER=false` istiod starts without them and its webhooks fail. A pod that named its
+  own injection templates (`inject.istio.io/templates: sidecar`) would get a proxy without the
+  socket, and that proxy would take a certificate from istiod's CA. The `zone-policy` release
+  therefore installs the admission policy `proxy-takes-spire-socket`: in every namespace with the
+  plane label, a pod may not carry `inject.istio.io/templates`, and a pod with an `istio-proxy`
+  container is admitted only when that proxy mounts the `csi.spiffe.io` volume at
+  `/var/run/secrets/workload-spiffe-uds`. What remains is a pod in a meshed plane namespace that
+  calls istiod's CA on 15012 itself, without a proxy: it can obtain a certificate signed by istiod's
+  root, which no proxy trusts (every `ROOTCA` is SPIRE's bundle), so it opens no mesh connection.
 - **STRICT.** The mesh-wide `PeerAuthentication` `default` in `istio-system` is `STRICT`. A workload
   without an entry gets no certificate, so its proxy never becomes ready and, being a native
   sidecar, holds the application container back; any plaintext connection from its network
@@ -203,12 +213,14 @@ The `istiod` release configures the mesh for SPIRE:
 The `spire` release switches on the Prometheus endpoint of the server and of the agents. The ports
 are the contract with the observability collector of the management plane, which scrapes them; the
 collector, and its lane into `spire-system`, belong to the observability work and are not rendered
-by this change.
+by this change. The agents run on the host network, where no network policy reaches them, so their
+endpoint is bound to the node's loopback rather than the chart's `0.0.0.0`: it answers only a
+collector that runs on the node's host network, never a pod or another host.
 
 | Component | Endpoint |
 |---|---|
 | SPIRE server | pod port 9988, `/metrics` |
-| SPIRE agents | port 9988 on each node (host network) |
+| SPIRE agents | `127.0.0.1:9988` on each node (host network, loopback only) |
 | SPIRE controller-manager | pod port 8082 (the chart's default) |
 
 ## Installing it

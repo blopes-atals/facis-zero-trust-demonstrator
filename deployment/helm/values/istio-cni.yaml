@@ -8,6 +8,9 @@
 # Pinned in scripts/install-zone/install.sh and docs/dependencies.md. Every value set here is
 # listed with its reason in README.md next to this file.
 cni:
+  # Pinned by tag and digest (the multi-arch index digest of the 1.31.1 tag, read from its
+  # registry); a value that contains "/" is used by the chart as the whole image reference.
+  image: docker.io/istio/install-cni:1.31.1@sha256:49140cc9a9d742cea829f452d93956896e85c4f47bbc7b69cf76484b63cce8b1
   chained: true              # append to the CNI configuration Cilium wrote, never replace it
   # The node paths of the kind nodes (and of the chart's defaults); a zone whose nodes keep the CNI
   # binaries or configuration elsewhere overrides them in its zone overlay.
