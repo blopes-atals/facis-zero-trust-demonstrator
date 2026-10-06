@@ -101,16 +101,33 @@ design, the bands and the evidence script are in [Umbrella chart](../umbrella-ch
 
 ## 3. Workload identity
 
-Releases 2 and 3 install SPIRE into `spire-system`: its CRDs, then the server, the agents on every
-node, the SPIFFE CSI driver and the controller-manager, so that SVIDs reach workloads through a
-mounted volume rather than through a secret. Release 7, `zone-policy`, registers the workloads by
+Releases 2 and 3 install SPIRE into `spire-system`, in this order: `spire-crds` (its CRDs), then
+`spire` (the server, the agents on every node, the SPIFFE CSI driver and the controller-manager), so
+that SVIDs reach workloads through a mounted volume rather than through a secret. Release 7,
+`zone-policy`, registers the workloads by
 selector: every pod with `spiffe.io/spire-managed-identity: "true"` in a plane namespace gets
 `spiffe://<trust domain>/ns/<namespace>/sa/<service account>`. The registration is a regular
 resource that the controller-manager reconciles into entries, never a hook job; the jobs that check
 the server, the trust bundle and the entries sit in the `identity` band of the hook-weight scheme
 and fail the release when identity is not there. Details: [Workload identity](../workload-identity.md).
 
-**Verify:** the installer reports `spire` and `zone-policy` deployed (the identity checks passed);
+The zone facts this step needs, in the zone file `deployment/helm/ztd/zones/<zone>.yaml`:
+
+- `zone.trustDomain`: the zone's SPIFFE trust domain, the DNS zone delegated to this trust zone,
+  confirmed by the Technical Design Authority and fixed at the first install;
+- `spire-system` in `planes.extra` with `mesh: false`, and the openings `identityServer` and
+  `controlPlaneWebhooks` enabled;
+- `networkPolicy.kubeApi` enabled with the API server's port, which the agents and the
+  controller-manager need.
+
+The same installer command as step 2 installs these releases, after `ztd`:
+
+```bash
+ZONE_VALUES=deployment/helm/ztd/zones/<zone>.yaml KUBE_CONTEXT=<context> \
+  scripts/install-zone/install.sh install
+```
+
+**Verify:** the installer reports `spire-crds`, `spire` and `zone-policy` deployed (the identity checks passed);
 `kubectl -n spire-system exec spire-server-0 -c spire-server -- /opt/spire/bin/spire-server agent
 list` shows one attested agent per node that runs workloads; a labelled test pod receives, over the
 mounted socket, an SVID whose SPIFFE ID matches its service account
