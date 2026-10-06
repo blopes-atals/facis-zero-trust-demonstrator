@@ -1,0 +1,51 @@
+{
+  "commit": "528c9a177af05553cbf6079a93721d96d02fecee",
+  "dirty": false,
+  "date": "2026-10-06T09:57:43Z",
+  "finished": "2026-10-06T10:04:42Z",
+  "host": {
+    "kind": "Linux 6.8.0-139-generic, Ubuntu 24.04.5 LTS"
+  },
+  "cluster": {
+    "context": "kind-ztd",
+    "kubernetes": "v1.35.5",
+    "kindNodeImage": "kindest/node:v1.35.5@sha256:ce977ae6d65918d0b58a5f8b5e940429c2ce42fa3a5619ec2bbc60b949c0ac95",
+    "cni": "quay.io/cilium/cilium:v1.20.2@sha256:2939231d0d3e3ebddcd80fffa168b7ddcc78fdf0dc864d1c8c126ff523c54f01"
+  },
+  "zone": {
+    "file": "deployment/helm/ztd/ci/values.yaml",
+    "trustDomain": "kind.facis-ztd.local"
+  },
+  "tools": {
+    "kind": "kind v0.33.0 go1.26.7 linux/amd64",
+    "kubectl": "v1.37.1",
+    "helm": "v4.3.0+gbec5b06",
+    "istioctl": "1.31.1",
+    "cilium": "cilium-cli: v0.20.1 compiled with go1.27.1 on linux/amd64"
+  },
+  "charts": {
+    "spire-crds": "0.6.1",
+    "spire": "0.30.2",
+    "istio-base": "1.31.1",
+    "istiod": "1.31.1",
+    "istio-cni": "1.31.1"
+  },
+  "images": {
+    "spire-system": [
+      "ghcr.io/spiffe/spiffe-csi-driver:0.2.7",
+      "ghcr.io/spiffe/spire-agent:1.15.3",
+      "ghcr.io/spiffe/spire-controller-manager:0.7.0",
+      "ghcr.io/spiffe/spire-server:1.15.3",
+      "registry.k8s.io/sig-storage/csi-node-driver-registrar:v2.15.0"
+    ],
+    "istio-system": [
+      "docker.io/istio/install-cni:1.31.1",
+      "docker.io/istio/pilot:1.31.1"
+    ],
+    "proxy": "docker.io/istio/proxyv2:1.31.1",
+    "cilium": "quay.io/cilium/cilium:v1.20.2@sha256:2939231d0d3e3ebddcd80fffa168b7ddcc78fdf0dc864d1c8c126ff523c54f01"
+  },
+  "result": {
+    "failures": 0
+  }
+}

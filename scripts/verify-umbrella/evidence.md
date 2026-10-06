@@ -1,8 +1,10 @@
-# Umbrella chart evidence (2026-10-04T13:45:56Z)
+# Umbrella chart evidence (2026-10-06T10:04:53Z)
 
-Cluster context `kind-ztd`, chart `deployment/helm/ztd` 0.1.0, zone file `deployment/helm/ztd/ci/values.yaml` (mesh mode sidecar, the installed baseline), excursion fixture `scripts/verify-umbrella/ambient-values.yaml`.
+Commit `528c9a177af05553cbf6079a93721d96d02fecee`, tree dirty: false.
 
-Tools: helm v4.3.0+gbec5b06, kubectl client v1.35.0. The CI chart job pins Helm v4.3.0.
+Cluster context `kind-ztd`, chart `deployment/helm/ztd` 0.2.0, zone file `deployment/helm/ztd/ci/values.yaml` (mesh mode sidecar, the installed baseline), excursion fixture `scripts/verify-umbrella/ambient-values.yaml`.
+
+Tools: helm v4.3.0+gbec5b06, kubectl client v1.37.1. The CI chart job pins Helm v4.3.0.
 
 Probe results: `200` means the call went through; `denied(28)` means curl gave up after 5 s because the policy dropped the packets.
 
@@ -18,8 +20,8 @@ Probe results: `200` means the call went through; `denied(28)` means curl gave u
 
 ```
 NAME STATUS ROLES AGE VERSION INTERNAL-IP EXTERNAL-IP OS-IMAGE KERNEL-VERSION CONTAINER-RUNTIME
-ztd-control-plane Ready control-plane 19h v1.35.5 172.30.0.2 <none> Debian GNU/Linux 13 (trixie) 7.0.0-34-generic containerd://2.3.1
-ztd-worker Ready <none> 19h v1.35.5 172.30.0.3 <none> Debian GNU/Linux 13 (trixie) 7.0.0-34-generic containerd://2.3.1
+ztd-control-plane Ready control-plane 74m v1.35.5 172.18.0.3 <none> Debian GNU/Linux 13 (trixie) 6.8.0-139-generic containerd://2.3.1
+ztd-worker Ready <none> 74m v1.35.5 172.18.0.4 <none> Debian GNU/Linux 13 (trixie) 6.8.0-139-generic containerd://2.3.1
 ```
 
 
@@ -30,17 +32,19 @@ ztd-worker Ready <none> 19h v1.35.5 172.30.0.3 <none> Debian GNU/Linux 13 (trixi
 ## 2. Install from zero
 
 - PASS: helm upgrade --install from an empty cluster returns 0
-  6s
+  5s
 
 ```
 Release "ztd" does not exist. Installing it now.
 NAME: ztd
 DESCRIPTION: Install complete
-ztd umbrella chart 0.1.0: release ztd in ztd-system, zone kind.
+ztd umbrella chart 0.2.0: release ztd in ztd-system, zone kind.
 
 Plane namespaces:
   - ztd-mgmt  plane=management  istio-injection=enabled
   - ztd-data  plane=data  istio-injection=enabled
+  - spire-system  plane=management  istio-injection=enabled
+  - istio-system  plane=management  istio-injection=enabled
 
 Network layer: default-deny in both directions in every plane namespace, the DNS bypass, and
 5 allow-matrix lanes from the data plane into the management plane.
@@ -58,21 +62,33 @@ Evidence: scripts/verify-umbrella/verify.sh
 
 ## 3. The layout
 
+The control-plane namespaces of the zone file (`spire-system istio-system`) are management-plane namespaces without the mesh label; the SPIRE and Istio releases that install into them are proven by `scripts/verify-mesh-identity`.
+
 
 ```
 NAME STATUS AGE PLANE DATAPLANE-MODE ISTIO-INJECTION
-ztd-mgmt Active 5s management enabled
-ztd-data Active 5s data enabled
+ztd-mgmt Active 4s management enabled
+ztd-data Active 4s data enabled
+spire-system Active 4s management 
+istio-system Active 4s management 
 ```
 
 
 ```
 NAMESPACE NAME POD-SELECTOR AGE
+istio-system allow-dns-egress <none> 5s
+istio-system allow-intra-plane <none> 5s
+istio-system allow-mesh-control-plane-ingress app=istiod 5s
+istio-system default-deny <none> 5s
+spire-system allow-dns-egress <none> 5s
+spire-system allow-intra-plane <none> 5s
+spire-system default-deny <none> 5s
 ztd-data allow-atls-gateway-to-cmcd-egress app.kubernetes.io/name=atls-gateway 5s
 ztd-data allow-atls-gateway-to-tcr-egress app.kubernetes.io/name=atls-gateway 5s
 ztd-data allow-backend-to-verification-service-egress app.kubernetes.io/name=backend 5s
 ztd-data allow-dns-egress <none> 5s
 ztd-data allow-intra-plane <none> 5s
+ztd-data allow-mesh-control-plane-egress <none> 5s
 ztd-data allow-pdp-adapter-to-tsa-egress app.kubernetes.io/name=pdp-adapter 5s
 ztd-data allow-workloads-to-otel-collector-egress <none> 5s
 ztd-data default-deny <none> 5s
@@ -81,13 +97,28 @@ ztd-mgmt allow-atls-gateway-to-tcr-ingress app.kubernetes.io/name=tcr 5s
 ztd-mgmt allow-backend-to-verification-service-ingress app.kubernetes.io/name=verification-service 5s
 ztd-mgmt allow-dns-egress <none> 5s
 ztd-mgmt allow-intra-plane <none> 5s
+ztd-mgmt allow-mesh-control-plane-egress <none> 5s
 ztd-mgmt allow-pdp-adapter-to-tsa-ingress app.kubernetes.io/name=tsa-policy-engine 5s
 ztd-mgmt allow-workloads-to-otel-collector-ingress app.kubernetes.io/name=otel-collector 5s
 ztd-mgmt default-deny <none> 5s
 ```
 
+
+```
+NAMESPACE NAME AGE VALID
+istio-system allow-control-plane-openings 5s True
+istio-system allow-kube-api-egress 5s True
+spire-system allow-control-plane-openings 5s True
+spire-system allow-kube-api-egress 5s True
+ztd-mgmt allow-kube-api-egress 5s True
+```
+
 - PASS: default-deny present in ztd-mgmt
 - PASS: default-deny present in ztd-data
+- PASS: default-deny present in spire-system
+- PASS: default-deny present in istio-system
+- PASS: control-plane namespace spire-system: management plane, no injection label
+- PASS: control-plane namespace istio-system: management plane, no injection label
 - PASS: sidecar mode (the baseline): istio-injection=enabled on ztd-mgmt
 - PASS: sidecar mode (the baseline): istio-injection=enabled on ztd-data
 - PASS: sidecar mode: no ambient label on ztd-mgmt
@@ -119,7 +150,7 @@ Stand-in pods carry the matrix labels; nothing else about them is real. Targets 
 - PASS: management pod → data plane: DENIED (default deny is both directions)
   → denied(28)
 - PASS: DNS bypass: the denied pod still resolves names
-  Address: 10.96.136.0   
+  Address: 10.96.100.202   
 
 ## 6. Mesh mode is one label: the excursion to the parked ambient mode, and back
 
@@ -145,8 +176,8 @@ ztd-data Active 43s data ambient
 
 ```
 NAME STATUS AGE PLANE DATAPLANE-MODE ISTIO-INJECTION
-ztd-mgmt Active 55s management enabled
-ztd-data Active 55s data enabled
+ztd-mgmt Active 54s management enabled
+ztd-data Active 54s data enabled
 ```
 
 - PASS: sidecar mode restored: istio-injection=enabled on ztd-mgmt
@@ -164,19 +195,25 @@ The CI job runs `helm lint` and then `helm template`. Schema violations fail bot
 
 - PASS: no zone file: lint refused by the schema
 - PASS: no zone file: render refused by the schema
-  at '/zone/name': validation failed
+  at '/zone/storageClass': minLength: got 0, want 1
 - PASS: unknown mesh mode: lint refused by the schema
 - PASS: unknown mesh mode: render refused
   at '/mesh/mode': value must be one of 'ambient', 'sidecar', 'none'
-- PASS: kubeApi lane without cidrs: lint passes, as lint mode ignores the template guard; the render step below is the one that catches it
-- PASS: kubeApi lane without cidrs: render refused
+- PASS: kubeApi lane without cidrs on a zone without Cilium (an ipBlock lane): lint passes, as lint mode ignores the template guard; the render step below is the one that catches it
+- PASS: kubeApi lane without cidrs on a zone without Cilium: render refused
   networkPolicy.kubeApi.enabled needs at least one entry in networkPolicy.kubeApi.cidrs; an empty destination would open every address
+- PASS: meshed zone without zone.trustDomain: render refused by the schema
+  at '/zone/trustDomain': minLength: got 0, want 1
+- PASS: sidecar mode on Kubernetes v1.32.0: render refused (native sidecars need 1.33)
+  mesh.mode sidecar needs native sidecar containers, which need Kubernetes 1.33 or later; zone.kubernetesVersion is v1.32.0
+- PASS: meshed zone without Cilium: render refused, naming the control-plane openings and the derogation
+  mesh.mode sidecar needs Cilium (cni.cilium.enabled)
 
 ## 8. Teardown leaves no plane namespace behind
 
 - PASS: helm uninstall returns 0
   release "ztd" uninstalled
-- PASS: plane namespaces are gone
+- PASS: plane namespaces are gone, the control-plane namespaces with them
 - PASS: cluster-wide Cilium exception is gone
 - PASS: no hook resource left behind (hook-succeeded policy)
   the release namespace `ztd-system` remains, as expected: it was created by --create-namespace and is not owned by the release
