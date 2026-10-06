@@ -166,10 +166,25 @@ fi
 helm get manifest "$release" --namespace "$namespace" >"$work/manifest.yaml"
 # Rendered objects usually carry no namespace; they live in the release namespace. A chart that
 # also renders objects into other namespaces (the umbrella) names them explicitly, which
-# `kubectl --namespace` refuses, so the release namespace is the kubeconfig's default instead.
-kubectl config view --minify --flatten >"$work/kubeconfig"
-kubectl --kubeconfig "$work/kubeconfig" config set-context --current --namespace "$namespace" >/dev/null
-kubectl --kubeconfig "$work/kubeconfig" get --filename "$work/manifest.yaml" --output json >"$work/live.json"
+# `kubectl --namespace` refuses. The manifest is split on Helm's `---` separators into the objects
+# whose metadata names a namespace and the others, and each part is read on its own, so the step
+# needs no kubeconfig context or namespace of its own (in-cluster credentials work as before).
+awk -v named="$work/named.yaml" -v unnamed="$work/unnamed.yaml" '
+  function flush() { if (doc != "") printf "---\n%s", doc > (ns ? named : unnamed); doc = ""; ns = 0; meta = 0 }
+  /^---/ { flush(); next }
+  /^metadata:/ { meta = 1 }
+  /^[^ #]/ && !/^metadata:/ { meta = 0 }
+  meta && /^  namespace:/ { ns = 1 }
+  { doc = doc $0 "\n" }
+  END { flush() }' "$work/manifest.yaml"
+for part in unnamed named; do
+  [ -s "$work/$part.yaml" ] || continue
+  if [ "$part" = unnamed ]; then
+    kubectl get --namespace "$namespace" --filename "$work/$part.yaml" --output json || exit 1
+  else
+    kubectl get --filename "$work/$part.yaml" --output json || exit 1
+  fi
+done | jq -s '{apiVersion: "v1", kind: "List", items: [.[] | (.items // [.])[]]}' >"$work/live.json"
 revision="$(helm status "$release" --namespace "$namespace" --output json | jq '.version')"
 event deploy succeeded
 result true "$(jq -c --arg chart "$chart_digest" --arg values "$values_hash" --argjson revision "$revision" \

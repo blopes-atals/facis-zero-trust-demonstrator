@@ -36,7 +36,7 @@ naming the fact:
 
 | Value | Set to | Why |
 |---|---|---|
-| `annotations` | `{}` | the chart annotates its CRDs `helm.sh/resource-policy: keep` by default, which would leave them on the cluster after `helm uninstall`; the CRDs belong to this release and leave with it |
+| `annotations` | `helm.sh/resource-policy: null`, `ztd.facis.io/removed-with-release: spire-crds` | the chart annotates its CRDs `helm.sh/resource-policy: keep` by default, which would leave them on the cluster after `helm uninstall`; the CRDs belong to this release and leave with it. Helm merges a values map with the chart's default, so `{}` would keep the key; setting it to null deletes it. The chart cannot render an empty annotations map, so one annotation of the zone takes its place |
 
 ## `spire.yaml`
 

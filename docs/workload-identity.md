@@ -102,6 +102,16 @@ Kubernetes API, and a failure fails the release:
 | `trust-bundle-published` | 25 | the server has published its trust bundle (`spire-bundle`), and the controller-manager and the mesh both run with the zone's trust domain |
 | `registrations-reconciled` | 30 | the controller-manager has reconciled the `ClusterSPIFFEID` with no entry or render failure, and every running labelled pod of the plane namespaces is selected, so its entry exists on the server |
 
+**What the Jobs read.** The Jobs hold no SPIRE credential and never call the SPIRE server, so they
+read Kubernetes objects that stand for the server's state: `server-healthy` reads the readiness of
+the server's StatefulSet, which the server's own health endpoint drives through the readiness
+probe, not the endpoint itself; `registrations-reconciled` reads the counters the controller-manager
+writes into the `ClusterSPIFFEID` status after it has set the entries on the server, not the entries
+themselves. On a zone with no running labelled pod (a fresh install, before any workload),
+`registrations-reconciled` has nothing to compare and passes on the absence of failures alone. The
+entries themselves are read on the server by the evidence run (`spire-server entry show`, in
+[the mesh identity evidence](evidences/mesh-identity/README.md)).
+
 ## Openings under the default deny
 
 The control planes sit under the same default deny as every plane namespace. These openings are
@@ -125,7 +135,10 @@ clusters may not offer. Cilium names them as identities (entities). The proof sh
 a self-hosted API server runs on the host network of a control-plane node, and its calls into a pod
 on another node arrive with that node's identity (`remote-node`; `host` on its own node), not as
 `kube-apiserver`, which matches only the API server's own address. The webhook opening therefore
-names the three entities, on the webhook port of the webhook pod only. Every Cilium rule sets
+names the three entities, on the webhook port of the webhook pod only. The price is that any
+host-networked endpoint of any node may open a connection to those two ports; every other port of
+both control planes stays closed. A zone whose API server is managed outside its nodes can narrow
+`networkPolicy.controlPlaneWebhooks.fromEntities` to `[kube-apiserver]` in its zone file. Every Cilium rule sets
 `enableDefaultDeny` false: it adds its lane and leaves the deny to the baseline's `default-deny`.
 
 **Nothing else.** The sidecar reaches its agent over the mounted socket and the agent reaches the

@@ -239,7 +239,8 @@ check $? "its issuer is the SPIRE server CA and it chains to SPIRE's bundle" "$p
 check $? "the proxy holds a root bundle under ROOTCA, and it is the SPIRE server's CA" "ROOTCA (SPIFFE validator, trust domains: ${rootca_domains:-none}) $(fingerprint "$work/proxy-root.pem" 2>/dev/null), SPIRE CA $(fingerprint "$work/spire-bundle.pem")"
 [ "$rootca_domains" = "$TD" ]; check $? "the ROOTCA bundle trusts the zone's trust domain and no other" "${rootca_domains:-none}"
 k -n "$SPIRE_NS" get cm istio-ca-root-cert -o jsonpath='{.data.root-cert\.pem}' >"$work/istiod-root.pem"
-! openssl verify -CAfile "$work/istiod-root.pem" "$work/proxy-leaf.pem" >/dev/null 2>&1; check $? "istiod's own CA did not issue it (the leaf does not verify against istiod's root)" "istiod root $(openssl x509 -noout -subject -nameopt RFC2253 -in "$work/istiod-root.pem")"
+[ -s "$work/istiod-root.pem" ] && openssl x509 -noout -in "$work/istiod-root.pem" >/dev/null 2>&1 \
+  && ! openssl verify -CAfile "$work/istiod-root.pem" "$work/proxy-leaf.pem" >/dev/null 2>&1; check $? "istiod's own CA did not issue it (istiod's root is a certificate, and the leaf does not verify against it)" "istiod root $(openssl x509 -noout -subject -nameopt RFC2253 -in "$work/istiod-root.pem")"
 
 # --------------------------------------------------------------------------------------------
 section "9. unregistered-workload-cut-off"
@@ -279,15 +280,15 @@ for P in $(k -n "$ISTIO_NS" get pod -l k8s-app=istio-cni-node -o jsonpath='{.ite
 done
 [ "$excl" = false ]; check $? "Cilium still runs with cni-exclusive=false" "cni-exclusive=$excl"
 r=$(http "$DATA" data-plain app "http://openbao.$MGMT.svc:8080/hostname")
-[ "${r%% *}" != 200 ]; check $? "data-plane pod → openbao (management): DENIED at the network layer with the proxies in place" "→ $r"
+case $r in denied*) true;; *) false;; esac; check $? "data-plane pod → openbao (management): DENIED at the network layer with the proxies in place" "→ $r"
 r=$(http "$DATA" data-plain app "http://tsa-policy-engine.$MGMT.svc:8080/hostname")
-[ "${r%% *}" != 200 ]; check $? "data-plane pod → tsa-policy-engine (management): DENIED" "→ $r"
+case $r in denied*) true;; *) false;; esac; check $? "data-plane pod → tsa-policy-engine (management): DENIED" "→ $r"
 r=$(http "$DATA" pdp-adapter app "http://tsa-policy-engine.$MGMT.svc:8080/hostname")
 [ "${r%% *}" = 200 ]; check $? "pdp-adapter → tsa-policy-engine: ALLOWED (matrix lane pdp-adapter-to-tsa), through the proxies" "→ $r"
 r=$(http "$DATA" pdp-adapter app "http://openbao.$MGMT.svc:8080/hostname")
-[ "${r%% *}" != 200 ]; check $? "pdp-adapter → openbao: DENIED (a lane is one pair, not a licence)" "→ $r"
+case $r in denied*) true;; *) false;; esac; check $? "pdp-adapter → openbao: DENIED (a lane is one pair, not a licence)" "→ $r"
 r=$(http "$MGMT" mgmt-caller app "http://peer.$DATA.svc:8080/hostname")
-[ "${r%% *}" != 200 ]; check $? "management pod → data plane: DENIED (the default deny is both directions)" "→ $r"
+case $r in denied*) true;; *) false;; esac; check $? "management pod → data plane: DENIED (the default deny is both directions)" "→ $r"
 r=$(k -n "$DATA" exec probe -c app -- nslookup "openbao.$MGMT.svc.cluster.local" 2>&1 | grep -A1 '^Name:' | tr '\n' ' ')
 [ -n "$r" ]; check $? "DNS bypass: names still resolve" "$r"
 
@@ -297,7 +298,17 @@ istioctl --context "$CONTEXT" proxy-status -o json >"$work/ps.json" 2>/dev/null
 unsynced=$(jq -r --arg ns "$DATA" '.resources[] | select(.node.metadata.NAMESPACE == $ns and (.node.id | test("^(caller|peer|pdp-adapter|data-plain)\\."))) | . as $r | .genericXdsConfigs[] | select(.configStatus != "SYNCED") | "\($r.node.id) \(.typeUrl) \(.configStatus)"' "$work/ps.json")
 synced=$(jq -r --arg ns "$DATA" '[.resources[] | select(.node.metadata.NAMESPACE == $ns and (.node.id | test("^(caller|peer|pdp-adapter|data-plain)\\.")))] | length' "$work/ps.json")
 [ "$synced" = 4 ] && [ -z "$unsynced" ]; check $? "the registered proxies reach istiod through the meshControlPlane opening and report SYNCED for every xDS type" "proxies $synced, not SYNCED: ${unsynced:-none}"
-check 0 "the API server reaches both admission webhooks through the controlPlaneWebhooks opening" "the stand-ins were injected (istiod 15017) and the ClusterSPIFFEID and PeerAuthentication were admitted (controller-manager 9443, istiod 15017) in step 2"
+# The API server -> the webhooks, asked of each webhook now, by server-side dry runs that persist
+# nothing: istiod's injector must add the proxy, and the controller-manager's validator must refuse
+# a ClusterSPIFFEID whose template does not parse (its failurePolicy may be Ignore, so an admitted
+# object would prove nothing; only the webhook's own refusal shows it was reached).
+inj=$(k -n "$DATA" run webhook-probe --image=registry.k8s.io/e2e-test-images/agnhost:2.53 --restart=Never \
+  --dry-run=server -o json 2>&1 | jq -r '[(.spec.initContainers // [])[].name, .spec.containers[].name] | join(",")' 2>&1)
+grep -qw istio-proxy <<<"$inj"; check $? "the API server reaches istiod's injection webhook (15017) through the controlPlaneWebhooks opening: a dry-run pod in $DATA is injected" "containers: $inj"
+cs=$(printf '%s\n' 'apiVersion: spire.spiffe.io/v1alpha1' 'kind: ClusterSPIFFEID' 'metadata: { name: webhook-probe }' \
+  'spec: { spiffeIDTemplate: "spiffe://{{ .TrustDomain" }' | k create --dry-run=server -f - 2>&1)
+grep -q 'admission webhook "vclusterspiffeid.kb.io" denied the request' <<<"$cs"
+check $? "the API server reaches the controller-manager's webhook (9443) through the controlPlaneWebhooks opening: it refuses a ClusterSPIFFEID with a broken template" "$(head -c 300 <<<"$cs")"
 SPIRE_IP=$(k -n "$SPIRE_NS" get pod spire-server-0 -o jsonpath='{.status.podIP}')
 ISTIOD_IP=$(k -n "$ISTIO_NS" get pod -l app=istiod -o jsonpath='{.items[0].status.podIP}')
 say '' "Raw TCP probes from the proxy-less \`probe\` pods to the SPIRE server ($SPIRE_IP) and istiod ($ISTIOD_IP), on every port they listen on:" ''
@@ -354,6 +365,9 @@ out=$(helm template ztd "$CHART" -f "$ZONE_VALUES" --set cni.cilium.enabled=fals
 
 # --------------------------------------------------------------------------------------------
 section "15. Teardown: uninstall in reverse order"
+kept=$(k get crd -o json | jq -r '[.items[] | select(.spec.group == "spire.spiffe.io") | "\(.metadata.name)=\(.metadata.annotations["helm.sh/resource-policy"] // "none")"] | join(" ")')
+[ "$(wc -w <<<"$kept")" = 3 ] && ! grep -q '=keep' <<<"$kept"
+check $? "the three SPIRE CRDs carry no helm.sh/resource-policy keep, so the uninstall of spire-crds removes them through Helm alone (the installer deletes CRDs itself only for istio-base)" "$kept"
 sed -e "s/__DATA__/$DATA/g" -e "s/__MGMT__/$MGMT/g" fixtures/stand-ins.yaml | k delete -f - --wait=true >/dev/null 2>&1
 "$INSTALL" uninstall >"$work/uninstall.log" 2>&1; rc=$?
 check $rc "the installer uninstalls the seven releases in reverse order" "$(grep -c 'done$' "$work/uninstall.log") releases removed"

@@ -158,7 +158,7 @@ agents() {
   want=$(num desiredNumberScheduled); ready=$(num numberReady)
   why="agents ready $ready of $want"; [ "$want" -gt 0 ] && [ "$ready" = "$want" ]
 }
-retry "the SPIRE server answers its health endpoint" server
+retry "the SPIRE server's StatefulSet is Ready (its readiness probe is the server's health endpoint)" server
 retry "every SPIRE agent is Ready" agents
 echo "identity check server-healthy passed"` $common .Values.spire.namespace .Values.spire.serverStatefulSet .Values.spire.namespace .Values.spire.agentDaemonSet))
   (dict "check" "trust-bundle-published" "offset" 5 "script" (printf `%s
@@ -184,23 +184,25 @@ retry "the mesh runs with the zone's trust domain $TD" mesh_td
 echo "identity check trust-bundle-published passed"` $common .Values.trustDomain .Values.spire.namespace .Values.spire.bundleConfigMap .Values.spire.namespace .Values.spire.controllerManagerConfigMap .Values.mesh.namespace .Values.mesh.configMap))
   (dict "check" "registrations-reconciled" "offset" 10 "script" (printf `%s
 TABLE='application/json;as=Table;v=v1;g=meta.k8s.io'
-# The running pods the zone declares an identity for: labelled pods in the plane namespaces.
+# declared: sets want to the running pods the zone declares an identity for, the labelled pods
+# of the plane namespaces. It runs in the shell itself, not in $(...), so its why reaches retry.
 declared() {
   code=$(get "/api/v1/namespaces?labelSelector=%s" "$TABLE"); [ "$code" = 200 ] || { why="namespaces: HTTP $code"; return 1; }
-  n=0
+  want=0
   for ns in $(grep -o '"cells":\["[^"]*"' /tmp/body | sed 's/.*\["//; s/"$//'); do
     code=$(get "/api/v1/namespaces/$ns/pods?labelSelector=%s&fieldSelector=status.phase%%3DRunning" "$TABLE"); [ "$code" = 200 ] || { why="pods in $ns: HTTP $code"; return 1; }
-    n=$(( n + $(grep -o '"cells":' /tmp/body | wc -l) ))
+    want=$(( want + $(grep -o '"cells":' /tmp/body | wc -l) ))
   done
-  echo "$n"
 }
+last=
 reconciled() {
-  want=$(declared) || return 1
+  declared || return 1
   code=$(get "/apis/spire.spiffe.io/v1alpha1/clusterspiffeids/%s"); [ "$code" = 200 ] || { why="ClusterSPIFFEID: HTTP $code"; return 1; }
   grep -q '"status":{"stats"' /tmp/body || { why="the controller-manager has not reconciled the ClusterSPIFFEID yet"; return 1; }
   sel=$(num podsSelected); toset=$(num entriesToSet); masked=$(num entriesMasked); fail=$(num entryFailures); render=$(num podEntryRenderFailures)
   why="labelled running pods $want, selected $sel, entries to set $toset, masked $masked, entry failures $fail, render failures $render"
-  echo "$why"
+  # the counters are logged when they change, not on every retry
+  [ "$why" = "$last" ] || { echo "$why"; last=$why; }
   [ "$fail" = 0 ] && [ "$render" = 0 ] && [ $(( toset + masked )) = "$sel" ] && [ "$sel" -ge "$want" ]
 }
 retry "every registration the zone declares exists as an entry on the server" reconciled

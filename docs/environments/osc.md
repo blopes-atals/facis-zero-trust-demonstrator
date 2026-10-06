@@ -185,12 +185,20 @@ journey, and confirm the second one aborts the handshake before any application 
 ## Teardown
 
 Components uninstall in the reverse order of their installation; the layout goes last. The
-installer does it for the seven releases of steps 2 to 4, and removes the CRDs each release owned
-(Istio's `base` chart marks its CRDs to be kept by Helm):
+installer does it for the seven releases of steps 2 to 4. Helm removes the SPIRE CRDs with
+`spire-crds`; Istio's `base` chart marks its CRDs to be kept by Helm, so the installer deletes the
+CRDs that release owned:
 
 ```bash
 ZONE_VALUES=deployment/helm/ztd/zones/<zone>.yaml KUBE_CONTEXT=<context> \
   scripts/install-zone/install.sh uninstall
+```
+
+The umbrella's release namespace `ztd-system` remains: the installer creates it before the first
+release and no release owns it. It holds nothing once the umbrella is uninstalled; delete it last:
+
+```bash
+kubectl --context <context> delete namespace ztd-system
 ```
 
 **Verify:** no namespace, CRD or secret belonging to the demonstrator survives. This is asserted by

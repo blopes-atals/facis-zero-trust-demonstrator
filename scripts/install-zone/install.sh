@@ -287,11 +287,14 @@ uninstall() {
     [ "$(jq -r '.ok // false' <<<"$line")" = true ] \
       || die "uninstall of $release in $ns failed: $(jq -r '.error.message // "no result"' <<<"$line")"
     # Istio's base chart marks its CRDs helm.sh/resource-policy: keep in the chart's files, not in a
-    # value, so Helm leaves them behind. The CRDs this release owned leave with it.
-    kctx get crd -o json | jq -r --arg r "$release" --arg n "$ns" '.items[]
-      | select(.metadata.annotations["meta.helm.sh/release-name"] == $r
-               and .metadata.annotations["meta.helm.sh/release-namespace"] == $n) | .metadata.name' \
-      | xargs -r kubectl --context "$KUBE_CONTEXT" delete crd >/dev/null
+    # value, so Helm leaves them behind. The CRDs this release owned leave with it. Only istio-base:
+    # spire-crds drops the annotation in its values, so its plain helm uninstall removes its CRDs.
+    if [ "$release" = istio-base ]; then
+      kctx get crd -o json | jq -r --arg r "$release" --arg n "$ns" '.items[]
+        | select(.metadata.annotations["meta.helm.sh/release-name"] == $r
+                 and .metadata.annotations["meta.helm.sh/release-namespace"] == $n) | .metadata.name' \
+        | xargs -r kubectl --context "$KUBE_CONTEXT" delete crd >/dev/null
+    fi
     say "uninstall $release: done"
   done
 }
