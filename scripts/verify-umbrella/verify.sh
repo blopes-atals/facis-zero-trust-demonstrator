@@ -34,6 +34,9 @@ AGNHOST=registry.k8s.io/e2e-test-images/agnhost:2.53
 CURL=docker.io/curlimages/curl:8.10.1@sha256:d9b4541e214bcd85196d6e92e2753ac6d0ea699f0af5741f8c6cccbfcf00ef4b
 OUT=evidence.md
 failures=0
+# The commit and the dirty flag are read before the evidence is written into the tree.
+commit=$(git rev-parse HEAD)
+dirty=false; [ -n "$(git status --porcelain)" ] && dirty=true
 
 k() { kubectl --context "$CONTEXT" "$@"; }
 h() { helm --kube-context "$CONTEXT" "$@"; }
@@ -56,6 +59,7 @@ expect_deny() { local r; r=$(probe "$1" "$2" "$3"); case $r in denied*) true;; *
 
 : > "$OUT"
 say "# Umbrella chart evidence ($(date -u +%Y-%m-%dT%H:%M:%SZ))" ''
+say "Commit \`$commit\`, tree dirty: $dirty." ''
 say "Cluster context \`$CONTEXT\`, chart \`deployment/helm/ztd\` $(grep '^version:' "$CHART/Chart.yaml" | cut -d' ' -f2), zone file \`${VALUES#"$REPO"/}\` (mesh mode $(yaml_get "$VALUES" mesh mode), the installed baseline), excursion fixture \`${AMBIENT_VALUES#"$REPO"/}\`." ''
 say "Tools: helm $(h version --short 2>/dev/null), kubectl client $(k version --client -o json | python3 -c 'import sys,json;print(json.load(sys.stdin)["clientVersion"]["gitVersion"])'). The CI chart job pins Helm v4.3.0." ''
 say 'Probe results: `200` means the call went through; `denied(28)` means curl gave up after 5 s because the policy dropped the packets.' ''
