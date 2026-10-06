@@ -254,6 +254,10 @@ jq -e '[.spec.initContainers[] | select(.name == "istio-proxy" and .restartPolic
 check $? "istio-proxy is an init container with restartPolicy Always (a native sidecar), not a regular container" "$(jq -r '[.spec.initContainers[] | "\(.name)(restartPolicy=\(.restartPolicy // "-"))"] | join(", ")' <<<"$pod")"
 [ "$(jq -r '.status.conditions[] | select(.type == "Ready") | .status' <<<"$pod")" = True ]; check $? "the meshed pod is Ready"
 grep -q '@sha256:[0-9a-f]\{64\}$' <<<"$images_proxy"; check $? "the injected proxy's image is pinned by digest" "$images_proxy"
+images_init=$(jq -r '.spec.initContainers[] | select(.name != "istio-proxy") | "\(.name)=\(.image)"' <<<"$pod")
+unpinned_init=$(grep -v '@sha256:[0-9a-f]\{64\}$' <<<"$images_init" || true)
+grep -q '^istio-validation=' <<<"$images_init" && [ -z "$unpinned_init" ]
+check $? "the injected init containers (istio-validation) are pinned by digest" "$(paste -sd, - <<<"$images_init")"
 
 # --------------------------------------------------------------------------------------------
 section "8. mesh-identity-issued-by-spire"

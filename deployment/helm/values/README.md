@@ -29,6 +29,7 @@ plane namespace. An upgrade of a chart re-reads every digest.
 | `spire` | `spiffe-csi-driver.nodeDriverRegistrar.image.tag` | `registry.k8s.io/sig-storage/csi-node-driver-registrar:v2.15.0` |
 | `istiod` | `pilot.image` | `docker.io/istio/pilot:1.31.1` |
 | `istiod` | `global.proxy.image` | `docker.io/istio/proxyv2:1.31.1`, the injected proxy |
+| `istiod` | `global.proxy_init.image` | `docker.io/istio/proxyv2:1.31.1`, the injected `istio-validation` init container (the chart would otherwise build it from hub and tag, without a digest) |
 | `istio-cni` | `cni.image` | `docker.io/istio/install-cni:1.31.1` |
 
 | Release | Chart | Source | Namespace |
