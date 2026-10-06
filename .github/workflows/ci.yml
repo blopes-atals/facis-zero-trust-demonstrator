@@ -169,6 +169,15 @@ jobs:
             helm template "$directory" "${values[@]}" >/dev/null
           done
 
+      # A zone is seven releases (scripts/install-zone/install.sh): the two project charts above and
+      # five upstream charts, SPIRE's and Istio's, pinned by version and digest in the installer.
+      # Each upstream release is rendered from its pinned chart with its values file under
+      # deployment/helm/values/ and the kind zone's facts. Rendering only: CI never installs.
+      - name: Render the upstream releases of a zone
+        run: |
+          python3 -c 'import yaml' 2>/dev/null || python3 -m pip install --user pyyaml
+          scripts/install-zone/install.sh render spire-crds spire istio-base istiod istio-cni
+
   # The deployment-lifecycle scenarios (TDR-BDD-01..04) against each client target. They run
   # automatically on main, on every release and on demand - never on pull requests - one run at a
   # time per target, with the read-only observer identity; ORCE does the deploying.

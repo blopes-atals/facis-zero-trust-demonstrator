@@ -25,11 +25,18 @@ for k in sys.argv[2:]: v=v[k]
 print(v)' "$@"; }
 MGMT=$(yaml_get "$CHART/values.yaml" planes management namespace)
 DATA=$(yaml_get "$CHART/values.yaml" planes data namespace)
+# The control-plane namespaces of the zone file (planes.extra with mesh: false): spire-system, istio-system
+read -ra CTRL <<<"$(python3 -c 'import sys,yaml
+z=yaml.safe_load(open(sys.argv[1]))
+print(" ".join(e["name"] for e in (z.get("planes") or {}).get("extra") or [] if e.get("mesh") is False))' "$VALUES")"
 # Stand-in images for the probes; nothing here is consumed by a real zone.
 AGNHOST=registry.k8s.io/e2e-test-images/agnhost:2.53
 CURL=docker.io/curlimages/curl:8.10.1@sha256:d9b4541e214bcd85196d6e92e2753ac6d0ea699f0af5741f8c6cccbfcf00ef4b
 OUT=evidence.md
 failures=0
+# The commit and the dirty flag are read before the evidence is written into the tree.
+commit=$(git rev-parse HEAD)
+dirty=false; [ -n "$(git status --porcelain)" ] && dirty=true
 
 k() { kubectl --context "$CONTEXT" "$@"; }
 h() { helm --kube-context "$CONTEXT" "$@"; }
@@ -52,6 +59,7 @@ expect_deny() { local r; r=$(probe "$1" "$2" "$3"); case $r in denied*) true;; *
 
 : > "$OUT"
 say "# Umbrella chart evidence ($(date -u +%Y-%m-%dT%H:%M:%SZ))" ''
+say "Commit \`$commit\`, tree dirty: $dirty." ''
 say "Cluster context \`$CONTEXT\`, chart \`deployment/helm/ztd\` $(grep '^version:' "$CHART/Chart.yaml" | cut -d' ' -f2), zone file \`${VALUES#"$REPO"/}\` (mesh mode $(yaml_get "$VALUES" mesh mode), the installed baseline), excursion fixture \`${AMBIENT_VALUES#"$REPO"/}\`." ''
 say "Tools: helm $(h version --short 2>/dev/null), kubectl client $(k version --client -o json | python3 -c 'import sys,json;print(json.load(sys.stdin)["clientVersion"]["gitVersion"])'). The CI chart job pins Helm v4.3.0." ''
 say 'Probe results: `200` means the call went through; `denied(28)` means curl gave up after 5 s because the policy dropped the packets.' ''
@@ -68,11 +76,11 @@ code "$(k get nodes -o wide | sed 's/  */ /g')"
 
 say '' '## 1. Clean slate' ''
 h uninstall "$RELEASE" -n "$RNS" --ignore-not-found >/dev/null 2>&1
-for ns in "$MGMT" "$DATA"; do k delete ns "$ns" --ignore-not-found --wait=true >/dev/null 2>&1; done
+for ns in "$MGMT" "$DATA" "${CTRL[@]}"; do k delete ns "$ns" --ignore-not-found --wait=true >/dev/null 2>&1; done
 # hook resources are not part of the release; clear leftovers of an earlier failed run
 k -n "$RNS" delete job "${RELEASE}-verify-layout" --ignore-not-found >/dev/null 2>&1
 k delete clusterrole,clusterrolebinding "${RELEASE}-verify-layout" --ignore-not-found >/dev/null 2>&1
-k get ns "$MGMT" "$DATA" >/dev/null 2>&1; [ $? -ne 0 ]; check $? "no plane namespace exists before the install"
+k get ns "$MGMT" "$DATA" "${CTRL[@]}" >/dev/null 2>&1; [ $? -ne 0 ]; check $? "no plane namespace exists before the install"
 
 say '' '## 2. Install from zero' ''
 start=$(date +%s)
@@ -90,9 +98,13 @@ else
 fi
 
 say '' '## 3. The layout' ''
-code "$(k get ns "$MGMT" "$DATA" -L ztd.facis.io/plane,istio.io/dataplane-mode,istio-injection | sed 's/  */ /g')"
-code "$(k get netpol -A | grep -E "^(NAMESPACE|$MGMT|$DATA) " | sed 's/  */ /g')"
-for ns in "$MGMT" "$DATA"; do k -n "$ns" get netpol default-deny >/dev/null 2>&1; check $? "default-deny present in $ns"; done
+say "The control-plane namespaces of the zone file (\`${CTRL[*]}\`) are management-plane namespaces without the mesh label; the SPIRE and Istio releases that install into them are proven by \`scripts/verify-mesh-identity\`." ''
+code "$(k get ns "$MGMT" "$DATA" "${CTRL[@]}" -L ztd.facis.io/plane,istio.io/dataplane-mode,istio-injection | sed 's/  */ /g')"
+ctrl_re=$(IFS='|'; echo "${CTRL[*]}")
+code "$(k get netpol -A | grep -E "^(NAMESPACE|$MGMT|$DATA${ctrl_re:+|$ctrl_re}) " | sed 's/  */ /g')"
+code "$(k get ciliumnetworkpolicy -A 2>/dev/null | sed 's/  */ /g')"
+for ns in "$MGMT" "$DATA" "${CTRL[@]}"; do k -n "$ns" get netpol default-deny >/dev/null 2>&1; check $? "default-deny present in $ns"; done
+for ns in "${CTRL[@]}"; do [ "$(k get ns "$ns" -o jsonpath='{.metadata.labels.ztd\.facis\.io/plane}')" = management ] && [ -z "$(k get ns "$ns" -o jsonpath='{.metadata.labels.istio-injection}')" ]; check $? "control-plane namespace $ns: management plane, no injection label"; done
 for ns in "$MGMT" "$DATA"; do [ "$(k get ns "$ns" -o jsonpath='{.metadata.labels.istio-injection}')" = enabled ]; check $? "sidecar mode (the baseline): istio-injection=enabled on $ns"; done
 for ns in "$MGMT" "$DATA"; do [ -z "$(k get ns "$ns" -o jsonpath='{.metadata.labels.istio\.io/dataplane-mode}')" ]; check $? "sidecar mode: no ambient label on $ns"; done
 k get ciliumclusterwidenetworkpolicy "${RELEASE}-allow-ambient-hostprobes" >/dev/null 2>&1; [ $? -ne 0 ]; check $? "sidecar mode: no ambient host-probe exception is rendered"
@@ -149,15 +161,19 @@ h lint "$CHART" >/dev/null 2>&1; [ $? -ne 0 ]; check $? "no zone file: lint refu
 h template "$RELEASE" "$CHART" >/dev/null 2>/tmp/ztd-g1; [ $? -ne 0 ]; check $? "no zone file: render refused by the schema" "$(grep -m1 -oE "at '/zone/[a-zA-Z]+'.*" /tmp/ztd-g1)"
 h lint "$CHART" -f "$VALUES" --set mesh.mode=both >/dev/null 2>&1; [ $? -ne 0 ]; check $? "unknown mesh mode: lint refused by the schema"
 h template "$RELEASE" "$CHART" -f "$VALUES" --set mesh.mode=both >/dev/null 2>/tmp/ztd-g3; [ $? -ne 0 ]; check $? "unknown mesh mode: render refused" "$(grep -m1 -oE "at '/mesh/mode'.*" /tmp/ztd-g3)"
-h lint "$CHART" -f "$VALUES" --set networkPolicy.kubeApi.enabled=true >/dev/null 2>&1; check $? "kubeApi lane without cidrs: lint passes, as lint mode ignores the template guard; the render step below is the one that catches it"
-h template "$RELEASE" "$CHART" -f "$VALUES" --set networkPolicy.kubeApi.enabled=true >/dev/null 2>/tmp/ztd-g2; [ $? -ne 0 ]; check $? "kubeApi lane without cidrs: render refused" "$(grep -m1 -oE 'networkPolicy.kubeApi.enabled needs.*' /tmp/ztd-g2)"
+NOCILIUM=(--set cni.cilium.enabled=false --set mesh.mode=none --set networkPolicy.kubeApi.enabled=true --set networkPolicy.kubeApi.cidrs=null)
+h lint "$CHART" -f "$VALUES" "${NOCILIUM[@]}" >/dev/null 2>&1; check $? "kubeApi lane without cidrs on a zone without Cilium (an ipBlock lane): lint passes, as lint mode ignores the template guard; the render step below is the one that catches it"
+h template "$RELEASE" "$CHART" -f "$VALUES" "${NOCILIUM[@]}" >/dev/null 2>/tmp/ztd-g2; [ $? -ne 0 ]; check $? "kubeApi lane without cidrs on a zone without Cilium: render refused" "$(grep -m1 -oE 'networkPolicy.kubeApi.enabled needs.*' /tmp/ztd-g2)"
+h template "$RELEASE" "$CHART" -f "$VALUES" --set zone.trustDomain= >/dev/null 2>/tmp/ztd-g4; [ $? -ne 0 ]; check $? "meshed zone without zone.trustDomain: render refused by the schema" "$(grep -m1 -oE "at '/zone/trustDomain'.*" /tmp/ztd-g4)"
+h template "$RELEASE" "$CHART" -f "$VALUES" --set zone.kubernetesVersion=v1.32.0 >/dev/null 2>/tmp/ztd-g5; [ $? -ne 0 ]; check $? "sidecar mode on Kubernetes v1.32.0: render refused (native sidecars need 1.33)" "$(grep -m1 -oE 'mesh.mode sidecar needs native.*' /tmp/ztd-g5)"
+h template "$RELEASE" "$CHART" -f "$VALUES" --set cni.cilium.enabled=false >/dev/null 2>/tmp/ztd-g6; [ $? -ne 0 ]; check $? "meshed zone without Cilium: render refused, naming the control-plane openings and the derogation" "$(grep -m1 -oE 'mesh.mode sidecar needs Cilium[^:]*' /tmp/ztd-g6)"
 
 say '' '## 8. Teardown leaves no plane namespace behind' ''
 for ns in "$MGMT" "$DATA"; do k delete pod --all -n "$ns" --wait=false >/dev/null 2>&1; k delete svc --all -n "$ns" --wait=false >/dev/null 2>&1; done
 out=$(h uninstall "$RELEASE" -n "$RNS" --wait --timeout 5m 2>&1); rc=$?
 check $rc "helm uninstall returns 0" "$out"
-for _ in $(seq 1 60); do k get ns "$MGMT" "$DATA" >/dev/null 2>&1 || break; sleep 2; done
-k get ns "$MGMT" "$DATA" >/dev/null 2>&1; [ $? -ne 0 ]; check $? "plane namespaces are gone"
+for _ in $(seq 1 60); do k get ns "$MGMT" "$DATA" "${CTRL[@]}" >/dev/null 2>&1 || break; sleep 2; done
+k get ns "$MGMT" "$DATA" "${CTRL[@]}" >/dev/null 2>&1; [ $? -ne 0 ]; check $? "plane namespaces are gone, the control-plane namespaces with them"
 k get ciliumclusterwidenetworkpolicy "${RELEASE}-allow-ambient-hostprobes" >/dev/null 2>&1; [ $? -ne 0 ]; check $? "cluster-wide Cilium exception is gone"
 k get clusterrole,clusterrolebinding "${RELEASE}-verify-layout" >/dev/null 2>&1; [ $? -ne 0 ]; check $? "no hook resource left behind (hook-succeeded policy)"
 say "  the release namespace \`$RNS\` remains, as expected: it was created by --create-namespace and is not owned by the release" ''

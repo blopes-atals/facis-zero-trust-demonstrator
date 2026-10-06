@@ -1,0 +1,63 @@
+# Values of the zone-policy chart. Every key is documented here and in README.md.
+
+# The zone's SPIFFE trust domain (zone.trustDomain of the zone file; scripts/install-zone fills it).
+# No default: the chart refuses to render without it (values.schema.json). The ClusterSPIFFEID takes
+# the trust domain from the controller-manager, and the trust-bundle check asserts that the SPIRE
+# controller-manager and the mesh both run with this one.
+trustDomain: ""
+
+# Where the SPIRE release (`spire`, chart spire 0.30.2) put its pieces. These follow from the
+# release name and namespace the installer uses; change them only together with the installer.
+spire:
+  namespace: spire-system
+  # The controller-manager reconciles only ClusterSPIFFEIDs of its class:
+  # "<release namespace>-<release name>" in the upstream chart.
+  className: spire-system-spire
+  serverStatefulSet: spire-server
+  agentDaemonSet: spire-agent
+  bundleConfigMap: spire-bundle
+  controllerManagerConfigMap: spire-controller-manager
+
+# Where the istiod release put the mesh configuration; the mesh-wide PeerAuthentication lives in
+# the mesh root namespace by Istio's convention.
+mesh:
+  namespace: istio-system
+  configMap: istio
+
+# Registration by selector (docs/workload-identity.md, "Registration"). Every pod that carries the
+# identity label, in a namespace that carries the umbrella's plane label, gets the SPIFFE ID
+# spiffe://<trust domain>/ns/<namespace>/sa/<service account>. The label, not the namespace alone,
+# is the switch: a pod without it gets no entry, no SVID and, under STRICT, no mesh connection.
+registration:
+  name: plane-workloads
+  identityLabel:
+    key: spiffe.io/spire-managed-identity
+    value: "true"
+  planeLabel: ztd.facis.io/plane
+
+# Mesh-wide peer authentication. STRICT is what makes "no SPIRE entry, no mesh" true: in the
+# default permissive mode a proxy without a certificate could still be reached in plaintext.
+peerAuthentication:
+  mode: STRICT
+
+# No mesh proxy without the SPIRE socket (templates/validatingadmissionpolicy-proxy-spire-socket.yaml).
+# In a plane namespace, a pod may not choose its injection templates (inject.istio.io/templates),
+# and every mesh proxy of a pod (named istio-proxy, running the proxyv2 image, or naming
+# pilot-agent) must mount the SPIFFE CSI driver's volume where Istio looks for the SPIRE socket, so
+# a pod cannot drop the `spire` injection template, or run Istio's agent under another name, and
+# take a certificate from istiod's CA.
+# The volume name and path are those of Istio's `sidecar` template and the istiod values file.
+proxySocketPolicy:
+  name: proxy-takes-spire-socket
+  volume: workload-socket
+  mountPath: /var/run/secrets/workload-spiffe-uds
+  driver: csi.spiffe.io
+
+# Identity-band checks (hook-weight band "identity", 20-39): post-install and post-upgrade Jobs that
+# only read, through the Kubernetes API, and fail the release when identity is not there. They run
+# in the release namespace under its default deny, through the DNS bypass and the API lane.
+checks:
+  enabled: true
+  image: docker.io/curlimages/curl:8.10.1@sha256:d9b4541e214bcd85196d6e92e2753ac6d0ea699f0af5741f8c6cccbfcf00ef4b
+  # How long each check waits for the condition before it fails the release.
+  timeoutSeconds: 180

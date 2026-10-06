@@ -162,8 +162,16 @@ A missing input stops the run and is named.
 Until the umbrella chart is ready, the pack deploys `features/fixtures/charts/lifecycle-fixture`, a
 namespaced chart with no CRDs, and every evidence directory records that it is fixture evidence. A
 fixture pass is **not** acceptance of the umbrella release. Before the umbrella chart may replace
-the fixture, its cluster-scoped deploy rights and the ownership and removal of the CRDs it ships
-(which `helm uninstall` leaves behind) must be designed; it then needs its own run.
+the fixture, its cluster-scoped deploy rights must be designed; it then needs its own run. The
+ownership and removal of CRDs is answered by the shape of the zone: one Helm release per upstream
+chart, so every CRD is installed, upgraded and removed by the release that ships it in its
+templates (`spire-crds`, Istio's `base`), and the umbrella itself ships none. `spire-crds` drops
+the chart's `helm.sh/resource-policy: keep` in its values, so `helm uninstall` removes its CRDs;
+Istio's `base` sets that policy in its files, so the zone installer deletes that release's CRDs
+after uninstalling it. The zone installer,
+`scripts/install-zone/install.sh`, runs the releases in order through the same lifecycle step this
+pack exercises, and its uninstall leaves no SPIRE or Istio CRD behind, as the
+[mesh identity evidence](evidences/mesh-identity/README.md) shows.
 
 ### Evidence
 

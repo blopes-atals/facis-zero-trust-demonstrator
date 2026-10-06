@@ -22,5 +22,11 @@ while the cross-plane denial and the matrix lane still hold, returns to sidecar 
 baseline layout again. Ambient is parked, not abandoned, and this is where the repository proves
 that the parked path still works.
 
+The kind zone file also lists the two control-plane namespaces, `spire-system` and `istio-system`,
+as management-plane namespaces without the mesh label, with the openings of the control planes;
+the script asserts their layout and that they go with the release. The umbrella alone installs no
+SPIRE and no Istio: the whole zone, the seven releases of `scripts/install-zone/install.sh`, is
+proven by `scripts/verify-mesh-identity/verify.sh`.
+
 The stand-in pods carry only the labels of the allow matrix; nothing else about them is real, and
 none of their images is consumed by a zone.
