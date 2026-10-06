@@ -30,7 +30,11 @@ releases in order (the umbrella, SPIRE's `spire-crds` and `spire`, Istio's `base
   the proxy as a native sidecar; the install order from zero, all Ready, idempotent.
 
 It also records the identity-band checks failing a release when a declared registration has no
-entry, the render guards, and a teardown that leaves no namespace, CRD or webhook behind.
+entry, the render guards, and a teardown that leaves no plane or control-plane namespace, CRD or
+webhook behind (the SPIRE CRDs leave through Helm's uninstall of `spire-crds`; the umbrella's
+release namespace `ztd-system`, which the installer creates and no release owns, remains). Both
+admission webhooks are asked directly, by server-side dry runs, to show the API server reaches them
+through the `controlPlaneWebhooks` opening.
 
 ## What it does not prove
 
