@@ -53,8 +53,12 @@ stable agent feature outside the `experimental` block. The script checks the pre
 |---|---|
 | `0` | every premise holds: the statement is in the guide, no ztunnel client has merged, the Broker API is experimental |
 | `1` | a premise moved; the record names it. One condition alone does not reopen the decision, so the next step is to read the record and judge the double condition |
-| `2` | a source was unreachable; the record says so and claims nothing about that source |
+| `2` | a source was unreachable, answered with an HTTP error status, or answered with a document that lacks the expected shape (the migration guide's title, the SPIRE agent document's reference heading); the record says so, names the expected shape, and claims nothing about that source |
 | `3` | refused under CI |
+
+The failure paths are tested by `scripts/mesh-mode/check-upstream-state-test.sh` against local
+stand-ins answering 404, 500 and the wrong document; CI runs it with the record in a temporary
+directory and checks that this folder is unchanged.
 
 The decision record names when the check is made: at every Istio minor upgrade, beside the CNI
 chaining check that runs after every Cilium upgrade.

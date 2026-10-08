@@ -15,7 +15,12 @@
 #   0  every premise holds: the record and environment.json are written
 #   1  a premise moved (the statement is gone, a client pull request merged, the Broker API left
 #      the experimental block); the record names it
-#   2  a source was unreachable; the record says so and claims nothing about that source
+#   2  a source was unreachable; the record says so and claims nothing about that source. A source
+#      counts as unreachable when it cannot be fetched, when it answers with an HTTP error status
+#      (a 404 or 500 error page is never read as the document), and when it answers with a document
+#      that lacks the expected shape (the migration guide's title MIGRATE_TITLE, the SPIRE agent
+#      document's first line SPIRE_DOC_HEADING, a release's version-shaped tag); the record names
+#      the shape that was expected
 #   3  refused: CI must never write this evidence (set ALLOW_CI=1 to override on purpose)
 #
 # Needs curl and jq; uses gh for the GitHub API when it is installed and logged in (no rate
@@ -25,6 +30,8 @@
 #   GITHUB_API         the GitHub API base (default: https://api.github.com); and
 #   SPIRE_DOC_BASE     the raw-content base for the SPIRE document (default: raw.githubusercontent.com)
 #                      exist so the failure paths can be exercised against local copies
+# The failure paths are tested by scripts/mesh-mode/check-upstream-state-test.sh against a local
+# server (CI runs it with the record in a temporary directory, never in docs/evidences/).
 set -uo pipefail
 
 if [ -n "${CI:-}" ] && [ -z "${ALLOW_CI:-}" ]; then
@@ -37,7 +44,7 @@ done
 
 REPO=$(git -C "$(dirname "$0")" rev-parse --show-toplevel) || exit 2
 OUT_DIR=${OUT_DIR:-$REPO/docs/evidences/mesh-mode-upstream-state}
-mkdir -p "$OUT_DIR" && OUT_DIR=$(cd "$OUT_DIR" && pwd -P) || { echo "cannot create $OUT_DIR" >&2; exit 2; }
+if ! mkdir -p "$OUT_DIR" || ! OUT_DIR=$(cd "$OUT_DIR" && pwd -P); then echo "cannot create $OUT_DIR" >&2; exit 2; fi
 RECORD=$OUT_DIR/upstream-state.md
 ENVIRONMENT=$OUT_DIR/environment.json
 NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -47,6 +54,10 @@ GITHUB_API=${GITHUB_API:-https://api.github.com}
 SPIRE_DOC_BASE=${SPIRE_DOC_BASE:-https://raw.githubusercontent.com/spiffe/spire}
 ISTIO_STATEMENT="SPIRE as the certificate provider"
 ISTIO_STATEMENT_DETAIL="Ambient mode does not support SPIRE integration"
+# The shape of each fetched document, checked before it is read: an answer without it is not the
+# document asked for (an error page, a redirect to another page) and counts as unreachable.
+MIGRATE_TITLE="Migrate from Sidecar to Ambient"               # the migration guide's page title
+SPIRE_DOC_HEADING="# SPIRE Agent Configuration Reference"     # the agent document's first line
 ISTIO_ISSUE=42339
 ZTUNNEL_PRS=(1676 1936 2067)
 declare -A ZTUNNEL_PR_ROLE=(
@@ -66,10 +77,11 @@ api_get() { # api_get <github api path, e.g. repos/istio/istio/releases/latest> 
   if [ "$FETCHER" = gh ] && [ "$GITHUB_API" = https://api.github.com ]; then
     gh api "$1" 2>/dev/null
   else
-    curl -sSL -m 30 -H 'Accept: application/vnd.github+json' "$GITHUB_API/$1"
+    curl -sSL --fail -m 30 -H 'Accept: application/vnd.github+json' "$GITHUB_API/$1"
   fi
 }
-raw_get() { curl -sSL -m 30 "$1"; }
+# --fail: an HTTP error status is a failed fetch, never a body to read (gh api already fails so)
+raw_get() { curl -sSL --fail -m 30 "$1"; }
 
 unreachable=()  # sources that could not be fetched
 moved=()        # premises that no longer hold
@@ -97,6 +109,10 @@ fi
 
 migrate_html=$(raw_get "$ISTIO_MIGRATE_URL") && [ -n "$migrate_html" ] \
   || { unreachable+=("Istio migration guide $ISTIO_MIGRATE_URL"); migrate_html=; }
+if [ -n "$migrate_html" ] && ! grep -qF "$MIGRATE_TITLE" <<<"$migrate_html"; then
+  unreachable+=("Istio migration guide $ISTIO_MIGRATE_URL: the answer is not the guide (expected the title \"$MIGRATE_TITLE\"); not read")
+  migrate_html=
+fi
 migrate_text=
 migrate_version=
 statement_found=no
@@ -191,11 +207,20 @@ if [ -n "$spire_tag" ]; then
   spire_doc=$(raw_get "$spire_doc_url") && [ -n "$spire_doc" ] \
     || { unreachable+=("SPIRE agent documentation at $spire_tag ($spire_doc_url)"); spire_doc=; }
   if [ -n "$spire_doc" ]; then
+    spire_doc_first=$(awk 'NF { sub(/\r$/, ""); sub(/[[:space:]]+$/, ""); print; exit }' <<<"$spire_doc")
+    if [ "$spire_doc_first" != "$SPIRE_DOC_HEADING" ]; then
+      unreachable+=("SPIRE agent documentation at $spire_tag ($spire_doc_url): the answer is not the document (expected the first line \"$SPIRE_DOC_HEADING\"); not read")
+      spire_doc=
+    fi
+  fi
+  if [ -n "$spire_doc" ]; then
+    # shellcheck disable=SC2016 # the backticks are Markdown, matched literally
     if grep -qiE '^## .*SPIFFE Broker API|^\| `broker`' <<<"$spire_doc"; then
       broker_documented=yes
       # the table whose header is `| experimental` (any case), up to its first blank line
       experimental_block=$(awk 'tolower($0) ~ /^\| *experimental/{p=1} p&&/^[[:space:]]*$/{exit} p' <<<"$spire_doc")
       [ -n "$experimental_block" ] || notes+=("SPIRE: no table headed \"experimental\" was found in $SPIRE_AGENT_DOC_PATH at $spire_tag; the placement is judged against an empty table")
+      # shellcheck disable=SC2016 # as above
       if grep -qE '^\| `broker`' <<<"$experimental_block"; then broker_experimental=yes; else broker_experimental=no; fi
       # the status note is a block quote of several lines; join it
       broker_status_line=$(awk '/^> \*\*Status:\*\*/{p=1} p&&!/^>/{exit} p{sub(/^> ?/,""); printf "%s ", $0}' <<<"$spire_doc" | sed 's/ *$//')
@@ -235,6 +260,7 @@ gh_version=$(command -v gh >/dev/null && gh --version 2>/dev/null | head -1 | se
 curl_version=$(curl --version | head -1 | awk '{print $2}')
 jq_version=$(jq --version 2>/dev/null | sed 's/^jq-//')
 python_version=$(python3 --version 2>/dev/null | awk '{print $2}')
+# shellcheck disable=SC1091 # read at run time, not followed
 host_os=$( (. /etc/os-release 2>/dev/null && printf '%s' "${PRETTY_NAME:-}") || true)
 [ -n "$host_os" ] || host_os=$(uname -s)
 
@@ -300,7 +326,8 @@ esac
   echo "## Condition 2: a SPIRE release in which the Broker API is a stable agent feature, outside the \`experimental\` block"
   echo
   echo "- Latest SPIRE release: ${spire_tag:-unreachable}${spire_published:+ ($(esc "$spire_published"))}"
-  if [ -n "$spire_doc_url" ]; then echo "- Agent documentation read: <$spire_doc_url>"; fi
+  if [ -n "$spire_doc_url" ] && [ "$broker_documented" != unknown ]; then echo "- Agent documentation read: <$spire_doc_url>"
+  elif [ -n "$spire_doc_url" ]; then echo "- Agent documentation asked for, not read: <$spire_doc_url>"; fi
   case "$broker_documented/$broker_experimental" in
     yes/yes) echo "- Broker API in \`$SPIRE_AGENT_DOC_PATH\` at ${spire_tag}: documented, **under the \`experimental\` block**${broker_status_line:+ (\"$(esc "$broker_status_line")\")}" ;;
     yes/no)  echo "- Broker API in \`$SPIRE_AGENT_DOC_PATH\` at ${spire_tag}: documented, **outside the \`experimental\` block**${broker_status_line:+ (\"$(esc "$broker_status_line")\")}" ;;
