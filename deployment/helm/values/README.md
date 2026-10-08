@@ -115,6 +115,7 @@ installer's uninstall removes the CRDs the release owned.
 | Value | Set to | Why |
 |---|---|---|
 | `meshConfig.trustDomain` | zone fact | the mesh's trust domain equals SPIRE's; a mismatch fails silently at the first mTLS handshake |
+| `meshConfig.meshMTLS.minProtocolVersion` | `TLSV1_3` | the security baseline sets TLS 1.3 as the minimum (ADR 005, `docs/adr/tdr-decisions.md`) and Istio's default minimum for mesh mTLS is TLS 1.2; the CI render asserts the value in the rendered `istio` ConfigMap, and `scripts/verify-mesh-identity/verify.sh` shows a TLS 1.3 handshake accepted and one capped at TLS 1.2 refused. Only mesh mTLS is set: `tlsDefaults` governs traffic that is not `ISTIO_MUTUAL`, of which the zone has none |
 | `pilot.env.ENABLE_NATIVE_SIDECARS` | `"true"` | the proxy is injected as an init container with `restartPolicy: Always` (Kubernetes 1.33 or later) |
 | `pilot.cni.enabled` | `true` | traffic redirection by the Istio CNI plugin (release `istio-cni`), so the injected pod has no privileged `istio-init` container |
 | `sidecarInjectorWebhook.templates.spire` | a patch of the pod's `workload-socket` volume into the `csi.spiffe.io` read-only volume | the default sidecar template mounts `workload-socket` into the proxy at `/var/run/secrets/workload-spiffe-uds`; with the SPIRE agent's socket there the proxy takes its certificate and bundle from SPIRE over SDS and never from istiod's CA |

@@ -3,9 +3,9 @@
 # (scripts/dev/kind-cilium-up.sh). Installs the zone from an empty cluster with
 # scripts/install-zone/install.sh, twice, then proves with stand-in pods: an SVID over the CSI socket,
 # the proxy's certificate and root bundle issued by SPIRE, no proxy without the SPIRE socket and a
-# certificate from istiod's CA refused by a meshed peer, an unregistered workload cut off, traffic
-# through the proxies, the default deny intact with the chained CNI and both control planes inside
-# it, the native-sidecar version rule, the identity-band checks, and a teardown that leaves nothing
+# certificate from istiod's CA refused by a meshed peer, the TLS 1.3 minimum of mesh mTLS, an
+# unregistered workload cut off, traffic through the proxies, the default deny intact with the
+# chained CNI and both control planes inside it, the native-sidecar version rule, the identity-band checks, and a teardown that leaves nothing
 # behind. Writes docs/evidences/mesh-identity/evidence.md and environment.json; the exit status is
 # non-zero if any check failed. Never run by CI: the evidence is the record of a run on a cluster.
 #
@@ -334,13 +334,20 @@ check $? "the certificate verifies against istiod's root (istio-ca-root-cert) an
 jq -r '.svids[0].x509_svid_key' "$work/svid.json" | base64 -d | openssl pkey -inform DER -out "$work/svid.key" 2>/dev/null
 for f in istiod-leaf.pem istiod-leaf.key svid.pem svid.key; do k -n "$DATA" exec -i probe -c app -- tee "/tmp/$f" <"$work/$f" >/dev/null; done
 PEER_IP=$(k -n "$DATA" get pod peer -o jsonpath='{.status.podIP}')
-# mtls <cert> <key>: an HTTPS request straight to the peer's proxy, presenting that client certificate
-mtls() { k -n "$DATA" exec probe -c app -- curl -sS -k -m 15 --cert "/tmp/$1" --key "/tmp/$2" -w '\n%{http_code}' "https://$PEER_IP:8080/hostname" 2>&1; }
+# mtls <cert> <key> [curl option...]: an HTTPS request straight to the peer's proxy, presenting that
+# client certificate; the options (a TLS version bound) go to curl as they stand
+mtls() { local cert=$1 key=$2; shift 2; k -n "$DATA" exec probe -c app -- curl -sS -k -m 15 "$@" --cert "/tmp/$cert" --key "/tmp/$key" -w '\n%{http_code}' "https://$PEER_IP:8080/hostname" 2>&1; }
 out=$(mtls svid.pem svid.key)
 [ "$(tail -1 <<<"$out")" = 200 ]; check $? "with the caller's SPIRE SVID the peer's proxy completes the handshake and the request succeeds" "→ $(tr '\n' ' ' <<<"$out")"
 out=$(mtls istiod-leaf.pem istiod-leaf.key)
 [ "$(tail -1 <<<"$out")" != 200 ] && grep -q 'alert' <<<"$out"
 check $? "with the istiod-signed certificate for the same SPIFFE ID the peer's proxy refuses the handshake: its ROOTCA is SPIRE's bundle only" "→ $(grep -o 'curl: .*' <<<"$out" | head -1)"
+say '' "The security baseline sets TLS 1.3 as the minimum (ADR 005), and the \`istiod\` release raises the mesh mTLS minimum to it (\`meshConfig.meshMTLS.minProtocolVersion: TLSV1_3\`; Istio's default is TLS 1.2). The same SVID, once at TLS 1.3 and once with TLS 1.2 as the highest version offered:" ''
+out=$(mtls svid.pem svid.key --tlsv1.3)
+[ "$(tail -1 <<<"$out")" = 200 ]; check $? "at TLS 1.3 with the caller's SPIRE SVID the peer's proxy completes the handshake and the request succeeds" "→ $(tr '\n' ' ' <<<"$out")"
+out=$(mtls svid.pem svid.key --tls-max 1.2)
+[ "$(tail -1 <<<"$out")" != 200 ] && grep -qiE 'alert protocol version|tlsv1 alert|protocol version' <<<"$out"
+check $? "capped at TLS 1.2 with the same SVID the peer's proxy refuses the handshake with a protocol alert: the mesh mTLS minimum is TLS 1.3" "→ $(grep -o 'curl: .*' <<<"$out" | head -1)"
 k -n "$DATA" exec probe -c app -- rm -f /tmp/istiod-leaf.pem /tmp/istiod-leaf.key /tmp/svid.pem /tmp/svid.key >/dev/null 2>&1
 
 # --------------------------------------------------------------------------------------------

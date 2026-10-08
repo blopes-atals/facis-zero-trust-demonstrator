@@ -213,7 +213,11 @@ The `istiod` release configures the mesh for SPIRE:
   without an entry gets no certificate, so its proxy never becomes ready and, being a native
   sidecar, holds the application container back; any plaintext connection from its network
   namespace is refused by the peer. In the default permissive mode a peer would accept plaintext.
-  A future plaintext exception is a namespaced `PeerAuthentication`, recorded per path.
+  A future plaintext exception is a namespaced `PeerAuthentication`, recorded per path. Mesh mTLS
+  runs at TLS 1.3 at least (`meshConfig.meshMTLS.minProtocolVersion: TLSV1_3` in the `istiod`
+  release, the security baseline of ADR 005; Istio's default is TLS 1.2): the proof shows a peer's
+  proxy accepting a TLS 1.3 handshake with a SPIRE SVID and refusing one capped at TLS 1.2
+  ([evidence](evidences/mesh-identity/README.md)).
 - **Native sidecars.** `ENABLE_NATIVE_SIDECARS=true` in istiod injects the proxy as an init
   container with `restartPolicy: Always`: it starts before the application and stops after it, and
   Jobs end. This needs Kubernetes 1.33 or later; the umbrella refuses to render sidecar mode for a
