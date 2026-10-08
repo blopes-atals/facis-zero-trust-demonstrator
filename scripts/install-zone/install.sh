@@ -29,6 +29,11 @@
 #   RENDER_DIR    with `render`, write each release's manifest there as <release>.yaml
 #   INSTALL_ZONE_CACHE  where the pinned charts are kept (default: ~/.cache/ztd-install-zone)
 #
+# Mesh settings: the installer installs sidecar mode with the default, unrevisioned istiod (and the
+# Istio CNI plugin with ambient off). It refuses, before it renders or installs anything, a zone
+# file whose mesh.mode is anything but sidecar (absent counts as sidecar) or whose mesh.revision is
+# set: the umbrella would label the plane namespaces for an injector this installer never installs.
+#
 # The umbrella reads the whole zone file. The other releases read their upstream values file under
 # deployment/helm/values/ (zone-policy: its chart defaults) merged with the zone facts they need;
 # a missing zone fact stops the run before anything is rendered. Every namespace the releases
@@ -76,15 +81,39 @@ trap 'rm -rf "$work"' EXIT
 say() { printf '%s\n' "$*"; }
 die() { printf 'install-zone: %s\n' "$*" >&2; exit 1; }
 
-usage() { sed -n '2,/^#   INSTALL_ZONE_CACHE/p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,/^# set: the umbrella would label/p' "$0" | sed 's/^# \{0,1\}//'; }
 
 # zone_file: the zone file must exist before anything reads it.
 zone_file() { [ -f "$ZONE_VALUES" ] || die "zone file not found: $ZONE_VALUES"; }
+
+# zone_mesh: the zone file's mesh settings must be the ones this installer installs, sidecar mode
+# with the default, unrevisioned istiod; anything else is refused before anything is rendered or
+# installed. Read with PyYAML, as merged_values reads the zone facts.
+zone_mesh() {
+  python3 - "$ZONE_VALUES" <<'PY' || exit 1
+import sys, yaml
+zone_file = sys.argv[1]
+zone = yaml.safe_load(open(zone_file)) or {}
+mesh = zone.get("mesh") if isinstance(zone, dict) else None
+mesh = mesh if isinstance(mesh, dict) else {}
+mode = mesh.get("mode")
+revision = mesh.get("revision")
+scope = "this installer installs the default, unrevisioned istiod in sidecar mode only"
+if mode is not None and str(mode) != "sidecar":
+    sys.exit(f'install-zone: the zone file sets mesh.mode "{mode}", but {scope}; '
+             'another mesh mode needs its own installer support (a zone without a mesh installs '
+             'the umbrella alone through scripts/lifecycle.sh)')
+if revision is not None and str(revision).strip() != "":
+    sys.exit(f'install-zone: the zone file sets mesh.revision "{revision}", but {scope}; '
+             'a revisioned mesh needs its own installer support')
+PY
+}
 
 sha256() { if command -v sha256sum >/dev/null; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -d' ' -f1; }
 
 plan() {
   zone_file
+  zone_mesh
   say "Zone file: ${ZONE_VALUES#"$REPO"/}   context: $KUBE_CONTEXT"
   local i=0 step release ns chart values facts extra label
   for step in "${STEPS[@]}"; do
@@ -184,14 +213,17 @@ PY
 render() {
   local want=("$@") step release ns chart values facts extra path out name names=""
   zone_file
+  zone_mesh
   for step in "${STEPS[@]}"; do names="$names ${step%%|*}"; done
-  for name in "${want[@]}"; do
+  # ${want[@]+...}: an empty array under set -u is an unbound variable on bash before 4.4 (macOS's
+  # bash 3.2), as in scripts/lifecycle.sh.
+  for name in ${want[@]+"${want[@]}"}; do
     [[ "$names " == *" $name "* ]] || die "render: unknown release '$name'; the releases are $(sed 's/^ //; s/ /, /g' <<<"$names")"
   done
   [ -n "${RENDER_DIR:-}" ] && mkdir -p "$RENDER_DIR"
   for step in "${STEPS[@]}"; do
     IFS='|' read -r release ns chart values facts extra <<<"$step"
-    if [ ${#want[@]} -gt 0 ] && [[ ! " ${want[*]} " == *" $release "* ]]; then continue; fi
+    if [ ${#want[@]} -gt 0 ] && [[ ! " ${want[*]+${want[*]}} " == *" $release "* ]]; then continue; fi
     merged_values "$release" "$values" "$facts" "$work/$release.values.yaml" || exit 1
     path=$(chart_path "$chart")
     out=${RENDER_DIR:+$RENDER_DIR/$release.yaml}
@@ -252,6 +284,8 @@ preflight() {
 }
 
 install() {
+  zone_file
+  zone_mesh
   preflight
   # Every release is checked to render, with its zone facts, before the first one is installed.
   render >/dev/null

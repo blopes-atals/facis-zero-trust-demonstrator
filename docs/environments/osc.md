@@ -136,10 +136,12 @@ mounted socket, an SVID whose SPIFFE ID matches its service account
 
 ## 4. Mesh
 
-Releases 4 to 6 install Istio in the mode the zone's values file names (`mesh.mode`: sidecar under
+Releases 4 to 6 install Istio in sidecar mode, with the default, unrevisioned istiod (sidecar under
 [ADR-0009](../adr/0009-service-mesh-mode-istio-sidecar-with-cilium.md), which superseded the ambient
 baseline of ADR-0001; ambient is the parked alternative) into `istio-system`: its CRDs, istiod, and
-the Istio CNI plugin chained behind Cilium. The plane namespaces already carry the matching label,
+the Istio CNI plugin chained behind Cilium. Sidecar mode is the only mode the installer installs:
+it refuses, before it renders or installs anything, a zone file whose `mesh.mode` is not `sidecar`
+(absent counts as sidecar) or whose `mesh.revision` is set, and names the setting. The plane namespaces already carry the matching label,
 `istio-injection=enabled`. Sidecars are injected as native sidecar containers, which is why the
 cluster's Kubernetes version is recorded in the zone file against that requirement. The sidecar
 takes its certificate and its trust bundle from the SPIRE agent over SDS, never from istiod, and
