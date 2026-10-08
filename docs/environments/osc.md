@@ -137,7 +137,7 @@ mounted socket, an SVID whose SPIFFE ID matches its service account
 ## 4. Mesh
 
 Releases 4 to 6 install Istio in the mode the zone's values file names (`mesh.mode`: sidecar under
-[ADR-0006](../adr/0006-service-mesh-mode-istio-sidecar-with-cilium.md), which superseded the ambient
+[ADR-0009](../adr/0009-service-mesh-mode-istio-sidecar-with-cilium.md), which superseded the ambient
 baseline of ADR-0001; ambient is the parked alternative) into `istio-system`: its CRDs, istiod, and
 the Istio CNI plugin chained behind Cilium. The plane namespaces already carry the matching label,
 `istio-injection=enabled`. Sidecars are injected as native sidecar containers, which is why the

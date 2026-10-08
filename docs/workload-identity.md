@@ -5,7 +5,7 @@ mesh uses that SVID, and nothing else, for its mutual TLS. This page describes t
 the repository installs it: where its parts live and why, how the zone's trust domain is named, how
 a workload is registered, which network openings the two control planes need under the default
 deny, the contract between the SPIRE agent and the mesh proxy, and how to check on a live cluster
-that an identity is SPIRE's. [ADR-0006](adr/0006-service-mesh-mode-istio-sidecar-with-cilium.md)
+that an identity is SPIRE's. [ADR-0009](adr/0009-service-mesh-mode-istio-sidecar-with-cilium.md)
 records why the mesh runs in sidecar mode; the [evidence](evidences/mesh-identity/README.md) is
 the executed proof on the kind cluster.
 

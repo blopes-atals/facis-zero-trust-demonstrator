@@ -5,7 +5,7 @@
 #   KUBE_CONTEXT       kubectl context           (default: kind-ztd)
 #   VALUES             zone file                 (default: deployment/helm/ztd/ci/values.yaml)
 #   AMBIENT_VALUES     zone file in ambient mode (default: ambient-values.yaml next to this script),
-#                      the excursion: sidecar is the installed baseline (ADR-0006), ambient the
+#                      the excursion: sidecar is the installed baseline (ADR-0009), ambient the
 #                      parked mode the script switches to and back
 #
 # Every check is "<test>; check $? <title>": the status of the test is what the check records.
@@ -137,7 +137,7 @@ expect_deny  "$MGMT" mgmt-probe  "http://data-target.$DATA.svc:8080/hostname"   
 r=$(k -n "$DATA" exec data-plain -- nslookup "tsa-policy-engine.$MGMT.svc.cluster.local" 2>&1 | tail -3 | tr '\n' ' '); k -n "$DATA" exec data-plain -- nslookup "tsa-policy-engine.$MGMT.svc.cluster.local" >/dev/null 2>&1; check $? "DNS bypass: the denied pod still resolves names" "$r"
 
 say '' '## 6. Mesh mode is one label: the excursion to the parked ambient mode, and back' ''
-say 'Sidecar is the installed baseline (ADR-0006). The release is switched to ambient with the excursion fixture, which must bring the ambient label and the Cilium host-probe exception while the denial and the lane hold, and then back to sidecar, which must leave neither behind.' ''
+say 'Sidecar is the installed baseline (ADR-0009). The release is switched to ambient with the excursion fixture, which must bring the ambient label and the Cilium host-probe exception while the denial and the lane hold, and then back to sidecar, which must leave neither behind.' ''
 out=$(h upgrade --install "$RELEASE" "$CHART" -n "$RNS" -f "$AMBIENT_VALUES" --wait --timeout 5m 2>&1); rc=$?
 check $rc "upgrade to ambient mode returns 0"
 code "$(k get ns "$MGMT" "$DATA" -L ztd.facis.io/plane,istio.io/dataplane-mode,istio-injection | sed 's/  */ /g')"

@@ -43,7 +43,7 @@ planes:
   #   mesh: false
 
 # --------------------------------------------------------------------------------------------
-# Mesh mode. ADR-0006 baselines Istio sidecar mode with Cilium as the CNI, superseding the ambient
+# Mesh mode. ADR-0009 baselines Istio sidecar mode with Cilium as the CNI, superseding the ambient
 # baseline of ADR-0001 (the mesh cannot take SPIRE-issued identities under ambient). Ambient is
 # parked, not abandoned: the value stays accepted and the Cilium host-probe exception below still
 # renders in that mode, so returning is a zone value, not a chart change. Only the namespace label

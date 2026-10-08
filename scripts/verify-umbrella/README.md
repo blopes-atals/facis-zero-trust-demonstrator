@@ -13,7 +13,7 @@ scripts/dev/kind-cilium-up.sh
 scripts/verify-umbrella/verify.sh
 ```
 
-The chart installs in sidecar mode, the baseline of ADR-0006, from `deployment/helm/ztd/ci/values.yaml`,
+The chart installs in sidecar mode, the baseline of ADR-0009, from `deployment/helm/ztd/ci/values.yaml`,
 the file the chart's own CI render uses: the baseline checks assert `istio-injection=enabled` on
 every plane namespace, no ambient label and no cluster-wide Cilium host-probe policy.
 `ambient-values.yaml` is the kind zone in ambient mode, the excursion fixture of this script only:

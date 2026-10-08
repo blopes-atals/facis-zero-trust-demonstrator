@@ -17,10 +17,10 @@ Where a step cannot be executed yet it says so, rather than reading as though it
 
 - **Kubernetes 1.29 or later.** Older versions are not supported; the mesh and admission baselines
   assume it. A cluster that runs the mesh needs **1.33 or later**, for the native sidecar containers
-  of [ADR-0006](../adr/0006-service-mesh-mode-istio-sidecar-with-cilium.md).
+  of [ADR-0009](../adr/0009-service-mesh-mode-istio-sidecar-with-cilium.md).
 - **Cilium as CNI** on the clusters that run the mesh, configured with `cni.exclusive=false` so the
   Istio CNI plugin can chain behind it, and **Istio in sidecar mode** on top
-  ([ADR-0006](../adr/0006-service-mesh-mode-istio-sidecar-with-cilium.md); ambient is the parked
+  ([ADR-0009](../adr/0009-service-mesh-mode-istio-sidecar-with-cilium.md); ambient is the parked
   alternative). The IONOS cluster runs no mesh today and keeps its provider-managed Calico; see its
   guide.
 - **The clusters are client-provided.** Provisioning them is out of scope; these guides begin at the

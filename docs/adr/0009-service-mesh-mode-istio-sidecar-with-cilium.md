@@ -1,4 +1,4 @@
-# ADR-0006: Service mesh mode — Istio sidecar with Cilium
+# ADR-0009: Service mesh mode — Istio sidecar with Cilium
 
 - **Status:** Proposed
 - **Date:** 2026-10-03

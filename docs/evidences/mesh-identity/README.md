@@ -1,7 +1,7 @@
 # Mesh identity: SPIRE-issued identities in the sidecar mesh, executed on kind
 
 `evidence.md` and `environment.json` are the executed proof that the zone's mesh identities are
-SPIRE's: the end-to-end proof [ADR-0006](../../adr/0006-service-mesh-mode-istio-sidecar-with-cilium.md)
+SPIRE's: the end-to-end proof [ADR-0009](../../adr/0009-service-mesh-mode-istio-sidecar-with-cilium.md)
 deferred to its own change. They are written by `scripts/verify-mesh-identity/verify.sh` on the
 local kind cluster (`scripts/dev/kind-cilium-up.sh`: Kubernetes v1.35.5, Cilium 1.20.2 chained with
 `cni.exclusive=false`) and never by hand or by CI: the files in the repository are the output of the

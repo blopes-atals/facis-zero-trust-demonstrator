@@ -1,5 +1,5 @@
 # Release `istio-cni` of the zone: the Istio CNI node agent, which installs the Istio CNI plugin as
-# a chained plugin behind the cluster's CNI (Cilium with cni.exclusive=false, ADR-0006), installed
+# a chained plugin behind the cluster's CNI (Cilium with cni.exclusive=false, ADR-0009), installed
 # as the upstream chart ships it.
 #   chart source      Istio 1.31.1 release archive, chart `cni` 1.31.1
 #                     https://github.com/istio/istio/releases/download/1.31.1/istio-1.31.1-linux-amd64.tar.gz
@@ -17,4 +17,4 @@ cni:
   cniBinDir: /opt/cni/bin
   cniConfDir: /etc/cni/net.d
   ambient:
-    enabled: false           # sidecar mode (ADR-0006); ambient is parked
+    enabled: false           # sidecar mode (ADR-0009); ambient is parked

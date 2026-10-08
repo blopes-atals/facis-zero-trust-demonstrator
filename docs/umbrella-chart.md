@@ -66,7 +66,7 @@ script proves.
 
 ## The mesh mode is one label
 
-[ADR-0006](adr/0006-service-mesh-mode-istio-sidecar-with-cilium.md) baselines Istio sidecar mode
+[ADR-0009](adr/0009-service-mesh-mode-istio-sidecar-with-cilium.md) baselines Istio sidecar mode
 with Cilium as the CNI, superseding the ambient baseline of ADR-0001 through the fallback clause
 that record foresaw: the mesh cannot take SPIRE-issued identities under ambient with community
 Istio. Ambient is parked, not abandoned. Between the two modes the layout differs in one namespace
@@ -80,7 +80,7 @@ One piece is mode-specific, and it belongs to the parked mode. Under Istio ambie
 the CNI, the kubelet's health probes reach ambient pods SNAT-ed to `169.254.7.127`, an address Cilium
 does not exempt from policy, so a default-deny NetworkPolicy would fail every probe. Istio's platform
 prerequisites prescribe a cluster-wide Cilium policy admitting that address, and the chart renders it
-only when the mode is ambient and Cilium is enabled; in the sidecar baseline of ADR-0006 nothing of
+only when the mode is ambient and Cilium is enabled; in the sidecar baseline of ADR-0009 nothing of
 the kind is rendered, and the template stays so that returning to ambient costs a zone value, not a
 chart change.
 
@@ -174,7 +174,7 @@ uninstall before the layout, in the reverse order of their installation.
 
 The chart is cluster-scoped by nature. It creates the plane namespaces, the cluster role and binding
 of its verification job, and, only in the parked ambient mode with Cilium (not in the sidecar
-baseline of [ADR-0006](adr/0006-service-mesh-mode-istio-sidecar-with-cilium.md)), one cluster-wide
+baseline of [ADR-0009](adr/0009-service-mesh-mode-istio-sidecar-with-cilium.md)), one cluster-wide
 Cilium policy; it ships no CRD (its Cilium policies are instances of Cilium's own CRDs and are
 rendered only where Cilium is enabled). An identity confined to one namespace cannot install it.
 That is the design point to settle before the umbrella replaces the fixture chart as the release
@@ -221,6 +221,6 @@ clusters — and the per-zone values the baseline records, including the API end
 management-plane lane. The two OSC clusters are not yet provided. The IONOS cluster is, and
 `zones/ionos.yaml` is recorded from it, but the chart is not installed there: that cluster holds no
 demonstration workload and runs no mesh, its CNI is the provider-managed Calico rather than the
-Cilium of [ADR-0006](adr/0006-service-mesh-mode-istio-sidecar-with-cilium.md), and whether it needs
+Cilium of [ADR-0009](adr/0009-service-mesh-mode-istio-sidecar-with-cilium.md), and whether it needs
 Cilium and the mesh at all is a decision for its visualization stage. Until then the IONOS zone file
 is validated against that cluster's API with a server-side dry run, which persists nothing.

@@ -134,7 +134,7 @@ are listed with their reasons in `deployment/helm/values/README.md`.
 | Component | Version | Installed through | Licence | Why |
 |---|---|---|---|---|
 | SPIRE (server, agent, controller-manager, SPIFFE CSI driver) | v1.15.3 | chart `spire` 0.30.2 and chart `spire-crds` 0.6.1, from the SPIFFE hardened charts `https://spiffe.github.io/helm-charts-hardened/` | Apache-2.0 | the only issuer of workload and mesh identities (ZT-24): attests every pod and serves its SVID over the CSI-mounted Workload API socket and to the mesh proxy over SDS |
-| Istio, sidecar mode | 1.31.1 | charts `base`, `istiod` and `cni` 1.31.1, from the Istio release archive `istio-1.31.1-linux-amd64.tar.gz` (`manifests/charts`), pinned by its published sha256 | Apache-2.0 | the service mesh of [ADR-0006](adr/0006-service-mesh-mode-istio-sidecar-with-cilium.md): native sidecars that take their certificates from SPIRE, mesh-wide STRICT mTLS, the CNI plugin chained behind Cilium |
+| Istio, sidecar mode | 1.31.1 | charts `base`, `istiod` and `cni` 1.31.1, from the Istio release archive `istio-1.31.1-linux-amd64.tar.gz` (`manifests/charts`), pinned by its published sha256 | Apache-2.0 | the service mesh of [ADR-0009](adr/0009-service-mesh-mode-istio-sidecar-with-cilium.md): native sidecars that take their certificates from SPIRE, mesh-wide STRICT mTLS, the CNI plugin chained behind Cilium |
 | Cilium | 1.20.2 | chart `cilium/cilium`, by `scripts/dev/kind-cilium-up.sh` on kind; the zone's CNI elsewhere | Apache-2.0 | the CNI and the enforcer of the network policies, with `cni.exclusive=false` so that the Istio plugin can chain |
 | istioctl | 1.31.1 | the operator's machine | Apache-2.0 | reads a proxy's secrets and sync status in the proof; never installs |
 
@@ -147,7 +147,7 @@ digest of every image tag in the values files (`docker buildx imagetools inspect
 prints the index digest), then reruns
 `scripts/verify-mesh-identity/verify.sh` and commits its evidence. The local proof runs on kind node
 v1.35.5 with Cilium 1.20.2. At every Istio minor upgrade the
-[ADR-0006](adr/0006-service-mesh-mode-istio-sidecar-with-cilium.md) reopen check
+[ADR-0009](adr/0009-service-mesh-mode-istio-sidecar-with-cilium.md) reopen check
 (`scripts/mesh-mode/check-upstream-state.sh`) runs alongside the proof. The SPIRE charts are
 upgraded as a pair (`spire-crds` first), because the controller-manager in `spire` is built
 against the CRDs of its `spire-crds`.

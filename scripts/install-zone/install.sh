@@ -45,7 +45,7 @@ CACHE=${INSTALL_ZONE_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/ztd-install-zone}
 VALUES_DIR=$REPO/deployment/helm/values
 
 # ---- Pins (docs/dependencies.md). An upgrade changes a version and its digest here, then reruns
-# ---- scripts/verify-mesh-identity/verify.sh; every Istio minor also reruns the ADR-0006 check.
+# ---- scripts/verify-mesh-identity/verify.sh; every Istio minor also reruns the ADR-0009 check.
 SPIRE_REPO=https://spiffe.github.io/helm-charts-hardened/
 SPIRE_CRDS_VERSION=0.6.1
 SPIRE_CRDS_SHA256=ce982e63fc375e392b014fc99e621a55442ab886052413e9bb052f72d66580a8

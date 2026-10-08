@@ -1,6 +1,6 @@
 # Zone file for the CI render and for the local kind cluster (scripts/dev/kind-cilium-up.sh), filled
 # the same way a real zone file is filled from the cluster baseline: with what the cluster is, not
-# with what the chart would like it to be. Mesh mode sidecar, the ADR-0006 baseline; the parked
+# with what the chart would like it to be. Mesh mode sidecar, the ADR-0009 baseline; the parked
 # ambient mode is exercised by scripts/verify-umbrella/ambient-values.yaml, not here. The CI chart
 # job renders every chart with its ci/values.yaml, and scripts/install-zone/install.sh installs the
 # kind zone from this file (the umbrella reads all of it; the SPIRE, Istio and zone-policy releases

@@ -1,7 +1,7 @@
 # Mesh mode: the upstream state behind the decision
 
 `upstream-state.md` and `environment.json` are the evidence behind
-[ADR-0006](../../adr/0006-service-mesh-mode-istio-sidecar-with-cilium.md), the record that moves the
+[ADR-0009](../../adr/0009-service-mesh-mode-istio-sidecar-with-cilium.md), the record that moves the
 service mesh from Istio ambient to Istio sidecar mode. They are written by
 `scripts/mesh-mode/check-upstream-state.sh` and never by hand: the files in the repository are the
 output of the last run, on the commit and host that `environment.json` names.
@@ -44,7 +44,7 @@ committed, never written by a pipeline.
 
 ## It is the reopen check
 
-ADR-0006 is reopened only when both of the following hold in released versions: a community Istio
+ADR-0009 is reopened only when both of the following hold in released versions: a community Istio
 release whose ztunnel obtains workload certificates from the SPIRE agent through the SPIFFE Broker
 API, documented as supported in ambient mode; and a SPIRE release in which the Broker API is a
 stable agent feature outside the `experimental` block. The script checks the premises of both:

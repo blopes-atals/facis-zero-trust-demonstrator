@@ -52,7 +52,7 @@ declared derogation of the preferred stack first (`docs/workload-identity.md`).
 | `planes.management.namespace` | `ztd-mgmt` | Management-plane namespace |
 | `planes.data.namespace` | `ztd-data` | Data-plane namespace |
 | `planes.extra` | `[]` | Further `{name, plane, mesh}` namespaces: the control planes `spire-system` and `istio-system` (management, `mesh: false`) and any a component task adds. `mesh: false` leaves out the mesh label |
-| `mesh.mode` | `sidecar` | `sidecar` (the ADR-0006 baseline), `ambient` (parked) or `none`; sets the namespace label. Sidecar mode refuses a `zone.kubernetesVersion` below 1.33 (native sidecars) |
+| `mesh.mode` | `sidecar` | `sidecar` (the ADR-0009 baseline), `ambient` (parked) or `none`; sets the namespace label. Sidecar mode refuses a `zone.kubernetesVersion` below 1.33 (native sidecars) |
 | `mesh.revision` | `""` | Sidecar mode: pin an Istio revision (`istio.io/rev`) instead of the default injector |
 | `cni.cilium.enabled` | `true` | Render the Cilium-specific pieces: the entity openings and the API lane, and the host-probe exception of the parked ambient mode. Required with a mesh |
 | `networkPolicy.defaultDeny` | `true` | Default deny, ingress and egress, in every plane namespace |
@@ -123,6 +123,6 @@ scripts/verify-umbrella/verify.sh           # installs, re-installs, probes the 
 scripts/verify-mesh-identity/verify.sh      # the zone with SPIRE and Istio: the seven releases
 ```
 
-In CI, `helm lint` and `helm template` run with `ci/values.yaml` (sidecar, the ADR-0006 baseline);
+In CI, `helm lint` and `helm template` run with `ci/values.yaml` (sidecar, the ADR-0009 baseline);
 the chart is verified with Helm v4.3.0, the version the pipeline pins. The evidence script installs
 in sidecar mode and proves the parked ambient mode live, as an excursion and back.

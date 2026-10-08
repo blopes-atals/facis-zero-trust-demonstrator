@@ -1,7 +1,7 @@
 # Example only. Copy to zone-a.yaml and replace every value with what the cluster baseline recorded.
 zone:
   name: zone-a
-  kubernetesVersion: v1.35.0   # `kubectl version -o json | jq -r .serverVersion.gitVersion`; 1.33 or later where the mesh runs (native sidecars, ADR-0006)
+  kubernetesVersion: v1.35.0   # `kubectl version -o json | jq -r .serverVersion.gitVersion`; 1.33 or later where the mesh runs (native sidecars, ADR-0009)
   storageClass: csi-default    # `kubectl get storageclass`
   loadBalancer:
     type: cloud                # cloud | metallb | none
@@ -10,7 +10,7 @@ zone:
   # confirms it). Required where the mesh runs; fixed at the first SPIRE install.
   trustDomain: zone-a.example
 mesh:
-  mode: sidecar                # the mesh decision of ADR-0006; ambient is the parked alternative
+  mode: sidecar                # the mesh decision of ADR-0009; ambient is the parked alternative
 cni:
   cilium:
     enabled: true              # `kubectl -n kube-system get ds cilium`; another CNI needs a declared derogation

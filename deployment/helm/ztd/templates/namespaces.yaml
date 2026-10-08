@@ -1,7 +1,7 @@
 {{- /*
 One namespace per plane entry, labelled with its plane and, unless the entry sets mesh: false, the
 mesh mode. Sidecar mode needs native sidecar containers (the injected proxy as an init container
-with restartPolicy Always, ADR-0006), which Kubernetes offers from 1.33: a zone that records an
+with restartPolicy Always, ADR-0009), which Kubernetes offers from 1.33: a zone that records an
 older server version cannot be installed.
 */ -}}
 {{- if eq .Values.mesh.mode "sidecar" }}

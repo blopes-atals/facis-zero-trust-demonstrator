@@ -128,7 +128,7 @@ installer's uninstall removes the CRDs the release owned.
 | `cni.chained` | `true` | append the Istio plugin to the configuration Cilium wrote (Cilium runs with `cni.exclusive=false`), never replace it |
 | `cni.cniBinDir` | `/opt/cni/bin` | the CNI binary directory of the nodes (kind's, and the chart's default); a zone whose nodes differ overrides it |
 | `cni.cniConfDir` | `/etc/cni/net.d` | the CNI configuration directory of the nodes, as above |
-| `cni.ambient.enabled` | `false` | sidecar mode (ADR-0006); ambient is parked |
+| `cni.ambient.enabled` | `false` | sidecar mode (ADR-0009); ambient is parked |
 
 ## Rendering
 
