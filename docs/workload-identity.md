@@ -254,24 +254,52 @@ same. The rule is an equality with the injector's defaults instead:
   `traffic.sidecar.istio.io/excludeOutboundIPRanges`, `includeOutboundPorts`,
   `excludeOutboundPorts`, `excludeInterfaces`, `kubevirtInterfaces` and
   `istio.io/reroute-virtual-interfaces`;
-- nor those that move or replace the capture or the proxy's control: `status.sidecar.istio.io/port`,
-  and `proxy.istio.io/config`, which can point the proxy at another discovery server;
-- nor the injection opt-out `sidecar.istio.io/inject`, as an annotation or a label and whatever its
-  value: a pod without a proxy in a plane namespace is reachable in plaintext like an excluded port,
-  and `"true"` is already the namespace default.
+- nor those that move or replace the capture or the proxy: `status.sidecar.istio.io/port`;
+  `proxy.istio.io/config`, which can point the proxy at another discovery server;
+  `sidecar.istio.io/proxyImage`, which swaps the proxy's image; `sidecar.istio.io/bootstrapOverride`,
+  which replaces Envoy's bootstrap; `sidecar.istio.io/userVolume` and `userVolumeMount`, which mount
+  the pod's own volumes into the proxy; and `proxy.istio.io/overrides`, which the injector writes
+  when the pod brings its own container named `istio-proxy` and merges it over the injected proxy,
+  the pod's image, environment and mounts winning. The injector writes none of these on a pod that
+  does not ask for them;
+- nor, in a namespace with the injection label (`istio-injection` or `istio.io/rev`), the injection
+  opt-out `sidecar.istio.io/inject`, as an annotation or a label and whatever its value: a pod
+  without a proxy there is reachable in plaintext like an excluded port, and `"true"` is already the
+  namespace default.
 
-An ordinary pod satisfies the rule with exactly what the injector writes, and the proof shows it
+The opt-out is refused only in injected namespaces because the plane entries the zone file declares
+`mesh: false` (`istio-system`, `spire-system`) carry the plane label but no injection label, and
+Istio's own pods there, istiod and the `istio-cni` node agents, carry `sidecar.istio.io/inject:
+"false"`: refusing it there would stop their controllers from recreating them, and without istiod
+no plane pod could be injected at all. The umbrella writes the injection label from the plane
+entry's `mesh` field, its verification hook fails the release when a `mesh: false` namespace
+carries one or a meshed namespace lacks it, and relabelling a namespace is the privilege that
+already removes the plane label the policy is bound on, so the scope adds no new trust. Every other
+clause of the rule applies in those namespaces too.
+
+A fourth rule of the same policy, the proxy rule, holds every mesh proxy to the injector's own: the
+image `proxySocketPolicy.proxyImage` (which must equal the `istiod` release's
+`global.proxy.image`), no command, arguments starting with `proxy sidecar`, and no
+`ISTIO_BOOTSTRAP_OVERRIDE` in its environment. A proxy of another image that mounts the SPIRE
+socket would pass the socket rule and could accept plaintext on the inbound capture port.
+
+An ordinary pod satisfies both rules with exactly what the injector writes, and the proof shows it
 admitted with the status-port exclusion and `REDIRECT`, next to the refusal of an excluded
-application port, capture mode `NONE`, a moved status port, a proxy-config override and an opt-out
-([evidence](evidences/mesh-identity/README.md)). A workload that needs a capture exception or a
+application port, capture mode `NONE`, a moved status port, a proxy-config override, an opt-out, a
+swapped proxy image and a pod-supplied `istio-proxy`, and the admission of the istiod and
+`istio-cni` pods in `istio-system` ([evidence](evidences/mesh-identity/README.md)). A workload that needs a capture exception or a
 proxy setting gets it mesh-wide through the charts (`meshConfig.defaultConfig`, or a value that
 widens the rule) in its own change, never through a pod annotation. Interception mode `TPROXY`,
 which also captures, is refused with the rest: the zone does not use it.
 
 What the rule does not cover: capture is iptables inside the pod's network namespace, so a
-host-networked pod or a container with `NET_ADMIN` steps around it without any annotation. Those
-belong to a Pod Security Admission level on the plane namespaces, which they do not carry today and
-which is the next change, not this policy.
+host-networked pod or a container with `NET_ADMIN` steps around it without any annotation. And the
+redirect rules let the proxy's own UID and GID, 1337, leave without capture (otherwise the proxy
+would capture itself), so an application container that runs as UID or GID 1337, through its
+`securityContext` or its image's `USER`, sends its outbound traffic past the proxy. Those belong to
+a Pod Security Admission level on the plane namespaces, with a rule on `runAsUser` and `runAsGroup`
+(an image's `USER` is not visible at admission, so that rule must require an explicit non-1337
+user), which the namespaces do not carry today and which is the next change, not this policy.
 
 ## Telemetry
 
@@ -334,7 +362,7 @@ cluster, twice, and writes [the record](evidences/mesh-identity/evidence.md):
 | `install-order-idempotent` | the seven releases install in order with no manual step, every pod is Ready, and a second run leaves every release's manifest identical |
 | `svid-over-csi-socket` | a labelled pod gets, over the mounted socket, the SVID of its service account in the zone's trust domain, chained to the SPIRE CA; an unlabelled pod gets no entry and no SVID |
 | `native-sidecar-version` | the server is 1.33 or later and the proxy is an init container with `restartPolicy: Always` |
-| `mesh-identity-issued-by-spire` | the proxy's certificate has `O = SPIRE`, the SPIRE CA as issuer and the SVID's URI SAN, and its `ROOTCA` bundle is the SPIRE CA; under the capture rule (`capture-at-injector-defaults`), a pod in a plane namespace with an excluded application port, capture mode `NONE`, a moved status port, a proxy-config override or an injection opt-out is refused at admission, and an ordinary pod is admitted carrying the injector's status-port exclusion and `REDIRECT` |
+| `mesh-identity-issued-by-spire` | the proxy's certificate has `O = SPIRE`, the SPIRE CA as issuer and the SVID's URI SAN, and its `ROOTCA` bundle is the SPIRE CA; under the capture rule (`capture-at-injector-defaults`), a pod in a plane namespace with an excluded application port, capture mode `NONE`, a moved status port, a proxy-config override, an injection opt-out, a swapped proxy image or a pod-supplied `istio-proxy` is refused at admission, an ordinary pod is admitted carrying the injector's status-port exclusion and `REDIRECT`, and the istiod and `istio-cni` pods, which opt out of injection, are admitted in `istio-system` |
 | `unregistered-workload-cut-off` | an unlabelled pod's proxy has no certificate, its application never starts, and the peer refuses a call from it, while the labelled pod's call succeeds |
 | `traffic-through-the-proxies` | the peer sees the caller's SPIFFE ID in `X-Forwarded-Client-Cert` and both proxies count the request as mTLS |
 | `default-deny-with-chained-cni` | the Istio plugin runs after Cilium, `cni-exclusive=false`, and the umbrella's cross-plane denial and matrix lane hold with the proxies in place |

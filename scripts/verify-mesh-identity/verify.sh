@@ -361,7 +361,7 @@ out=$(printf '%s\n' 'apiVersion: v1' 'kind: Pod' 'metadata: { name: optout-agent
 [ $rc -ne 0 ] && grep -q "proxy-takes-spire-socket" <<<"$out" && grep -q 'must take its certificate from SPIRE' <<<"$out"
 check $? "a pod that runs Istio's agent itself (proxyv2, proxy sidecar) under another container name, with its own istio-token volume and no injection, is refused at admission" "$(grep -o 'denied request: .*' <<<"$out" | cut -c1-220)"
 STATUS_PORT=$(h get values zone-policy -n "$ISTIO_NS" --all -o json 2>/dev/null | jq -r '.proxySocketPolicy.statusPort // empty')
-say '' "The same policy holds the capture rule (capture-at-injector-defaults). The Istio CNI plugin builds a pod's redirect rules from its capture annotations, so a port excluded from the capture reaches the application outside its proxy, where STRICT never sees it, and an unregistered pod of the namespace could reach it in plaintext. The injector writes those annotations onto every pod it injects, so the policy compares their values with the injector's defaults (interception mode \`REDIRECT\`, all inbound ports, the status port \`$STATUS_PORT\` as the only excluded inbound port, all outbound ranges) and refuses the optional capture annotations, the status-port and proxy-config overrides and the injection opt-out. Server-side dry runs in \`$DATA\`:" ''
+say '' "The same policy holds the capture rule (capture-at-injector-defaults). The Istio CNI plugin builds a pod's redirect rules from its capture annotations, so a port excluded from the capture reaches the application outside its proxy, where STRICT never sees it, and an unregistered pod of the namespace could reach it in plaintext. The injector writes those annotations onto every pod it injects, so the policy compares their values with the injector's defaults (interception mode \`REDIRECT\`, all inbound ports, the status port \`$STATUS_PORT\` as the only excluded inbound port, all outbound ranges) and refuses the optional capture annotations, the status-port, proxy-config, proxy-image and pod-supplied proxy overrides, and, in a namespace with the injection label, the injection opt-out. Server-side dry runs in \`$DATA\`:" ''
 # capture_refused <pod> <kubectl run flags...>: status 0 when the API server refuses the pod naming
 # the policy and its capture rule; the refusal is left in $out
 capture_refused() {
@@ -380,6 +380,15 @@ capture_refused capture-proxy-config "--annotations=proxy.istio.io/config=discov
 check $? "capture-at-injector-defaults: a pod that overrides its proxy's configuration (proxy.istio.io/config with a discoveryAddress in the plane) is refused at admission" "$(refusal)"
 capture_refused capture-opt-out --labels=sidecar.istio.io/inject=false
 check $? "capture-at-injector-defaults: a pod that opts out of injection (label sidecar.istio.io/inject: \"false\"), and would run without a proxy, is refused at admission" "$(refusal)"
+capture_refused capture-proxy-image --annotations=sidecar.istio.io/proxyImage=registry.k8s.io/e2e-test-images/agnhost:2.53
+check $? "capture-at-injector-defaults: a pod that swaps its proxy's image (sidecar.istio.io/proxyImage) is refused at admission" "$(refusal)"
+# A pod that brings its own istio-proxy container: the injector merges it over the injected proxy and
+# records it in proxy.istio.io/overrides, which the capture rule refuses.
+out=$(printf '%s\n' 'apiVersion: v1' 'kind: Pod' 'metadata: { name: capture-proxy-override }' \
+  'spec: { containers: [ { name: app, image: "registry.k8s.io/e2e-test-images/agnhost:2.53" }, { name: istio-proxy, image: "registry.k8s.io/e2e-test-images/agnhost:2.53" } ] }' \
+  | k -n "$DATA" create --dry-run=server -f - 2>&1); rc=$?
+[ $rc -ne 0 ] && grep -q "ValidatingAdmissionPolicy '$POLICY'" <<<"$out" && grep -q 'denied request: capture rule' <<<"$out"
+check $? "capture-at-injector-defaults: a pod that brings its own istio-proxy container (another image, merged over the injected proxy and recorded in proxy.istio.io/overrides) is refused at admission" "$(refusal)"
 out=$(k -n "$DATA" run optout-none --image=registry.k8s.io/e2e-test-images/agnhost:2.53 --restart=Never --dry-run=server -o json 2>&1)
 jq -e '.spec.volumes[] | select(.name == "workload-socket" and .csi.driver == "csi.spiffe.io")' <<<"$out" >/dev/null
 check $? "an ordinary pod in the same namespace is admitted, its proxy on the SPIRE socket"
@@ -388,6 +397,13 @@ mode=$(jq -r '.metadata.annotations["sidecar.istio.io/interceptionMode"] // "abs
 [ "$excluded" = "$STATUS_PORT" ] && [ "$mode" = REDIRECT ]
 check $? "capture-at-injector-defaults: the equality rule admits exactly what the injector writes: the admitted pod carries traffic.sidecar.istio.io/excludeInboundPorts \"$STATUS_PORT\" (the status port alone) and sidecar.istio.io/interceptionMode REDIRECT" \
   "$(jq -c '.metadata.annotations // {} | with_entries(select(.key | test("^(traffic\\.)?sidecar\\.istio\\.io/(interceptionMode|includeInboundPorts|excludeInboundPorts|includeOutboundIPRanges)$")))' <<<"$out" 2>/dev/null)"
+say '' "The injection opt-out is refused only where the namespace carries the injection label. The control-plane namespaces the zone file declares \`mesh: false\` carry the plane label but no injection label, and Istio's own pods there opt out of injection; a server-side dry run of a pod built from the installed istiod Deployment's and istio-cni DaemonSet's pod templates, as their controllers would recreate them in \`$ISTIO_NS\`:" ''
+for w in deployment/istiod daemonset/istio-cni-node; do
+  out=$(k -n "$ISTIO_NS" get "$w" -o json | jq --arg n "capture-recreate-${w#*/}" \
+    '{apiVersion: "v1", kind: "Pod", metadata: {name: $n, labels: .spec.template.metadata.labels, annotations: .spec.template.metadata.annotations}, spec: .spec.template.spec}' \
+    | k -n "$ISTIO_NS" create --dry-run=server -f - 2>&1); rc=$?
+  check $rc "capture-at-injector-defaults: the $w pod, which carries sidecar.istio.io/inject \"false\", is admitted in $ISTIO_NS (no injection label), so its controller can recreate it" "$(head -1 <<<"$out" | cut -c1-200)"
+done
 
 say '' "Outside the plane namespaces the policy does not apply, and istiod's injector still injects a pod labelled \`sidecar.istio.io/inject: \"true\"\` with the templates it names. A pod in a scratch namespace without the plane label:" ''
 OUTSIDE=mesh-identity-outside

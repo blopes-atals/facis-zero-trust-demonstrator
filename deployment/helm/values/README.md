@@ -128,6 +128,10 @@ only when the injector's `traffic.sidecar.istio.io/excludeInboundPorts` is that 
 capture rule, `deployment/helm/zone-policy/README.md`). Changing the status port here without
 changing it there refuses every injected pod in the plane namespaces.
 
+`global.proxy.image` is mirrored the same way in `zone-policy` `proxySocketPolicy.proxyImage`: the
+proxy rule of the same policy admits a mesh proxy only with that exact image reference, so an Istio
+upgrade changes both, or every injected pod in the plane namespaces is refused.
+
 ## `istio-cni.yaml`
 
 | Value | Set to | Why |
