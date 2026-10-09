@@ -12,8 +12,8 @@ c=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("commit"
 echo "evidence recorded at commit ${c:-?}"
 if [ -z "$c" ] || ! git cat-file -e "$c^{commit}" 2>/dev/null; then
   echo "UNVERIFIABLE: the evidence's commit is unknown to this repository; rerun scripts/verify-mesh-identity/verify.sh on kind"; exit 77; fi
-if ! git show "$c:$tpl" 2>/dev/null | grep -q "sidecar.istio.io/interceptionMode"; then
-  echo "UNVERIFIABLE: the committed evidence was produced at $c, before the capture rule existed in the policy (stale; the proof must be rerun on kind, which needs Docker)"; exit 77; fi
+if ! git show "$c:$tpl" 2>/dev/null | grep -q "sidecar.istio.io/proxyImage"; then
+  echo "UNVERIFIABLE: the committed evidence was produced at $c, before the current capture rule (proxy-image and istio-proxy overrides) existed in the policy (stale; the proof must be rerun on kind, which needs Docker)"; exit 77; fi
 python3 - "$ev" <<'PY'
 import re, sys
 t = open(sys.argv[1]).read()
@@ -27,12 +27,17 @@ cases = {
   "moved status port": [r"status\.sidecar\.istio\.io/port", pol],
   "proxy-config override": [r"proxy\.istio\.io/config", pol],
   "injection opt-out": [r"sidecar\.istio\.io/inject", pol],
+  "swapped proxy image": [r"sidecar\.istio\.io/proxyImage", pol],
+  "pod-supplied istio-proxy": [r"istio-proxy", r"(own|pod-supplied|brings|supplied)", pol],
 }
 bad = 0
 for k, pats in cases.items():
     b = block(*pats); print(f"{'found' if b else 'MISSING'}: refusal, {k}"); bad |= not b
 b = block(r"excludeInboundPorts", r"15020", r"(admit|REDIRECT)")
 print(f"{'found' if b else 'MISSING'}: ordinary pod admitted with the status-port exclusion"); bad |= not b
-if bad: sys.exit("FAIL: evidence produced with the capture rule does not list every refusal and the admitted pod")
-print("PASS: evidence lists the five refusals naming the policy and the admitted ordinary pod")
+for k in ("istiod", "istio-cni"):
+    b = block(k, r"istio-system", r"admit")
+    print(f"{'found' if b else 'MISSING'}: {k} pod admitted in istio-system"); bad |= not b
+if bad: sys.exit("FAIL: evidence produced with the capture rule does not list every refusal and the admitted pods")
+print("PASS: evidence lists the seven refusals naming the policy, the admitted ordinary pod and the istiod and istio-cni pods admitted in istio-system")
 PY

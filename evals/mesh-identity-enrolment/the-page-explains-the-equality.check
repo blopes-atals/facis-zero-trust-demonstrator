@@ -20,17 +20,20 @@ claims = {
       sent(r"(compar\w*|equal\w*|equality)", r"default"),
   "host networking and NET_ADMIN are outside this rule":
       sent(r"host[- ]?network", r"NET_ADMIN") ,
+  "UID and GID 1337 are outside this rule":
+      sent(r"1337", r"(UID|user)", r"(GID|group)"),
 }
 bad = 0
 for k, s in claims.items():
     print(f"{'found' if s else 'MISSING'}: {k}" + (f"\n    > {s[:300]}" if s else ""))
     bad |= not s
-hn = claims["host networking and NET_ADMIN are outside this rule"]
-if hn:
-    window = t[t.find(hn): t.find(hn) + len(hn) + 400]
-    if not re.search(r"(outside|not cover|does not cover|steps? around|not covered|beyond)", window, re.I):
-        print("MISSING: the host-networking/NET_ADMIN sentence does not say they are outside the rule"); bad = 1
+for hn in (claims["host networking and NET_ADMIN are outside this rule"], claims["UID and GID 1337 are outside this rule"]):
+  if hn:
+    # the statement may lead into the paragraph ("What the rule does not cover: ...") or close it
+    i = t.find(hn); window = t[max(0, i - 400): i + len(hn) + 700]
+    if not re.search(r"(outside|not cover|does not cover|steps? around|not covered|beyond|not this (policy|rule))", window, re.I):
+        print(f"MISSING: the sentence does not say this is outside the rule: {hn[:120]}"); bad = 1
 if bad:
     sys.exit("FAIL: the page does not explain the equality as the scenario requires")
-print("PASS: the page states all three points")
+print("PASS: the page states every point")
 PY

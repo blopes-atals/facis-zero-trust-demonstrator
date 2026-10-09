@@ -88,3 +88,13 @@ sys.exit(77)
 PY
   exit $?
 }
+
+# dry_run_file <namespace> <manifest file> -> rc, out (server dry-run create of a Pod manifest)
+dry_run_file() {
+  out=$(kubectl --context "$CTX" -n "$1" create -f "$2" --dry-run=server -o json 2>&1); rc=$?
+}
+
+# proxy_image: the zone-policy chart value the injected proxy must run (proxySocketPolicy.proxyImage).
+proxy_image() {
+  python3 -c 'import sys,yaml; print((yaml.safe_load(open(sys.argv[1])).get("proxySocketPolicy") or {}).get("proxyImage",""))' "$CHART/values.yaml"
+}

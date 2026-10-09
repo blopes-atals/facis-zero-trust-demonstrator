@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # scenario: mesh-identity-enrolment / An injection opt-out is refused
 # level: L2
-# requirement: The overrides that move or replace the capture or the proxy are refused in a plane namespace
+# requirement: The injection opt-out is refused where the plane namespace is injected
 . "$EVAL_ROOT/evals/mesh-identity-enrolment/_capture.sh"
 # "labelled or annotated": both forms must be refused.
 if kind_available; then
