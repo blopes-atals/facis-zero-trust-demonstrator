@@ -64,6 +64,30 @@ scripts/install-zone/install.sh install
   Helm. Delete the workloads in the plane namespaces first: a pod that still mounts the SPIFFE CSI
   volume when the driver goes holds its namespace in `Terminating`.
 
+## What the installer accepts
+
+The installer installs sidecar mode with the default, unrevisioned istiod (release 5) and the Istio
+CNI plugin with ambient off (release 6, `deployment/helm/values/istio-cni.yaml`). Of the zone
+file's mesh settings it therefore accepts only:
+
+| Key | Accepted |
+|---|---|
+| `mesh.mode` | `sidecar`, or absent (the umbrella's default is sidecar) |
+| `mesh.revision` | empty, or absent |
+
+`plan`, `render` and `install` refuse any other value before anything is fetched, rendered or
+installed, exit non-zero and name the key, its value and the reason, for example:
+
+```text
+install-zone: the zone file sets mesh.revision "canary", but this installer installs the default, unrevisioned istiod in sidecar mode only; a revisioned mesh needs its own installer support
+```
+
+A revisioned or ambient zone would otherwise be labelled by the umbrella for an injector that is
+never installed, and the install would report success with no proxy in any plane namespace. A zone
+without a mesh (`mesh.mode: none`, such as the IONOS zone) is not installed by this installer: it
+installs the umbrella alone through `scripts/lifecycle.sh`. CI runs both refusals (a revision, and
+ambient) against copies of the kind zone file.
+
 ## The facts a zone file must carry
 
 The umbrella reads the whole file (`deployment/helm/ztd/zones/README.md`). Where the mesh runs, it
@@ -93,7 +117,25 @@ upgrade changes a version and its digest here and reruns `scripts/verify-mesh-id
 
 ## Tools
 
-`helm` (v4.3.0, the pipeline's), `kubectl`, `jq`, `curl`, `python3` with PyYAML, and `sha256sum`
-or `shasum`. On a kind host, raise `fs.inotify.max_user_instances` to 512 first
+`bash` 3.2 or later (macOS's `/bin/bash` is the floor), `helm` (v4.3.0, the pipeline's),
+`kubectl`, `jq`, `curl`, `python3` with PyYAML, and `sha256sum` or `shasum`. No CI runner ships
+bash 3.2, so the floor is checked by hand: `render` with no release names, the path `install` takes
+first, is run once under a bash 3.2 binary (a Mac, or the `bash:3.2` container with the host's
+`helm` and the chart cache mounted), from the repository root:
+
+```bash
+docker run --rm -v "$PWD:/repo" -w /repo -v "$(command -v helm):/usr/local/bin/helm:ro" \
+  -v "$HOME/.cache/ztd-install-zone:/cache" -e INSTALL_ZONE_CACHE=/cache bash:3.2 \
+  sh -c 'apk add --no-cache python3 py3-yaml curl >/dev/null && bash --version | head -1 && bash scripts/install-zone/install.sh render'
+```
+
+Last run (2026-10-09, `bash:3.2` container, GNU bash 3.2.57(1)-release, repository mounted
+read-only): exit 0, all seven releases rendered (`ztd` 38 objects, `spire-crds` 3, `spire` 36,
+`istio-base` 17, `istiod` 17, `istio-cni` 7, `zone-policy` 14), no `unbound variable`;
+`render spire-crds` rendered the one release, and a zone copy with `mesh.revision: canary` exited 1
+naming the key with nothing rendered. The script before the fix stopped there with
+`want[@]: unbound variable` and still exited 0 having rendered nothing.
+
+On a kind host, raise `fs.inotify.max_user_instances` to 512 first
 (`sudo sysctl -w fs.inotify.max_user_instances=512`): every kind node shares the host kernel, and
 the Istio CNI agent fails to start below that limit.

@@ -1,13 +1,13 @@
 {
-  "generatedAt": "2026-10-08T11:20:08Z",
+  "generatedAt": "2026-10-09T09:19:38Z",
   "script": "scripts/mesh-mode/check-upstream-state.sh",
-  "commit": "beb832549e7a64e2a9fbe68642d075daf5d523de",
+  "commit": "451f9928db4a099f4d9a1f527af1dfe982352711",
   "dirty": false,
   "exitStatus": 0,
   "host": {
     "kind": "operator workstation",
     "os": "Ubuntu 24.04.5 LTS",
-    "kernel": "6.8.0-139-generic",
+    "kernel": "6.8.0-146-generic",
     "arch": "x86_64"
   },
   "tools": {

@@ -21,7 +21,9 @@ releases in order (the umbrella, SPIRE's `spire-crds` and `spire`, Istio's `base
   the SPIRE CA; istiod's CA issued nothing; a pod that chooses its injection templates, brings its
   own proxy without the SPIRE socket, or runs Istio's agent under another container name, is
   refused at admission; and a certificate signed with istiod's CA key for an enrolled SPIFFE ID is
-  refused by a meshed peer, which accepts that workload's SPIRE SVID.
+  refused by a meshed peer, which accepts that workload's SPIRE SVID; with that SVID the peer's
+  proxy completes a TLS 1.3 handshake and refuses one capped at TLS 1.2 (the mesh mTLS minimum of
+  ADR 005).
 - **`unregistered-workload-cut-off`**: without an entry the proxy has no certificate, the
   application never starts, and the peer refuses the pod under STRICT.
 - **`traffic-through-the-proxies`**: the peer sees the caller's SPIFFE ID and both proxies count
