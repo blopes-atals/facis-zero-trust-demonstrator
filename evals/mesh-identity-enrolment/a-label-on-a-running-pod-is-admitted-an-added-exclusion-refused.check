@@ -30,4 +30,4 @@ echo "label update: exit $rc $out"
 [ $rc -eq 0 ] || { echo "FAIL: the label update on the running pod was refused"; exit 1; }
 out=$(kubectl --context "$CTX" -n "$S" annotate pod probe traffic.sidecar.istio.io/excludeInboundPorts=8080 2>&1); rc=$?
 echo "--- exclusion update"
-expect_refused "capture"
+expect_refused "capture rule"

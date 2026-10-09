@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# scenario: mesh-identity-enrolment / A refused annotation added through the status subresource is refused
+# level: L2
+# requirement: Status updates and removals are checked
+# Both updates are server dry-runs against a real running injected pod (deleted on exit).
+. "$EVAL_ROOT/evals/mesh-identity-enrolment/_capture.sh"
+kind_available || { echo "UNVERIFIABLE: the API server's answer needs a kind cluster with the zone installed (EVAL_KIND=1, EVAL_KIND_CONTEXT)"; exit 77; }
+cluster_setup
+running_pod eval-status-sub
+bad=0
+echo "--- pods/status update adding proxy.istio.io/config"
+out=$(kubectl --context "$CTX" -n "$NS" patch pod "$RP" --subresource=status --type=merge \
+  -p '{"metadata":{"annotations":{"proxy.istio.io/config":"{}"}}}' --dry-run=server -o name 2>&1); rc=$?
+refused_naming "capture rule" || { echo "FAIL: annotation added through pods/status"; bad=1; }
+echo "--- AND: pods/status update changing only the conditions"
+out=$(kubectl --context "$CTX" -n "$NS" patch pod "$RP" --subresource=status --type=strategic \
+  -p '{"status":{"conditions":[{"type":"eval.facis.io/Probe","status":"True"}]}}' --dry-run=server -o name 2>&1); rc=$?
+echo "exit $rc $out" | head -n 6 | cut -c1-400
+[ "$rc" -eq 0 ] || { echo "FAIL: a conditions-only status update was refused"; bad=1; }
+[ $bad -eq 0 ] && echo "PASS: annotation via pods/status refused naming the capture rule; conditions-only status update admitted"
+exit $bad

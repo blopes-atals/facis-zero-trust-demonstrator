@@ -8,7 +8,7 @@
 command -v python3 >/dev/null && python3 -c 'import yaml' 2>/dev/null || { echo "UNVERIFIABLE: python3 with PyYAML needed"; exit 77; }
 command -v jq >/dev/null || { echo "UNVERIFIABLE: jq needed by the installer"; exit 77; }
 R="$EVAL_TMP/repo"; mkdir -p "$R"
-cp -r "$EVAL_ROOT/scripts" "$EVAL_ROOT/deployment" "$R/"
+cp -rL "$EVAL_ROOT/scripts" "$EVAL_ROOT/deployment" "$R/"  # -L: never write through a symlinked root
 mkdir -p "$EVAL_TMP/cache"; [ -d "$HOME/.cache/ztd-install-zone" ] && cp -r "$HOME/.cache/ztd-install-zone/." "$EVAL_TMP/cache/"
 mkdir -p "$EVAL_TMP/bin"
 cat >"$EVAL_TMP/bin/helm" <<SH

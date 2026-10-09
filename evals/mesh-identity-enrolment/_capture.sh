@@ -98,3 +98,66 @@ dry_run_file() {
 proxy_image() {
   python3 -c 'import sys,yaml; print((yaml.safe_load(open(sys.argv[1])).get("proxySocketPolicy") or {}).get("proxyImage",""))' "$CHART/values.yaml"
 }
+
+# injected_reference <out.json>: a server dry-run of an ordinary pod in $NS, made resubmittable: it keeps
+# the injector's containers, volumes and annotations (sidecar.istio.io/status included, so the injector
+# leaves it alone when it comes back) and drops server-set metadata and the service-account volume.
+injected_reference() {
+  dry_run eval-injected-reference
+  [ "$rc" -eq 0 ] || { echo "$out" | head; echo "FAIL: an ordinary pod was refused in $NS; no injected reference"; exit 1; }
+  printf '%s' "$out" | python3 -c '
+import json, sys
+p = json.load(sys.stdin)
+m = p["metadata"]
+for k in ("uid", "resourceVersion", "creationTimestamp", "managedFields", "generateName", "namespace"): m.pop(k, None)
+p.pop("status", None)
+s = p["spec"]; s.pop("nodeName", None)
+sa = {v["name"] for v in s.get("volumes") or [] if v["name"].startswith("kube-api-access-")}
+s["volumes"] = [v for v in s.get("volumes") or [] if v["name"] not in sa]
+for c in (s.get("initContainers") or []) + s["containers"]:
+    c["volumeMounts"] = [x for x in c.get("volumeMounts") or [] if x["name"] not in sa]
+if "sidecar.istio.io/status" not in (m.get("annotations") or {}): sys.exit("UNVERIFIABLE: the reference pod was not injected")
+json.dump(p, open(sys.argv[1], "w"))
+' "$1" || exit 77
+}
+
+# mutate <in.json> <out.json> <name> <python on dict p, proxy = its istio-proxy container>
+mutate() {
+  python3 - "$@" <<'PY'
+import json, sys
+src, dst, name, expr = sys.argv[1:5]
+p = json.load(open(src)); p["metadata"]["name"] = name
+proxy = next(c for c in (p["spec"].get("initContainers") or []) + p["spec"]["containers"] if c["name"] == "istio-proxy")
+vols = {v["name"]: v for v in p["spec"].get("volumes") or []}
+exec(expr)
+json.dump(p, open(dst, "w"))
+PY
+}
+
+# refused_naming <regex>: like expect_refused but returns 0/1 instead of exiting.
+refused_naming() {
+  echo "exit $rc"; echo "$out" | head -n 6 | cut -c1-400
+  [ "$rc" -ne 0 ] || { echo "-> admitted"; return 1; }
+  local p named=
+  for p in $POLICIES; do grep -q "ValidatingAdmissionPolicy '$p'" <<<"$out" && named=$p; done
+  [ -n "$named" ] || { echo "-> refusal names no zone-policy admission policy"; return 1; }
+  if [ -n "${1:-}" ]; then grep -qiE "$1" <<<"$out" || { echo "-> names $named but not /$1/"; return 1; }; fi
+  echo "-> refused naming ValidatingAdmissionPolicy '$named'"; return 0
+}
+
+# running_pod <name>: a real, injected pod in $NS (labelled for a SPIRE identity, so its proxy starts) that is Running (deleted on exit). Exits 77 if it never runs.
+running_pod() {
+  RP=$1
+  trap 'kubectl --context "$CTX" -n "$NS" delete pod "$RP" --wait=false >/dev/null 2>&1' EXIT
+  kubectl --context "$CTX" -n "$NS" delete pod "$RP" --ignore-not-found --wait=true >/dev/null 2>&1
+  kubectl --context "$CTX" -n "$NS" run "$RP" --image="$IMG" --restart=Never --labels=spiffe.io/spire-managed-identity=true -- pause >/dev/null 2>"$EVAL_TMP/run.err" \
+    || { cat "$EVAL_TMP/run.err"; echo "UNVERIFIABLE: cannot create a running pod in $NS"; exit 77; }
+  local ph=
+  for _ in $(seq 180); do
+    ph=$(kubectl --context "$CTX" -n "$NS" get pod "$RP" -o jsonpath='{.status.phase}' 2>/dev/null); [ "$ph" = Running ] && break; sleep 1
+  done
+  [ "$ph" = Running ] || { kubectl --context "$CTX" -n "$NS" describe pod "$RP" | tail -15; echo "UNVERIFIABLE: pod $NS/$RP did not reach Running (phase $ph)"; exit 77; }
+  kubectl --context "$CTX" -n "$NS" get pod "$RP" -o jsonpath='{.metadata.annotations.sidecar\.istio\.io/status}' | grep -q . \
+    || { echo "UNVERIFIABLE: pod $NS/$RP is not injected"; exit 77; }
+  echo "running injected pod $NS/$RP"
+}

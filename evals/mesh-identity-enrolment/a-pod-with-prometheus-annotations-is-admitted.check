@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# scenario: mesh-identity-enrolment / A pod with Prometheus annotations is admitted
+# level: L2
+# requirement: Every proxy the injector writes is admitted
+. "$EVAL_ROOT/evals/mesh-identity-enrolment/_capture.sh"
+kind_available || { echo "UNVERIFIABLE: the API server's answer needs a kind cluster with the zone installed (EVAL_KIND=1, EVAL_KIND_CONTEXT)"; exit 77; }
+cluster_setup
+dry_run eval-prometheus --annotations=prometheus.io/scrape=true --annotations=prometheus.io/port=9090
+[ "$rc" -eq 0 ] || { echo "$out" | head -n 10 | cut -c1-400; echo "FAIL: the pod with Prometheus annotations was refused (exit $rc)"; exit 1; }
+printf '%s' "$out" | python3 -c '
+import json, sys
+p = json.load(sys.stdin)
+proxy = next((c for c in (p["spec"].get("initContainers") or []) + p["spec"]["containers"] if c["name"] == "istio-proxy"), None)
+if not proxy: sys.exit("FAIL: admitted but not injected")
+env = {e["name"]: e.get("value") for e in proxy.get("env") or []}
+v = env.get("ISTIO_PROMETHEUS_ANNOTATIONS")
+print("ISTIO_PROMETHEUS_ANNOTATIONS =", v)
+if v is None: sys.exit("FAIL: the injected proxy carries no ISTIO_PROMETHEUS_ANNOTATIONS")
+print("PASS: admitted, the injected proxy carries ISTIO_PROMETHEUS_ANNOTATIONS")
+'
