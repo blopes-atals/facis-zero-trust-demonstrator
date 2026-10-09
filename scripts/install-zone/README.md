@@ -129,6 +129,13 @@ docker run --rm -v "$PWD:/repo" -w /repo -v "$(command -v helm):/usr/local/bin/h
   sh -c 'apk add --no-cache python3 py3-yaml curl >/dev/null && bash --version | head -1 && bash scripts/install-zone/install.sh render'
 ```
 
+Last run (2026-10-09, `bash:3.2` container, GNU bash 3.2.57(1)-release, repository mounted
+read-only): exit 0, all seven releases rendered (`ztd` 38 objects, `spire-crds` 3, `spire` 36,
+`istio-base` 17, `istiod` 17, `istio-cni` 7, `zone-policy` 14), no `unbound variable`;
+`render spire-crds` rendered the one release, and a zone copy with `mesh.revision: canary` exited 1
+naming the key with nothing rendered. The script before the fix stopped there with
+`want[@]: unbound variable` and still exited 0 having rendered nothing.
+
 On a kind host, raise `fs.inotify.max_user_instances` to 512 first
 (`sudo sysctl -w fs.inotify.max_user_instances=512`): every kind node shares the host kernel, and
 the Istio CNI agent fails to start below that limit.
