@@ -3,7 +3,8 @@
 # (scripts/dev/kind-cilium-up.sh). Installs the zone from an empty cluster with
 # scripts/install-zone/install.sh, twice, then proves with stand-in pods: an SVID over the CSI socket,
 # the proxy's certificate and root bundle issued by SPIRE, no proxy without the SPIRE socket and a
-# certificate from istiod's CA refused by a meshed peer, the TLS 1.3 minimum of mesh mTLS, an
+# certificate from istiod's CA refused by a meshed peer, the proxy's traffic capture held at the
+# injector's defaults (the capture rule), the TLS 1.3 minimum of mesh mTLS, an
 # unregistered workload cut off, traffic through the proxies, the default deny intact with the
 # chained CNI and both control planes inside it, the native-sidecar version rule, the identity-band checks, and a teardown that leaves nothing
 # behind. Writes docs/evidences/mesh-identity/evidence.md and environment.json; the exit status is
@@ -64,6 +65,9 @@ SPIRE_NS=spire-system; ISTIO_NS=istio-system
 images_spire=""; images_istio=""; images_proxy=""
 RELEASES="ztd:ztd-system spire-crds:$SPIRE_NS spire:$SPIRE_NS istio-base:$ISTIO_NS istiod:$ISTIO_NS istio-cni:$ISTIO_NS zone-policy:$ISTIO_NS"
 SA_ID="spiffe://$TD/ns/$DATA/sa/stand-in"
+# The admission policy of zone-policy, and the proxy status port its capture rule lets the injector exclude.
+POLICY=proxy-takes-spire-socket
+STATUS_PORT=$(yaml_get "$REPO/deployment/helm/zone-policy/values.yaml" proxySocketPolicy statusPort)
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
@@ -212,7 +216,39 @@ mesh_td=$(k -n "$ISTIO_NS" get cm istio -o jsonpath='{.data.mesh}' | awk '/^trus
 # --------------------------------------------------------------------------------------------
 section "5. Stand-in pods"
 say 'From `scripts/verify-mesh-identity/fixtures/stand-ins.yaml`: in the data plane a meshed peer, a labelled caller with a Workload API client on the CSI socket, an unlabelled meshed pod, an unlabelled pod without proxy with a Workload API client, the matrix pair `pdp-adapter` and the cross-plane caller `data-plain`; in the management plane `tsa-policy-engine`, `openbao` and `mgmt-caller`; in both a proxy-less `probe` for raw TCP probes. All in the service account `stand-in` unless noted.' ''
-sed -e "s/__DATA__/$DATA/g" -e "s/__MGMT__/$MGMT/g" fixtures/stand-ins.yaml | k apply -f - >/dev/null
+sed -e "s/__DATA__/$DATA/g" -e "s/__MGMT__/$MGMT/g" fixtures/stand-ins.yaml >"$work/stand-ins.yaml"
+# The stand-ins that opt out of injection go apart: the capture rule refuses them (below).
+python3 - "$work/stand-ins.yaml" "$work/stand-ins-meshed.yaml" "$work/stand-ins-proxyless.yaml" <<'PY'
+import sys, yaml
+docs = [d for d in yaml.safe_load_all(open(sys.argv[1])) if d]
+off = lambda d: (d["metadata"].get("annotations") or {}).get("sidecar.istio.io/inject") == "false"
+yaml.safe_dump_all([d for d in docs if not off(d)], open(sys.argv[2], "w"), sort_keys=False)
+yaml.safe_dump_all([d for d in docs if off(d)], open(sys.argv[3], "w"), sort_keys=False)
+PY
+k apply -f "$work/stand-ins-meshed.yaml" >/dev/null
+proxyless=$(python3 -c 'import sys,yaml
+print(", ".join("`" + d["metadata"]["name"] + "` in " + d["metadata"]["namespace"] for d in yaml.safe_load_all(open(sys.argv[1])) if d))' "$work/stand-ins-proxyless.yaml")
+say '' "The three proxy-less stand-ins ($proxyless) opt out of injection, which the capture rule of \`$POLICY\` refuses in a plane namespace (section 8). They stand for the program without a proxy that the later sections show the zone resisting anyway, so the proof creates them with that one validation lifted from the policy for the time of their creation, puts it back unchanged, and checks that it refuses them again; the template and socket rules stay in force throughout." ''
+# proxyless_refused: status 0 when the API server refuses the three as written (server dry run)
+proxyless_refused() { k apply --dry-run=server -f "$work/stand-ins-proxyless.yaml" >"$work/proxyless.out" 2>&1; [ $? -ne 0 ]; }
+proxyless_refused
+n=$(grep -c "ValidatingAdmissionPolicy '$POLICY'.*denied request: capture rule" "$work/proxyless.out")
+[ "$n" = 3 ]; check $? "as written, each of the three proxy-less stand-ins is refused by the capture rule of $POLICY" "$n of 3 refused: $(grep -m1 -o 'denied request: .*' "$work/proxyless.out" | cut -c1-160)"
+k get validatingadmissionpolicy "$POLICY" -o json >"$work/policy.json"
+idx=$(jq '[.spec.validations[].expression | contains("variables.captureDefaults")] | index(true)' "$work/policy.json")
+jq -c --argjson i "${idx:-null}" '[{op: "test", path: "/spec/validations/\($i)", value: .spec.validations[$i]}, {op: "remove", path: "/spec/validations/\($i)"}]' "$work/policy.json" >"$work/lift.json" 2>/dev/null
+jq -c --argjson i "${idx:-null}" '[{op: "add", path: "/spec/validations/\($i)", value: .spec.validations[$i]}]' "$work/policy.json" >"$work/restore.json" 2>/dev/null
+rc_create=1
+if [ "${idx:-null}" != null ] && k patch validatingadmissionpolicy "$POLICY" --type=json --patch-file "$work/lift.json" >/dev/null 2>&1; then
+  for _ in $(seq 30); do proxyless_refused || break; sleep 1; done
+  k apply -f "$work/stand-ins-proxyless.yaml" >/dev/null; rc_create=$?
+  k patch validatingadmissionpolicy "$POLICY" --type=json --patch-file "$work/restore.json" >/dev/null
+  for _ in $(seq 30); do proxyless_refused && break; sleep 1; done
+fi
+check $rc_create "with the capture validation (index ${idx:-none}) lifted, the three proxy-less stand-ins are created"
+diff <(jq -S .spec "$work/policy.json") <(k get validatingadmissionpolicy "$POLICY" -o json | jq -S .spec) >/dev/null && proxyless_refused \
+  && [ "$(grep -c "denied request: capture rule" "$work/proxyless.out")" = 3 ]
+check $? "the policy is put back unchanged (its spec equals the one read before the lift) and refuses the three again" "$(k get validatingadmissionpolicy "$POLICY" -o json | jq '.spec.validations | length') validations in force"
 k -n "$DATA" wait --for=condition=Ready pod/peer pod/caller pod/unregistered-svid pod/probe pod/pdp-adapter pod/data-plain --timeout=240s >/dev/null 2>&1; check $? "the labelled data-plane stand-ins are Ready"
 k -n "$MGMT" wait --for=condition=Ready pod/tsa-policy-engine pod/openbao pod/mgmt-caller pod/probe --timeout=240s >/dev/null 2>&1; check $? "the management-plane stand-ins are Ready"
 sleep 10
@@ -291,17 +327,42 @@ out=$(k -n "$DATA" run optout-templates --image=registry.k8s.io/e2e-test-images/
 check $? "a pod that chooses its injection templates (inject.istio.io/templates: sidecar, which drops the SPIRE socket) is refused at admission" "$(grep -o 'denied request: .*' <<<"$out" | cut -c1-220)"
 out=$(printf '%s\n' 'apiVersion: v1' 'kind: Pod' 'metadata: { name: optout-proxy, annotations: { sidecar.istio.io/inject: "false" } }' \
   'spec: { containers: [ { name: istio-proxy, image: "registry.k8s.io/e2e-test-images/agnhost:2.53" } ] }' | k -n "$DATA" create --dry-run=server -f - 2>&1); rc=$?
-[ $rc -ne 0 ] && grep -q "proxy-takes-spire-socket" <<<"$out"
+# The opt-out annotation also breaks the capture rule; the socket rule is evaluated first and named.
+[ $rc -ne 0 ] && grep -q "proxy-takes-spire-socket" <<<"$out" && grep -q 'must take its certificate from SPIRE' <<<"$out"
 check $? "a pod that brings its own istio-proxy without the csi.spiffe.io socket is refused at admission" "$(grep -o 'denied request: .*' <<<"$out" | cut -c1-220)"
 out=$(printf '%s\n' 'apiVersion: v1' 'kind: Pod' 'metadata: { name: optout-agent, annotations: { sidecar.istio.io/inject: "false" } }' \
   "spec: { containers: [ { name: mesh, image: \"$images_proxy\", args: [proxy, sidecar], volumeMounts: [ { name: istio-token, mountPath: /var/run/secrets/tokens } ] } ]," \
   '  volumes: [ { name: istio-token, projected: { sources: [ { serviceAccountToken: { audience: istio-ca, path: istio-token } } ] } } ] }' \
   | k -n "$DATA" create --dry-run=server -f - 2>&1); rc=$?
-[ $rc -ne 0 ] && grep -q "proxy-takes-spire-socket" <<<"$out"
+[ $rc -ne 0 ] && grep -q "proxy-takes-spire-socket" <<<"$out" && grep -q 'must take its certificate from SPIRE' <<<"$out"
 check $? "a pod that runs Istio's agent itself (proxyv2, proxy sidecar) under another container name, with its own istio-token volume and no injection, is refused at admission" "$(grep -o 'denied request: .*' <<<"$out" | cut -c1-220)"
+say '' "The same policy holds the capture rule (capture-at-injector-defaults). The Istio CNI plugin builds a pod's redirect rules from its capture annotations, so a port excluded from the capture reaches the application outside its proxy, where STRICT never sees it, and an unregistered pod of the namespace could reach it in plaintext. The injector writes those annotations onto every pod it injects, so the policy compares their values with the injector's defaults (interception mode \`REDIRECT\`, all inbound ports, the status port \`$STATUS_PORT\` as the only excluded inbound port, all outbound ranges) and refuses the optional capture annotations, the status-port and proxy-config overrides and the injection opt-out. Server-side dry runs in \`$DATA\`:" ''
+# capture_refused <pod> <kubectl run flags...>: status 0 when the API server refuses the pod naming
+# the policy and its capture rule; the refusal is left in $out
+capture_refused() {
+  local name=$1; shift
+  out=$(k -n "$DATA" run "$name" --image=registry.k8s.io/e2e-test-images/agnhost:2.53 --restart=Never "$@" --dry-run=server -o name 2>&1)
+  [ $? -ne 0 ] && grep -q "ValidatingAdmissionPolicy '$POLICY'" <<<"$out" && grep -q 'denied request: capture rule' <<<"$out"
+}
+refusal() { head -1 <<<"$out" | sed 's/^Error from server (Forbidden): //' | cut -c1-200; }
+capture_refused capture-excluded-port --annotations=traffic.sidecar.istio.io/excludeInboundPorts=8080
+check $? "capture-at-injector-defaults: a pod that excludes an application port from the capture (traffic.sidecar.istio.io/excludeInboundPorts: \"8080\") is refused at admission" "$(refusal)"
+capture_refused capture-mode-none --annotations=sidecar.istio.io/interceptionMode=NONE
+check $? "capture-at-injector-defaults: a pod that switches the capture off (sidecar.istio.io/interceptionMode: NONE) is refused at admission" "$(refusal)"
+capture_refused capture-status-port --annotations=status.sidecar.istio.io/port=8080
+check $? "capture-at-injector-defaults: a pod that moves the status port onto an application port (status.sidecar.istio.io/port: \"8080\"), naming no excluded port itself, is refused at admission" "$(refusal)"
+capture_refused capture-proxy-config "--annotations=proxy.istio.io/config=discoveryAddress: pdp-adapter.$DATA.svc:15012"
+check $? "capture-at-injector-defaults: a pod that overrides its proxy's configuration (proxy.istio.io/config with a discoveryAddress in the plane) is refused at admission" "$(refusal)"
+capture_refused capture-opt-out --labels=sidecar.istio.io/inject=false
+check $? "capture-at-injector-defaults: a pod that opts out of injection (label sidecar.istio.io/inject: \"false\"), and would run without a proxy, is refused at admission" "$(refusal)"
 out=$(k -n "$DATA" run optout-none --image=registry.k8s.io/e2e-test-images/agnhost:2.53 --restart=Never --dry-run=server -o json 2>&1)
 jq -e '.spec.volumes[] | select(.name == "workload-socket" and .csi.driver == "csi.spiffe.io")' <<<"$out" >/dev/null
 check $? "an ordinary pod in the same namespace is admitted, its proxy on the SPIRE socket"
+excluded=$(jq -r '.metadata.annotations["traffic.sidecar.istio.io/excludeInboundPorts"] // "absent"' <<<"$out" 2>/dev/null)
+mode=$(jq -r '.metadata.annotations["sidecar.istio.io/interceptionMode"] // "absent"' <<<"$out" 2>/dev/null)
+[ "$excluded" = "$STATUS_PORT" ] && [ "$mode" = REDIRECT ]
+check $? "capture-at-injector-defaults: the equality rule admits exactly what the injector writes: the admitted pod carries traffic.sidecar.istio.io/excludeInboundPorts \"$STATUS_PORT\" (the status port alone) and sidecar.istio.io/interceptionMode REDIRECT" \
+  "$(jq -c '.metadata.annotations // {} | with_entries(select(.key | test("^(traffic\\.)?sidecar\\.istio\\.io/(interceptionMode|includeInboundPorts|excludeInboundPorts|includeOutboundIPRanges)$")))' <<<"$out" 2>/dev/null)"
 
 say '' "Outside the plane namespaces the policy does not apply, and istiod's injector still injects a pod labelled \`sidecar.istio.io/inject: \"true\"\` with the templates it names. A pod in a scratch namespace without the plane label:" ''
 OUTSIDE=mesh-identity-outside
