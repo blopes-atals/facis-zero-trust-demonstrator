@@ -1,7 +1,0 @@
-# Created by ops-eval — review me.
-# Cluster checks run only with EVAL_KIND=1 and EVAL_KIND_CONTEXT=<disposable kind context>; setup then
-# installs the zone there with scripts/install-zone/install.sh when it is not installed, and teardown
-# uninstalls it again only if setup installed it.
-timeout: 600
-setup: ./evals/setup.sh
-teardown: ./evals/teardown.sh
