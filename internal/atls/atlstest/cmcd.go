@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"sync"
 	"testing"
 
 	"google.golang.org/grpc"
@@ -34,7 +35,7 @@ func (z *Zone) StartCmcd(t testing.TB) string {
 			t.Fatalf("atlstest: cmcd serializer: %v", err)
 		}
 		s := grpc.NewServer()
-		grpcapi.RegisterCMCServiceServer(s, &cmcd{c: z.c, ser: ser})
+		grpcapi.RegisterCMCServiceServer(s, &cmcd{c: z.c, genMu: &z.genMu, ser: ser})
 		go func() { _ = s.Serve(ln) }()
 		z.tb.Cleanup(s.Stop)
 		z.cmcdAddr = ln.Addr().String()
@@ -57,8 +58,10 @@ func UnreachableCmcd(t testing.TB) string {
 
 type cmcd struct {
 	grpcapi.UnimplementedCMCServiceServer
-	c   *cmc.Cmc
-	ser ar.Serializer
+	c *cmc.Cmc
+	// genMu is the zone's report-generation lock (Zone.genMu).
+	genMu *sync.Mutex
+	ser   ar.Serializer
 }
 
 func (s *cmcd) Attest(_ context.Context, req *grpcapi.AttestationRequest) (*grpcapi.AttestationResponse, error) {
@@ -68,9 +71,9 @@ func (s *cmcd) Attest(_ context.Context, req *grpcapi.AttestationRequest) (*grpc
 	if err := grpcapi.CheckVersion(req.Version); err != nil {
 		return nil, fmt.Errorf("version check failed: %w", err)
 	}
-	proverMu.Lock()
+	s.genMu.Lock()
 	report, err := prover.Generate(req.Nonce, req.Cached, s.c.GetMetadata(), s.c.Drivers, s.ser, s.c.HashAlg)
-	proverMu.Unlock()
+	s.genMu.Unlock()
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate attestation report: %w", err)
 	}

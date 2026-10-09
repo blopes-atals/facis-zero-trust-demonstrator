@@ -16,14 +16,19 @@ import (
 
 	ar "github.com/Fraunhofer-AISEC/cmc/attestationreport"
 	"github.com/Fraunhofer-AISEC/cmc/cmc"
+	"github.com/Fraunhofer-AISEC/cmc/drivers"
+	"github.com/Fraunhofer-AISEC/cmc/drivers/swdriver"
 	"github.com/Fraunhofer-AISEC/cmc/prover"
 
 	"github.com/eclipse-xfsc/facis-zero-trust-demonstrator/internal/atls"
 	"github.com/eclipse-xfsc/facis-zero-trust-demonstrator/internal/atls/internal/testhook"
 )
 
-// proverMu serialises report generation. CMC's drivers are process-global singletons and the sw
-// driver writes its state on every report, so concurrent generation is a data race inside CMC.
+// proverMu serialises the creation of zones: cmc.NewCmc and the Init of a zone's private sw
+// driver both provision the sw attestation key into the storage the zones of one PKI share.
+// Report generation is serialised per zone by Zone.genMu instead: every zone attests with its
+// own sw driver, so the stand-in cmcd is isolated from CMC's process-global driver, which only
+// the in-process backend still shares (finding N4).
 var proverMu sync.Mutex
 
 // Zone is one zone's attester material: its TLS certificate and identity, signed metadata, and
@@ -39,6 +44,9 @@ type Zone struct {
 
 	lib *cmc.Config
 	c   *cmc.Cmc
+	// genMu serialises report generation with the zone's private sw driver, which writes its
+	// state on every report; one zone's stand-in serves concurrent handshakes.
+	genMu sync.Mutex
 	// tb is the test that created the zone; the stand-in cmcd lives as long as it does.
 	tb testing.TB
 
@@ -89,12 +97,41 @@ func NewZone(t testing.TB, pki *PKI, name string, opts ...ZoneOption) *Zone {
 	// Create the CMC once: provisions the sw attestation key on disk and serves the stand-in.
 	proverMu.Lock()
 	c, err := cmc.NewCmc(z.lib)
+	if err == nil {
+		err = privateDriver(c)
+	}
 	proverMu.Unlock()
 	if err != nil {
 		t.Fatalf("atlstest: CMC for zone %s: %v", name, err)
 	}
 	z.c = c
 	return z
+}
+
+// privateDriver replaces the drivers of c with a sw driver of its own. cmc.NewCmc hands out
+// CMC's process-global sw driver, which the in-process backend re-initialises on every call from
+// the calling zone's storage; a report generated with it while another fixture's in-process
+// handshake runs can publish one key in its collateral and sign its evidence with another
+// (finding N4). The private driver is initialised with the driver configuration NewCmc derives
+// from the zone's cmc.Config (CMC v0.9.15, cmc/cmc.go); the sw driver uses no endorser.
+func privateDriver(c *cmc.Cmc) error {
+	sw := &swdriver.Sw{}
+	err := sw.Init(&drivers.DriverConfig{
+		HashAlg:         c.HashAlg,
+		KeyAlg:          c.TpmKeyAlg,
+		ExcludePcrs:     c.ExcludePcrs,
+		MeasurementLogs: c.MeasurementLogs,
+		CtrLog:          c.CtrLog,
+		CtrDriver:       c.CtrDriver,
+		Ctr:             c.Ctr,
+		Vmpl:            c.Vmpl,
+		StoragePath:     c.Storage,
+	})
+	if err != nil {
+		return err
+	}
+	c.Drivers = []drivers.Driver{sw}
+	return nil
 }
 
 // swConfig is the CMC configuration of a zone attesting with the sw driver (mock evidence, no
@@ -204,8 +241,8 @@ func (z *Zone) Report(t testing.TB, nonce []byte) []byte {
 	if err != nil {
 		t.Fatalf("atlstest: serializer: %v", err)
 	}
-	proverMu.Lock()
-	defer proverMu.Unlock()
+	z.genMu.Lock()
+	defer z.genMu.Unlock()
 	report, err := prover.Generate(nonce, nil, z.c.GetMetadata(), z.c.Drivers, ser, z.c.HashAlg)
 	if err != nil {
 		t.Fatalf("atlstest: report: %v", err)
