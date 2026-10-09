@@ -47,4 +47,9 @@ agent image as the Workload API client; nothing about them is consumed by a zone
 Three stand-ins have no proxy (`unregistered-svid` and the two `probe` pods): they opt out of
 injection, which the capture rule refuses in a plane namespace. The proof shows them refused as
 written, creates them with only the capture validation lifted from `proxy-takes-spire-socket`, puts
-the validation back unchanged and shows them refused again, all in section 5 of the evidence.
+the validation back unchanged and shows them refused again, all in section 5 of the evidence. The
+refusals are asked with a server-side dry-run create of a renamed copy of the three, so each is a
+real admission request even once the stand-ins exist. If the run exits while the validation is
+lifted (an interrupt included), its exit trap puts the validation back. The status port the
+admitted-pod check expects is read from the installed `zone-policy` release
+(`helm get values --all`), not from the chart's defaults.

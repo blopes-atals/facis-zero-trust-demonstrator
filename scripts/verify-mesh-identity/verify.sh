@@ -65,12 +65,24 @@ SPIRE_NS=spire-system; ISTIO_NS=istio-system
 images_spire=""; images_istio=""; images_proxy=""
 RELEASES="ztd:ztd-system spire-crds:$SPIRE_NS spire:$SPIRE_NS istio-base:$ISTIO_NS istiod:$ISTIO_NS istio-cni:$ISTIO_NS zone-policy:$ISTIO_NS"
 SA_ID="spiffe://$TD/ns/$DATA/sa/stand-in"
-# The admission policy of zone-policy, and the proxy status port its capture rule lets the injector exclude.
+# The admission policy of zone-policy. The proxy status port its capture rule lets the injector
+# exclude is read from the installed release in section 8, not from the chart's defaults.
 POLICY=proxy-takes-spire-socket
-STATUS_PORT=$(yaml_get "$REPO/deployment/helm/zone-policy/values.yaml" proxySocketPolicy statusPort)
+STATUS_PORT=""
 
 work=$(mktemp -d)
-trap 'rm -rf "$work"' EXIT
+# restore_capture: puts the capture validation back into the live policy when it is missing from it
+# and section 5 saved it (restore.json); a no-op otherwise, so it is safe to call more than once.
+restore_capture() {
+  [ -s "$work/restore.json" ] || return 0
+  kubectl --context "$CONTEXT" get validatingadmissionpolicy "$POLICY" -o json 2>/dev/null \
+    | jq -e '[.spec.validations[].expression | contains("variables.captureDefaults")] | index(true) == null' >/dev/null || return 0
+  kubectl --context "$CONTEXT" patch validatingadmissionpolicy "$POLICY" --type=json --patch-file "$work/restore.json" >/dev/null
+}
+# On any exit, an interrupt included, the capture validation lifted in section 5 is put back first.
+trap 'restore_capture; rm -rf "$work"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 OUT=$work/evidence.md
 failures=0
 # The commit and the dirty flag are read before anything is written into the tree.
@@ -218,19 +230,32 @@ section "5. Stand-in pods"
 say 'From `scripts/verify-mesh-identity/fixtures/stand-ins.yaml`: in the data plane a meshed peer, a labelled caller with a Workload API client on the CSI socket, an unlabelled meshed pod, an unlabelled pod without proxy with a Workload API client, the matrix pair `pdp-adapter` and the cross-plane caller `data-plain`; in the management plane `tsa-policy-engine`, `openbao` and `mgmt-caller`; in both a proxy-less `probe` for raw TCP probes. All in the service account `stand-in` unless noted.' ''
 sed -e "s/__DATA__/$DATA/g" -e "s/__MGMT__/$MGMT/g" fixtures/stand-ins.yaml >"$work/stand-ins.yaml"
 # The stand-ins that opt out of injection go apart: the capture rule refuses them (below).
-python3 - "$work/stand-ins.yaml" "$work/stand-ins-meshed.yaml" "$work/stand-ins-proxyless.yaml" <<'PY'
-import sys, yaml
+# Their refusal is asked with a server dry-run create of a copy under other names (suffix
+# -capture-check): a create of a name that exists would still reach admission, but kubectl apply of
+# an unchanged object sends no request at all, and an update of a pod's spec fails on pod
+# immutability before the policy is asked.
+python3 - "$work/stand-ins.yaml" "$work/stand-ins-meshed.yaml" "$work/stand-ins-proxyless.yaml" "$work/stand-ins-proxyless-check.yaml" <<'PY'
+import copy, sys, yaml
 docs = [d for d in yaml.safe_load_all(open(sys.argv[1])) if d]
 off = lambda d: (d["metadata"].get("annotations") or {}).get("sidecar.istio.io/inject") == "false"
 yaml.safe_dump_all([d for d in docs if not off(d)], open(sys.argv[2], "w"), sort_keys=False)
 yaml.safe_dump_all([d for d in docs if off(d)], open(sys.argv[3], "w"), sort_keys=False)
+check = [copy.deepcopy(d) for d in docs if off(d)]
+for d in check: d["metadata"]["name"] += "-capture-check"
+yaml.safe_dump_all(check, open(sys.argv[4], "w"), sort_keys=False)
 PY
 k apply -f "$work/stand-ins-meshed.yaml" >/dev/null
 proxyless=$(python3 -c 'import sys,yaml
 print(", ".join("`" + d["metadata"]["name"] + "` in " + d["metadata"]["namespace"] for d in yaml.safe_load_all(open(sys.argv[1])) if d))' "$work/stand-ins-proxyless.yaml")
 say '' "The three proxy-less stand-ins ($proxyless) opt out of injection, which the capture rule of \`$POLICY\` refuses in a plane namespace (section 8). They stand for the program without a proxy that the later sections show the zone resisting anyway, so the proof creates them with that one validation lifted from the policy for the time of their creation, puts it back unchanged, and checks that it refuses them again; the template and socket rules stay in force throughout." ''
-# proxyless_refused: status 0 when the API server refuses the three as written (server dry run)
-proxyless_refused() { k apply --dry-run=server -f "$work/stand-ins-proxyless.yaml" >"$work/proxyless.out" 2>&1; [ $? -ne 0 ]; }
+# proxyless_refused: status 0 when the API server refuses every one of the three as written: a server
+# dry-run create of the renamed copy, one admission request per pod, which persists nothing
+proxyless_refused() {
+  k create --dry-run=server -f "$work/stand-ins-proxyless-check.yaml" >"$work/proxyless.out" 2>&1
+  [ "$(grep -c "ValidatingAdmissionPolicy '$POLICY'.*denied request: capture rule" "$work/proxyless.out")" = 3 ]
+}
+# proxyless_admitted: status 0 when the API server admits all three (the dry run returns 0)
+proxyless_admitted() { k create --dry-run=server -f "$work/stand-ins-proxyless-check.yaml" >"$work/proxyless.out" 2>&1; }
 proxyless_refused
 n=$(grep -c "ValidatingAdmissionPolicy '$POLICY'.*denied request: capture rule" "$work/proxyless.out")
 [ "$n" = 3 ]; check $? "as written, each of the three proxy-less stand-ins is refused by the capture rule of $POLICY" "$n of 3 refused: $(grep -m1 -o 'denied request: .*' "$work/proxyless.out" | cut -c1-160)"
@@ -240,14 +265,13 @@ jq -c --argjson i "${idx:-null}" '[{op: "test", path: "/spec/validations/\($i)",
 jq -c --argjson i "${idx:-null}" '[{op: "add", path: "/spec/validations/\($i)", value: .spec.validations[$i]}]' "$work/policy.json" >"$work/restore.json" 2>/dev/null
 rc_create=1
 if [ "${idx:-null}" != null ] && k patch validatingadmissionpolicy "$POLICY" --type=json --patch-file "$work/lift.json" >/dev/null 2>&1; then
-  for _ in $(seq 30); do proxyless_refused || break; sleep 1; done
+  for _ in $(seq 30); do proxyless_admitted && break; sleep 1; done
   k apply -f "$work/stand-ins-proxyless.yaml" >/dev/null; rc_create=$?
-  k patch validatingadmissionpolicy "$POLICY" --type=json --patch-file "$work/restore.json" >/dev/null
+  restore_capture
   for _ in $(seq 30); do proxyless_refused && break; sleep 1; done
 fi
 check $rc_create "with the capture validation (index ${idx:-none}) lifted, the three proxy-less stand-ins are created"
-diff <(jq -S .spec "$work/policy.json") <(k get validatingadmissionpolicy "$POLICY" -o json | jq -S .spec) >/dev/null && proxyless_refused \
-  && [ "$(grep -c "denied request: capture rule" "$work/proxyless.out")" = 3 ]
+diff <(jq -S .spec "$work/policy.json") <(k get validatingadmissionpolicy "$POLICY" -o json | jq -S .spec) >/dev/null && proxyless_refused
 check $? "the policy is put back unchanged (its spec equals the one read before the lift) and refuses the three again" "$(k get validatingadmissionpolicy "$POLICY" -o json | jq '.spec.validations | length') validations in force"
 k -n "$DATA" wait --for=condition=Ready pod/peer pod/caller pod/unregistered-svid pod/probe pod/pdp-adapter pod/data-plain --timeout=240s >/dev/null 2>&1; check $? "the labelled data-plane stand-ins are Ready"
 k -n "$MGMT" wait --for=condition=Ready pod/tsa-policy-engine pod/openbao pod/mgmt-caller pod/probe --timeout=240s >/dev/null 2>&1; check $? "the management-plane stand-ins are Ready"
@@ -336,6 +360,7 @@ out=$(printf '%s\n' 'apiVersion: v1' 'kind: Pod' 'metadata: { name: optout-agent
   | k -n "$DATA" create --dry-run=server -f - 2>&1); rc=$?
 [ $rc -ne 0 ] && grep -q "proxy-takes-spire-socket" <<<"$out" && grep -q 'must take its certificate from SPIRE' <<<"$out"
 check $? "a pod that runs Istio's agent itself (proxyv2, proxy sidecar) under another container name, with its own istio-token volume and no injection, is refused at admission" "$(grep -o 'denied request: .*' <<<"$out" | cut -c1-220)"
+STATUS_PORT=$(h get values zone-policy -n "$ISTIO_NS" --all -o json 2>/dev/null | jq -r '.proxySocketPolicy.statusPort // empty')
 say '' "The same policy holds the capture rule (capture-at-injector-defaults). The Istio CNI plugin builds a pod's redirect rules from its capture annotations, so a port excluded from the capture reaches the application outside its proxy, where STRICT never sees it, and an unregistered pod of the namespace could reach it in plaintext. The injector writes those annotations onto every pod it injects, so the policy compares their values with the injector's defaults (interception mode \`REDIRECT\`, all inbound ports, the status port \`$STATUS_PORT\` as the only excluded inbound port, all outbound ranges) and refuses the optional capture annotations, the status-port and proxy-config overrides and the injection opt-out. Server-side dry runs in \`$DATA\`:" ''
 # capture_refused <pod> <kubectl run flags...>: status 0 when the API server refuses the pod naming
 # the policy and its capture rule; the refusal is left in $out
