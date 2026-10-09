@@ -146,11 +146,20 @@ MPL-2.0 was already part of the module before CMC:
 CMC adds `github.com/veraison/go-cose` (always linked) and `github.com/edgelesssys/ego` (default
 cgo build only).
 
-[ADR-0004](adr/0004-openbao-as-x509-key-value-store.md) takes the stricter reading, a written
-exception for any non-Apache licence, for OpenBao, an MPL-2.0 service the requirements prescribe;
-that notice stands. The linked MPL-2.0 modules above follow the TDR wording instead. If the client
-prefers the ADR-0004 reading for them as well, the same notice route covers them; nothing in the
-code changes either way.
+**Which reading applies is not decided yet.** [ADR-0004](adr/0004-openbao-as-x509-key-value-store.md)
+reads the TDR as requiring a written exception for any non-Apache licence and applies it to
+OpenBao, an MPL-2.0 service the requirements prescribe; that notice stands. The paragraph above
+reads the same documents as requiring notice only for licences outside the approved list. No
+recorded decision settles which of the two readings governs MPL-2.0 code linked into a
+deliverable: the decision is pending with the project owner, alongside the open client decision
+on the licence exception notice that ADR-0004 records (follow-up requirement F-07).
+
+Until it is taken, the interim reading is this page's: the linked MPL-2.0 modules above are
+declared and scanned like any other approved-licence component, and no exception notice is filed
+for them. This page does not overrule ADR-0004, which remains the record for OpenBao. If the
+decision adopts the ADR-0004 reading for linked modules as well, the same notice route covers
+`go-cose` and `ego`, and this paragraph and the ADR are updated with a link to the decision;
+nothing in the code changes either way.
 
 ### Public-domain SQLite
 
