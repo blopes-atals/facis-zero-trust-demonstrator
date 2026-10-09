@@ -33,6 +33,9 @@
 # Istio CNI plugin with ambient off). It refuses, before it renders or installs anything, a zone
 # file whose mesh.mode is anything but sidecar (absent counts as sidecar) or whose mesh.revision is
 # set: the umbrella would label the plane namespaces for an injector this installer never installs.
+# It also refuses, before it renders istiod or zone-policy, a zone-policy whose
+# proxySocketPolicy.proxyImage or statusPort differs from istiod's global.proxy.image or statusPort:
+# the admission policy would refuse every injected plane pod.
 #
 # The umbrella reads the whole zone file. The other releases read their upstream values file under
 # deployment/helm/values/ (zone-policy: its chart defaults) merged with the zone facts they need;
@@ -81,7 +84,7 @@ trap 'rm -rf "$work"' EXIT
 say() { printf '%s\n' "$*"; }
 die() { printf 'install-zone: %s\n' "$*" >&2; exit 1; }
 
-usage() { sed -n '2,/^# set: the umbrella would label/p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,/^# the admission policy would refuse every injected plane pod/p' "$0" | sed 's/^# \{0,1\}//'; }
 
 # zone_file: the zone file must exist before anything reads it.
 zone_file() { [ -f "$ZONE_VALUES" ] || die "zone file not found: $ZONE_VALUES"; }
@@ -210,6 +213,38 @@ yaml.safe_dump(values, open(out, "w"), sort_keys=False)
 PY
 }
 
+# mesh_coupling: the zone-policy admission policy pins the injected proxy's image and status port
+# (proxySocketPolicy.proxyImage, .statusPort); they must equal what the istiod release injects
+# (global.proxy.image, and global.proxy.statusPort, from the pinned Istio chart's defaults when
+# istiod.yaml leaves it unset), or the policy refuses every injected plane pod. Refused here, before
+# anything is rendered or installed, so a mismatch never reaches a cluster; CI runs it with render.
+mesh_coupling() {
+  python3 - "$REPO/deployment/helm/zone-policy/values.yaml" "$VALUES_DIR/istiod.yaml" \
+    "$(chart_path istiod)/values.yaml" <<'PY' || exit 1
+import sys, yaml
+policy_file, istiod_file, chart_file = sys.argv[1:]
+def get(d, *keys):
+    for k in keys:
+        d = d.get(k) if isinstance(d, dict) else None
+    return d
+policy = get(yaml.safe_load(open(policy_file)) or {}, "proxySocketPolicy") or {}
+istiod = yaml.safe_load(open(istiod_file)) or {}
+chart = yaml.safe_load(open(chart_file)) or {}
+chart = chart.get("_internal_defaults_do_not_set", chart)
+pairs = [
+    ("proxyImage", "global.proxy.image", get(istiod, "global", "proxy", "image")),
+    ("statusPort", "global.proxy.statusPort",
+     get(istiod, "global", "proxy", "statusPort") or get(chart, "global", "proxy", "statusPort")),
+]
+bad = [f"zone-policy proxySocketPolicy.{k} is {policy.get(k)!r}, istiod {ik} is {iv!r}"
+       for k, ik, iv in pairs if iv is None or str(policy.get(k)) != str(iv)]
+if bad:
+    sys.exit("install-zone: the zone-policy admission policy would refuse every injected plane pod: "
+             + "; ".join(bad) + " (they must be equal: deployment/helm/zone-policy/values.yaml and "
+             "deployment/helm/values/istiod.yaml)")
+PY
+}
+
 render() {
   local want=("$@") step release ns chart values facts extra path out name names=""
   zone_file
@@ -220,6 +255,10 @@ render() {
   for name in ${want[@]+"${want[@]}"}; do
     [[ "$names " == *" $name "* ]] || die "render: unknown release '$name'; the releases are $(sed 's/^ //; s/ /, /g' <<<"$names")"
   done
+  # The coupling of zone-policy to istiod is checked whenever either of them is rendered.
+  if [ ${#want[@]} -eq 0 ] || [[ " ${want[*]} " == *" istiod "* ]] || [[ " ${want[*]} " == *" zone-policy "* ]]; then
+    mesh_coupling
+  fi
   [ -n "${RENDER_DIR:-}" ] && mkdir -p "$RENDER_DIR"
   for step in "${STEPS[@]}"; do
     IFS='|' read -r release ns chart values facts extra <<<"$step"

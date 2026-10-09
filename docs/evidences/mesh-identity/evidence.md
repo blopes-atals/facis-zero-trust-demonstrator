@@ -1,6 +1,6 @@
-# Mesh identity evidence (2026-10-09T09:08:49Z)
+# Mesh identity evidence (2026-10-09T14:59:09Z)
 
-Cluster context `kind-ztd-tls13`, zone file `deployment/helm/ztd/ci/values.yaml` (trust domain `kind.facis-ztd.local`), installed with `scripts/install-zone/install.sh`: the seven releases `ztd`, `spire-crds`, `spire`, `istio-base`, `istiod`, `istio-cni`, `zone-policy`. Commit `f8647121efe4d96a3989b2219097bbb972245172`, tree dirty: false. Versions in `environment.json`.
+Cluster context `kind-ztd`, zone file `deployment/helm/ztd/ci/values.yaml` (trust domain `kind.facis-ztd.local`), installed with `scripts/install-zone/install.sh`: the seven releases `ztd`, `spire-crds`, `spire`, `istio-base`, `istiod`, `istio-cni`, `zone-policy`. Commit `96e23b869fdd51be771f074be97cf241919f07b4`, tree dirty: false. Versions in `environment.json`.
 
 Probe results: an HTTP code with the first line of the body when the call went through its proxies; `denied(28)` when a raw TCP connection timed out because the policy dropped the packets; `denied(56)` when the peer reset the connection; `error(<exit>)`, which fails a negative check, for any other failure (a name that does not resolve, an exec that failed).
 
@@ -20,8 +20,8 @@ Probe results: an HTTP code with the first line of the body when the call went t
 
 ```
 NAME STATUS ROLES AGE VERSION INTERNAL-IP EXTERNAL-IP OS-IMAGE KERNEL-VERSION CONTAINER-RUNTIME
-ztd-tls13-control-plane Ready control-plane 104s v1.35.5 172.18.0.6 <none> Debian GNU/Linux 13 (trixie) 6.8.0-146-generic containerd://2.3.1
-ztd-tls13-worker Ready <none> 89s v1.35.5 172.18.0.5 <none> Debian GNU/Linux 13 (trixie) 6.8.0-146-generic containerd://2.3.1
+ztd-control-plane Ready control-plane 3d6h v1.35.5 172.18.0.3 <none> Debian GNU/Linux 13 (trixie) 6.8.0-146-generic containerd://2.3.1
+ztd-worker Ready <none> 3d6h v1.35.5 172.18.0.4 <none> Debian GNU/Linux 13 (trixie) 6.8.0-146-generic containerd://2.3.1
 ```
 
 
@@ -34,7 +34,7 @@ ztd-tls13-worker Ready <none> 89s v1.35.5 172.18.0.5 <none> Debian GNU/Linux 13 
 ## 2. install-order-idempotent: the zone from an empty cluster, twice
 
 - PASS: first installer run from an empty cluster returns 0, no manual step between the releases
-  182s
+  134s
 
 ```
   1/7  ztd          into ztd-system    chart deployment/helm/ztd values the zone file
@@ -62,7 +62,7 @@ zone installed: every pod in ztd-mgmt ztd-data spire-system istio-system is Read
 ```
 
 - PASS: second installer run returns 0
-  76s; 7 releases upgraded in place
+  86s; 7 releases upgraded in place
 - PASS: helm get manifest of every release is identical between the two runs
   7 of 7 identical
 - PASS: every pod in the plane and control-plane namespaces is Ready (the installer's exit condition)
@@ -70,13 +70,13 @@ zone installed: every pod in ztd-mgmt ztd-data spire-system istio-system is Read
 
 ```
 RELEASE NAMESPACE REVISION STATUS CHART
-cilium kube-system 1 deployed cilium-1.20.2
+cilium kube-system 2 deployed cilium-1.20.2
 istio-base istio-system 2 deployed base-1.31.1
 istio-cni istio-system 2 deployed cni-1.31.1
 istiod istio-system 2 deployed istiod-1.31.1
 spire spire-system 2 deployed spire-0.30.2
 spire-crds spire-system 2 deployed spire-crds-0.6.1
-zone-policy istio-system 2 deployed zone-policy-0.1.0
+zone-policy istio-system 2 deployed zone-policy-0.2.0
 ztd ztd-system 2 deployed ztd-0.2.0
 ```
 
@@ -85,14 +85,14 @@ ztd ztd-system 2 deployed ztd-0.2.0
 
 ```
 NAME READY STATUS RESTARTS AGE IP NODE NOMINATED NODE READINESS GATES
-spire-agent-lffqz 1/1 Running 0 3m54s 172.18.0.5 ztd-tls13-worker <none> <none>
-spire-server-0 2/2 Running 0 3m54s 10.244.1.151 ztd-tls13-worker <none> <none>
-spire-spiffe-csi-driver-6bcv7 2/2 Running 0 3m54s 10.244.1.190 ztd-tls13-worker <none> <none>
+spire-agent-9n4xs 1/1 Running 0 3m24s 172.18.0.4 ztd-worker <none> <none>
+spire-server-0 2/2 Running 0 3m24s 10.244.1.33 ztd-worker <none> <none>
+spire-spiffe-csi-driver-dbrcs 2/2 Running 0 3m24s 10.244.1.161 ztd-worker <none> <none>
 
 NAME READY STATUS RESTARTS AGE IP NODE NOMINATED NODE READINESS GATES
-istio-cni-node-57qwd 1/1 Running 0 114s 10.244.1.199 ztd-tls13-worker <none> <none>
-istio-cni-node-rqdcp 1/1 Running 0 114s 10.244.0.203 ztd-tls13-control-plane <none> <none>
-istiod-84f7f755d9-t4kn7 1/1 Running 0 2m17s 10.244.1.212 ztd-tls13-worker <none> <none>
+istio-cni-node-nt6sv 1/1 Running 0 2m4s 10.244.1.3 ztd-worker <none> <none>
+istio-cni-node-wq9r2 1/1 Running 0 2m4s 10.244.0.49 ztd-control-plane <none> <none>
+istiod-84f7f755d9-rqls9 1/1 Running 0 2m13s 10.244.1.212 ztd-worker <none> <none>
 ```
 
 
@@ -114,10 +114,10 @@ istiod-84f7f755d9-t4kn7 1/1 Running 0 2m17s 10.244.1.212 ztd-tls13-worker <none>
 
 ```
 NAME STATUS AGE PLANE ISTIO-INJECTION
-ztd-mgmt Active 4m28s management enabled
-ztd-data Active 4m28s data enabled
-spire-system Active 4m28s management 
-istio-system Active 4m28s management 
+ztd-mgmt Active 3m58s management enabled
+ztd-data Active 3m58s data enabled
+spire-system Active 3m58s management 
+istio-system Active 3m58s management 
 ```
 
 - PASS: spire-system is a management-plane namespace without the injection label
@@ -152,24 +152,32 @@ istio-system CiliumNetworkPolicy allow-kube-api-egress kubeApi
 
 From `scripts/verify-mesh-identity/fixtures/stand-ins.yaml`: in the data plane a meshed peer, a labelled caller with a Workload API client on the CSI socket, an unlabelled meshed pod, an unlabelled pod without proxy with a Workload API client, the matrix pair `pdp-adapter` and the cross-plane caller `data-plain`; in the management plane `tsa-policy-engine`, `openbao` and `mgmt-caller`; in both a proxy-less `probe` for raw TCP probes. All in the service account `stand-in` unless noted.
 
+
+The three proxy-less stand-ins (`unregistered-svid` in ztd-data, `probe` in ztd-data, `probe` in ztd-mgmt) opt out of injection, which the capture rule of `proxy-takes-spire-socket` refuses in a plane namespace (section 8). They stand for the program without a proxy that the later sections show the zone resisting anyway, so the proof creates them with that one validation lifted from the policy for the time of their creation, puts it back unchanged, and checks that it refuses them again; the template and socket rules stay in force throughout.
+
+- PASS: as written, each of the three proxy-less stand-ins is refused by the capture rule of proxy-takes-spire-socket
+  3 of 3 refused: denied request: capture rule: a pod in a plane namespace must keep the proxy's traffic capture at the injector's defaults (sidecar.istio.io/interceptionMode RED
+- PASS: with the capture validation (index 2) lifted, the three proxy-less stand-ins are created
+- PASS: the policy is put back unchanged (its spec equals the one read before the lift) and refuses the three again
+  4 validations in force
 - PASS: the labelled data-plane stand-ins are Ready
 - PASS: the management-plane stand-ins are Ready
 
 ```
 NAME READY STATUS RESTARTS AGE IP NODE NOMINATED NODE READINESS GATES
-caller 3/3 Running 0 31s 10.244.1.120 ztd-tls13-worker <none> <none>
-data-plain 2/2 Running 0 30s 10.244.1.134 ztd-tls13-worker <none> <none>
-pdp-adapter 2/2 Running 0 30s 10.244.1.66 ztd-tls13-worker <none> <none>
-peer 2/2 Running 0 31s 10.244.1.166 ztd-tls13-worker <none> <none>
-probe 1/1 Running 0 31s 10.244.1.235 ztd-tls13-worker <none> <none>
-unregistered 0/2 Init:1/2 0 31s 10.244.1.168 ztd-tls13-worker <none> <none>
-unregistered-svid 1/1 Running 0 31s 10.244.1.157 ztd-tls13-worker <none> <none>
+caller 3/3 Running 0 23s 10.244.1.81 ztd-worker <none> <none>
+data-plain 2/2 Running 0 22s 10.244.1.87 ztd-worker <none> <none>
+pdp-adapter 2/2 Running 0 23s 10.244.1.216 ztd-worker <none> <none>
+peer 2/2 Running 0 23s 10.244.1.128 ztd-worker <none> <none>
+probe 1/1 Running 0 19s 10.244.1.54 ztd-worker <none> <none>
+unregistered 0/2 Init:1/2 0 23s 10.244.1.241 ztd-worker <none> <none>
+unregistered-svid 1/1 Running 0 19s 10.244.1.223 ztd-worker <none> <none>
 
 NAME READY STATUS RESTARTS AGE IP NODE NOMINATED NODE READINESS GATES
-mgmt-caller 2/2 Running 0 30s 10.244.1.112 ztd-tls13-worker <none> <none>
-openbao 2/2 Running 0 30s 10.244.1.198 ztd-tls13-worker <none> <none>
-probe 1/1 Running 0 30s 10.244.1.164 ztd-tls13-worker <none> <none>
-tsa-policy-engine 2/2 Running 0 30s 10.244.1.174 ztd-tls13-worker <none> <none>
+mgmt-caller 2/2 Running 0 22s 10.244.1.118 ztd-worker <none> <none>
+openbao 2/2 Running 0 22s 10.244.1.55 ztd-worker <none> <none>
+probe 1/1 Running 0 18s 10.244.1.115 ztd-worker <none> <none>
+tsa-policy-engine 2/2 Running 0 22s 10.244.1.220 ztd-worker <none> <none>
 ```
 
 
@@ -180,13 +188,13 @@ tsa-policy-engine 2/2 Running 0 30s 10.244.1.174 ztd-tls13-worker <none> <none>
 - PASS: the SVID fetched over the mounted socket carries the SPIFFE ID of the pod's service account in the zone's trust domain
   spiffe://kind.facis-ztd.local/ns/ztd-data/sa/stand-in
 - PASS: the SVID chains to the SPIRE server's CA (the bundle read from the server)
-  issuer=serialNumber=242525115579297786951446278860186383165,CN=kind.facis-ztd.local,O=FACIS ZTD,C=ARPA; SPIRE CA subject=serialNumber=242525115579297786951446278860186383165,CN=kind.facis-ztd.local,O=FACIS ZTD,C=ARPA
+  issuer=serialNumber=92477280675015503239243858395637369267,CN=kind.facis-ztd.local,O=FACIS ZTD,C=ARPA; SPIRE CA subject=serialNumber=92477280675015503239243858395637369267,CN=kind.facis-ztd.local,O=FACIS ZTD,C=ARPA
 
 ```
 subject=O=SPIRE,C=US
-issuer=serialNumber=242525115579297786951446278860186383165,CN=kind.facis-ztd.local,O=FACIS ZTD,C=ARPA
-notBefore=Oct  9 09:13:23 2026 GMT
-notAfter=Oct  9 13:13:33 2026 GMT
+issuer=serialNumber=92477280675015503239243858395637369267,CN=kind.facis-ztd.local,O=FACIS ZTD,C=ARPA
+notBefore=Oct  9 15:03:15 2026 GMT
+notAfter=Oct  9 19:03:25 2026 GMT
 X509v3 Subject Alternative Name: 
     URI:spiffe://kind.facis-ztd.local/ns/ztd-data/sa/stand-in
 ```
@@ -213,18 +221,18 @@ X509v3 Subject Alternative Name:
 
 ```
 RESOURCE NAME     TYPE           STATUS     VALID CERT     SERIAL NUMBER                        NOT AFTER                NOT BEFORE               TRUST DOMAIN
-default           Cert Chain     ACTIVE     true           a49fa60d1f7ed1ac59814649f4a6d3d6     2026-10-09T13:13:33Z     2026-10-09T09:13:23Z     kind.facis-ztd.local
-ROOTCA            CA             ACTIVE     true           b674a3636f7960f2f9387977e0e8f33d     2026-10-10T09:09:36Z     2026-10-09T09:09:26Z     kind.facis-ztd.local
+default           Cert Chain     ACTIVE     true           f94b5cdb66045dd225b5e2c457bee199     2026-10-09T19:03:25Z     2026-10-09T15:03:15Z     kind.facis-ztd.local
+ROOTCA            CA             ACTIVE     true           459279f587dd97b3eaa98389113249b3     2026-10-10T14:59:41Z     2026-10-09T14:59:31Z     kind.facis-ztd.local
 ```
 
 - PASS: the proxy's workload certificate (default) has O = SPIRE in its subject
   subject=O=SPIRE,C=US
 - PASS: its issuer is the SPIRE server CA and it chains to SPIRE's bundle
-  issuer=serialNumber=242525115579297786951446278860186383165,CN=kind.facis-ztd.local,O=FACIS ZTD,C=ARPA
+  issuer=serialNumber=92477280675015503239243858395637369267,CN=kind.facis-ztd.local,O=FACIS ZTD,C=ARPA
 - PASS: its URI SAN equals the SVID fetched over the socket
   spiffe://kind.facis-ztd.local/ns/ztd-data/sa/stand-in
 - PASS: the proxy holds a root bundle under ROOTCA, and it is the SPIRE server's CA
-  ROOTCA (SPIFFE validator, trust domains: kind.facis-ztd.local) DC:EF:5D:70:08:74:82:6F:38:16:5F:86:D3:DC:A2:8A:B4:55:B0:DD:5E:E7:B9:0B:61:1F:74:B6:33:BA:5E:8C, SPIRE CA DC:EF:5D:70:08:74:82:6F:38:16:5F:86:D3:DC:A2:8A:B4:55:B0:DD:5E:E7:B9:0B:61:1F:74:B6:33:BA:5E:8C
+  ROOTCA (SPIFFE validator, trust domains: kind.facis-ztd.local) 8F:F1:CA:84:03:4A:C0:A0:8A:10:07:9C:36:F8:13:95:33:46:CD:48:FF:F3:FB:0B:8F:01:BE:22:EF:F0:43:C7, SPIRE CA 8F:F1:CA:84:03:4A:C0:A0:8A:10:07:9C:36:F8:13:95:33:46:CD:48:FF:F3:FB:0B:8F:01:BE:22:EF:F0:43:C7
 - PASS: the ROOTCA bundle trusts the zone's trust domain and no other
   kind.facis-ztd.local
 - PASS: istiod's own CA did not issue it (istiod's root is a certificate, and the leaf does not verify against it)
@@ -235,10 +243,70 @@ istiod's CA stays on, because it also signs istiod's own serving certificates. A
 - PASS: a pod that chooses its injection templates (inject.istio.io/templates: sidecar, which drops the SPIRE socket) is refused at admission
   denied request: a pod in a plane namespace may not choose its injection templates (inject.istio.io/templates): every injection is the sidecar template with the SPIRE socket
 - PASS: a pod that brings its own istio-proxy without the csi.spiffe.io socket is refused at admission
-  denied request: a mesh proxy in a plane namespace must take its certificate from SPIRE: every container named istio-proxy, running the proxyv2 image or naming pilot-agent must mount the csi.spiffe.io volume workload-sock
+  denied request: socket rule: a mesh proxy in a plane namespace must take its certificate from SPIRE: every container named istio-proxy, running the proxyv2 image or naming pilot-agent must mount the csi.spiffe.io volume 
 - PASS: a pod that runs Istio's agent itself (proxyv2, proxy sidecar) under another container name, with its own istio-token volume and no injection, is refused at admission
-  denied request: a mesh proxy in a plane namespace must take its certificate from SPIRE: every container named istio-proxy, running the proxyv2 image or naming pilot-agent must mount the csi.spiffe.io volume workload-sock
+  denied request: socket rule: a mesh proxy in a plane namespace must take its certificate from SPIRE: every container named istio-proxy, running the proxyv2 image or naming pilot-agent must mount the csi.spiffe.io volume 
+
+The same policy holds the capture rule (capture-at-injector-defaults). The Istio CNI plugin builds a pod's redirect rules from its capture annotations, so a port excluded from the capture reaches the application outside its proxy, where STRICT never sees it, and an unregistered pod of the namespace could reach it in plaintext. The injector writes those annotations onto every pod it injects, so the policy compares their values with the injector's defaults (interception mode `REDIRECT`, all inbound ports, the status port `15020` as the only excluded inbound port, all outbound ranges) and refuses the optional capture annotations, the status-port, proxy-config, proxy-image and pod-supplied proxy overrides, and, in a namespace with the injection label, the injection opt-out. Server-side dry runs in `ztd-data`:
+
+- PASS: capture-at-injector-defaults: a pod that excludes an application port from the capture (traffic.sidecar.istio.io/excludeInboundPorts: "8080") is refused at admission
+  pods "capture-excluded-port" is forbidden: ValidatingAdmissionPolicy 'proxy-takes-spire-socket' with binding 'proxy-takes-spire-socket' denied request: capture rule: a pod in a plane namespace must ke
+- PASS: capture-at-injector-defaults: a pod that switches the capture off (sidecar.istio.io/interceptionMode: NONE) is refused at admission
+  pods "capture-mode-none" is forbidden: ValidatingAdmissionPolicy 'proxy-takes-spire-socket' with binding 'proxy-takes-spire-socket' denied request: capture rule: a pod in a plane namespace must keep t
+- PASS: capture-at-injector-defaults: a pod that moves the status port onto an application port (status.sidecar.istio.io/port: "8080"), naming no excluded port itself, is refused at admission
+  pods "capture-status-port" is forbidden: ValidatingAdmissionPolicy 'proxy-takes-spire-socket' with binding 'proxy-takes-spire-socket' denied request: capture rule: a pod in a plane namespace must keep
+- PASS: capture-at-injector-defaults: a pod that overrides its proxy's configuration (proxy.istio.io/config with a discoveryAddress in the plane) is refused at admission
+  pods "capture-proxy-config" is forbidden: ValidatingAdmissionPolicy 'proxy-takes-spire-socket' with binding 'proxy-takes-spire-socket' denied request: capture rule: a pod in a plane namespace must kee
+- PASS: capture-at-injector-defaults: a pod that opts out of injection (label sidecar.istio.io/inject: "false"), and would run without a proxy, is refused at admission
+  pods "capture-opt-out" is forbidden: ValidatingAdmissionPolicy 'proxy-takes-spire-socket' with binding 'proxy-takes-spire-socket' denied request: capture rule: a pod in a plane namespace must keep the
+- PASS: capture-at-injector-defaults: a pod that swaps its proxy's image (sidecar.istio.io/proxyImage) is refused at admission
+  pods "capture-proxy-image" is forbidden: ValidatingAdmissionPolicy 'proxy-takes-spire-socket' with binding 'proxy-takes-spire-socket' denied request: capture rule: a pod in a plane namespace must keep
+- PASS: capture-at-injector-defaults: a pod that brings its own istio-proxy container (another image, merged over the injected proxy and recorded in proxy.istio.io/overrides) is refused at admission
+  error when creating "STDIN": pods "capture-proxy-override" is forbidden: ValidatingAdmissionPolicy 'proxy-takes-spire-socket' with binding 'proxy-takes-spire-socket' denied request: capture rule: a po
+
+Behind the capture rule, the proxy rule of the same policy holds every mesh proxy to the injector's own, whatever path brought it into the pod: named `istio-proxy`, the image `docker.io/istio/proxyv2:1.31.1@sha256:d86cba0dd1eb15c00b6901c69ce5ae3d2d5f8427a47751098cf8c3ab2a4a62e9`, the injector's arguments, environment, mounts, lifecycle, probes and securityContext, and only in a namespace with the injection label. Proxies that pass the socket and capture rules (each mounts the SPIRE socket, and no override is recorded), server-side dry runs in `ztd-data`:
+
+- PASS: proxy rule: a pod whose istio-proxy runs another image and mounts the SPIRE socket (merged over the injected proxy under a pre-set sidecar.istio.io/status, so no override is recorded) is refused at admission, naming the proxy rule
+  error when creating "STDIN": pods "proxy-other-image" is forbidden: ValidatingAdmissionPolicy 'proxy-takes-spire-socket' with binding 'proxy-takes-spire-socket' denied request: proxy rule: every mesh 
+- PASS: proxy rule: a second proxy next to the injected one (container mesh, the injector's image and arguments, its own PROXY_CONFIG, the SPIRE socket mounted) is refused at admission: every mesh proxy is the injector's istio-proxy
+  error when creating "STDIN": pods "proxy-second" is forbidden: ValidatingAdmissionPolicy 'proxy-takes-spire-socket' with binding 'proxy-takes-spire-socket' denied request: proxy rule: every mesh proxy
+- PASS: proxy rule: the same pre-set sidecar.istio.io/status with an istio-proxy of the injector's image and nothing else is admitted (the control for the next two refusals)
+  pod/proxy-preset created (server dry run)
+- PASS: proxy rule: a pod whose istio-proxy runs the injector's image but adds its own postStart hook (exec sh -c, under a pre-set sidecar.istio.io/status) is refused at admission: the proxy's lifecycle is the injector's (pilot-agent drain or wait) or none
+  error when creating "STDIN": pods "proxy-hook" is forbidden: ValidatingAdmissionPolicy 'proxy-takes-spire-socket' with binding 'proxy-takes-spire-socket' denied request: proxy rule: every mesh proxy i
+- PASS: proxy rule: a pod whose istio-proxy runs the injector's image but adds the NET_ADMIN capability (under a pre-set sidecar.istio.io/status) is refused at admission: the proxy's securityContext is the injector's (UID and GID 1337, non-root, every capability dropped, read-only root)
+  error when creating "STDIN": pods "proxy-net-admin" is forbidden: ValidatingAdmissionPolicy 'proxy-takes-spire-socket' with binding 'proxy-takes-spire-socket' denied request: proxy rule: every mesh pr
+- PASS: socket rule: a pod whose istio-proxy mounts the SPIRE socket volume with a subPath (under a pre-set sidecar.istio.io/status), so that its agent would find no socket and fall back to istiod's CA, is refused at admission, naming the socket rule: the socket mount is whole, without subPath, subPathExpr or mount propagation
+  error when creating "STDIN": pods "proxy-socket-subpath" is forbidden: ValidatingAdmissionPolicy 'proxy-takes-spire-socket' with binding 'proxy-takes-spire-socket' denied request: socket rule: a mesh 
 - PASS: an ordinary pod in the same namespace is admitted, its proxy on the SPIRE socket
+- PASS: proxy rule: an ordinary pod annotated prometheus.io/scrape "true" and prometheus.io/port "9090" is admitted, its proxy carrying the ISTIO_PROMETHEUS_ANNOTATIONS the injector writes under the mesh's enablePrometheusMerge
+  {"name":"ISTIO_PROMETHEUS_ANNOTATIONS","value":"{\"scrape\":\"true\",\"path\":\"\",\"port\":\"9090\"}"}
+- PASS: capture-at-injector-defaults: the equality rule admits exactly what the injector writes: the admitted pod carries traffic.sidecar.istio.io/excludeInboundPorts "15020" (the status port alone) and sidecar.istio.io/interceptionMode REDIRECT
+  {"sidecar.istio.io/interceptionMode":"REDIRECT","traffic.sidecar.istio.io/excludeInboundPorts":"15020","traffic.sidecar.istio.io/includeInboundPorts":"*","traffic.sidecar.istio.io/includeOutboundIPRanges":"*"}
+
+The injection opt-out is refused only where the namespace carries the injection label. The control-plane namespaces the zone file declares `mesh: false` carry the plane label but no injection label, and Istio's own pods there opt out of injection; a server-side dry run of a pod built from the installed istiod Deployment's and istio-cni DaemonSet's pod templates, as their controllers would recreate them in `istio-system`:
+
+- PASS: capture-at-injector-defaults: the deployment/istiod pod, which carries sidecar.istio.io/inject "false", is admitted in istio-system (no injection label), so its controller can recreate it
+  pod/capture-recreate-istiod created (server dry run)
+- PASS: capture-at-injector-defaults: the same deployment/istiod pod is refused in ztd-data, which carries the injection label
+  error when creating "STDIN": pods "capture-recreate-istiod" is forbidden: ValidatingAdmissionPolicy 'proxy-takes-spire-socket' with binding 'proxy-takes-spire-socket' denied request: capture rule: a p
+- PASS: capture-at-injector-defaults: the daemonset/istio-cni-node pod, which carries sidecar.istio.io/inject "false", is admitted in istio-system (no injection label), so its controller can recreate it
+  pod/capture-recreate-istio-cni-node created (server dry run)
+- PASS: capture-at-injector-defaults: the same daemonset/istio-cni-node pod is refused in ztd-data, which carries the injection label
+  error when creating "STDIN": pods "capture-recreate-istio-cni-node" is forbidden: ValidatingAdmissionPolicy 'proxy-takes-spire-socket' with binding 'proxy-takes-spire-socket' denied request: capture r
+
+The policy also runs on every pod update and on every status update (`pods/status`, which can change annotations too). The capture and proxy rules look only at what an update changes (an annotation or label whose value is unchanged, a container whose name and image are unchanged is not checked again), so a running pod still takes a label after an Istio upgrade; what the update adds is checked, and an update may not remove the injector's `sidecar.istio.io/status` or capture annotations. Server-side dry runs against the running proxy-less `probe` in `ztd-data`, which carries the opt-out from its creation in section 5, and against the running injected `peer`:
+
+- PASS: capture-at-injector-defaults: a label added to a running pod is admitted although the pod carries the opt-out: unchanged metadata is not checked again
+  pod/probe labeled (server dry run)
+- PASS: capture-at-injector-defaults: an update that adds an excluded port to the same running pod is refused
+  pods "probe" is forbidden: ValidatingAdmissionPolicy 'proxy-takes-spire-socket' with binding 'proxy-takes-spire-socket' denied request: capture rule: a pod in a plane namespace must keep the proxy's t
+- PASS: capture-at-injector-defaults: the same annotation change through the pods/status subresource (proxy.istio.io/config added by a status update) is refused: the policy also matches status updates
+  pods "probe" is forbidden: ValidatingAdmissionPolicy 'proxy-takes-spire-socket' with binding 'proxy-takes-spire-socket' denied request: capture rule: a pod in a plane namespace must keep the proxy's t
+- PASS: capture-at-injector-defaults: a status update that changes no annotation (a pod condition on the running injected peer) is admitted, as the kubelet's and the controllers' are
+  pod/peer patched
+- PASS: capture-at-injector-defaults: an update that removes sidecar.istio.io/status from the running injected peer (without it the CNI plugin sets up no redirect the next time it runs for the pod) is refused
+  pods "peer" is forbidden: ValidatingAdmissionPolicy 'proxy-takes-spire-socket' with binding 'proxy-takes-spire-socket' denied request: capture rule: a pod in a plane namespace must keep the proxy's tr
 
 Outside the plane namespaces the policy does not apply, and istiod's injector still injects a pod labelled `sidecar.istio.io/inject: "true"` with the templates it names. A pod in a scratch namespace without the plane label:
 
@@ -279,16 +347,16 @@ The security baseline sets TLS 1.3 as the minimum (ADR 005), and the `istiod` re
 ## 10. traffic-through-the-proxies
 
 - PASS: the peer sees the caller's SPIFFE identity in X-Forwarded-Client-Cert
-  By=spiffe://kind.facis-ztd.local/ns/ztd-data/sa/stand-in;Hash=37023ea0051a7b0b20f1f83e29ac207c4cfdb28c5146d5bb3c1cb7ff31f4e4b2;Subject="O=SPIRE,C=US";URI=spiffe://kind.facis-ztd.local/ns/ztd-data/sa/stand-in
+  By=spiffe://kind.facis-ztd.local/ns/ztd-data/sa/stand-in;Hash=09fc09070f1054ee5bbc077ddc1ba28062e6aea723efddd4bc6af544fe9e0ef8;Subject="O=SPIRE,C=US";URI=spiffe://kind.facis-ztd.local/ns/ztd-data/sa/stand-in
 - PASS: both proxies counted the request (istio_requests_total)
   caller (reporter=source) 1 → 2, peer (reporter=destination) 3 → 4
 - PASS: the peer's proxy records the requests as mutual_tls
 
 ## 11. default-deny-with-chained-cni
 
-- PASS: the CNI configuration of node ztd-tls13-worker lists the Istio plugin after Cilium
+- PASS: the CNI configuration of node ztd-worker lists the Istio plugin after Cilium
   /etc/cni/net.d/05-cilium.conflist: cilium-cni → istio-cni
-- PASS: the CNI configuration of node ztd-tls13-control-plane lists the Istio plugin after Cilium
+- PASS: the CNI configuration of node ztd-control-plane lists the Istio plugin after Cilium
   /etc/cni/net.d/05-cilium.conflist: cilium-cni → istio-cni
 - PASS: Cilium still runs with cni-exclusive=false
   cni-exclusive=false
@@ -303,7 +371,7 @@ The security baseline sets TLS 1.3 as the minimum (ADR 005), and the `istiod` re
 - PASS: management pod → data plane: DENIED (the default deny is both directions)
   → denied(28)
 - PASS: DNS bypass: names still resolve
-  Name:	openbao.ztd-mgmt.svc.cluster.local Address: 10.96.164.62 
+  Name:	openbao.ztd-mgmt.svc.cluster.local Address: 10.96.77.235 
 
 ## 12. control-planes-under-default-deny
 
@@ -314,7 +382,7 @@ The security baseline sets TLS 1.3 as the minimum (ADR 005), and the `istiod` re
 - PASS: the API server reaches the controller-manager's webhook (9443) through the controlPlaneWebhooks opening: it refuses a ClusterSPIFFEID with a broken template
   Error from server (Forbidden): error when creating "STDIN": admission webhook "vclusterspiffeid.kb.io" denied the request: invalid SPIFFEID template: template: spiffeIDTemplate:1: unclosed action
 
-Raw TCP probes from the proxy-less `probe` pods to the SPIRE server (10.244.1.151) and istiod (10.244.1.212), on every port they listen on:
+Raw TCP probes from the proxy-less `probe` pods to the SPIRE server (10.244.1.33) and istiod (10.244.1.212), on every port they listen on:
 
 - PASS: ztd-data → SPIRE server :8081 DENIED
   → denied(28)
@@ -360,9 +428,9 @@ Raw TCP probes from the proxy-less `probe` pods to the SPIRE server (10.244.1.15
   → denied(28)
 - PASS: ztd-mgmt → istiod :15012 (xDS) reachable: the declared meshControlPlane opening
   → connected
-- PASS: node ztd-tls13-worker: the SPIRE agent's metrics port 9988 listens on the loopback only, not on the node's addresses
+- PASS: node ztd-worker: the SPIRE agent's metrics port 9988 listens on the loopback only, not on the node's addresses
   listening (hex address:port): 0100007F:2704 
-- PASS: node ztd-tls13-worker: the agent's metrics answer on 127.0.0.1:9988 (the contract with a node-local collector)
+- PASS: node ztd-worker: the agent's metrics answer on 127.0.0.1:9988 (the contract with a node-local collector)
   105 spire_agent samples
 
 ## 13. A declared registration without its entry fails the release
@@ -379,9 +447,9 @@ The registrations-reconciled check counts the running labelled pods of every pla
 ## 14. Render guards (no cluster)
 
 - PASS: the spire release does not render without the trust domain
-  install-zone: release spire: the zone file /tmp/tmp.SCav6ztwNq/no-td.yaml does not state the zone fact zone.trustDomain (for global.spire.trustDomain), zone.trustDomain (for global.spire.caSubject.commonName)
+  install-zone: release spire: the zone file /tmp/tmp.nuseWzkf7H/no-td.yaml does not state the zone fact zone.trustDomain (for global.spire.trustDomain), zone.trustDomain (for global.spire.caSubject.commonName)
 - PASS: the istiod release does not render without the trust domain
-  install-zone: release istiod: the zone file /tmp/tmp.SCav6ztwNq/no-td.yaml does not state the zone fact zone.trustDomain (for meshConfig.trustDomain)
+  install-zone: release istiod: the zone file /tmp/tmp.nuseWzkf7H/no-td.yaml does not state the zone fact zone.trustDomain (for meshConfig.trustDomain)
 - PASS: the umbrella refuses a meshed zone without a trust domain, on the schema
   at '/zone/trustDomain': minLength: got 0, want 1
 - PASS: the umbrella renders zones/ionos.yaml (mesh none) without a trust domain

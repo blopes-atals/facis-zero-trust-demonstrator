@@ -51,12 +51,23 @@
     },
     "proxySocketPolicy": {
       "type": "object",
-      "required": ["name", "volume", "mountPath", "driver"],
+      "required": ["name", "volume", "mountPath", "driver", "statusPort", "proxyImage"],
       "properties": {
         "name": { "$ref": "#/$defs/name" },
         "volume": { "$ref": "#/$defs/name" },
         "mountPath": { "type": "string", "pattern": "^/[A-Za-z0-9._/-]+$" },
-        "driver": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$" }
+        "driver": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$" },
+        "statusPort": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "description": "The proxy's status port, the one inbound port excluded from the capture; must equal the istiod release's global.proxy.statusPort."
+        },
+        "proxyImage": {
+          "type": "string",
+          "pattern": "^[^\\s'/]+/[^\\s']+@sha256:[0-9a-f]{64}$",
+          "description": "The injected proxy's whole image reference, pinned by digest; must equal the istiod release's global.proxy.image."
+        }
       }
     },
     "checks": {

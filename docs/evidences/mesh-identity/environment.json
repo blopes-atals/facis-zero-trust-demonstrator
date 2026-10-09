@@ -1,13 +1,13 @@
 {
-  "commit": "f8647121efe4d96a3989b2219097bbb972245172",
+  "commit": "96e23b869fdd51be771f074be97cf241919f07b4",
   "dirty": false,
-  "date": "2026-10-09T09:08:49Z",
-  "finished": "2026-10-09T09:19:20Z",
+  "date": "2026-10-09T14:59:09Z",
+  "finished": "2026-10-09T15:09:17Z",
   "host": {
     "kind": "Linux 6.8.0-146-generic, Ubuntu 24.04.5 LTS"
   },
   "cluster": {
-    "context": "kind-ztd-tls13",
+    "context": "kind-ztd",
     "kubernetes": "v1.35.5",
     "kindNodeImage": "kindest/node:v1.35.5@sha256:ce977ae6d65918d0b58a5f8b5e940429c2ce42fa3a5619ec2bbc60b949c0ac95",
     "cni": "quay.io/cilium/cilium:v1.20.2@sha256:2939231d0d3e3ebddcd80fffa168b7ddcc78fdf0dc864d1c8c126ff523c54f01"
