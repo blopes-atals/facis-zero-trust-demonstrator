@@ -55,18 +55,30 @@ cache_copy() {
   if [ -d "$HOME/.cache/ztd-install-zone" ]; then cp -r "$HOME/.cache/ztd-install-zone/." "$EVAL_TMP/cache/"; fi
 }
 
-kind_reachable() {
-  command -v kubectl >/dev/null && command -v docker >/dev/null && docker info >/dev/null 2>&1 \
-    && kubectl --context "${EVAL_KIND_CONTEXT:-kind-ztd}" get nodes >/dev/null 2>&1
-}
-
 # Cluster scenarios mutate a kind cluster: they run only when the operator opts in with
-# EVAL_KIND=1 against a disposable cluster (EVAL_KIND_CONTEXT, default kind-ztd).
+# EVAL_KIND=1 and names the disposable cluster's context in EVAL_KIND_CONTEXT (no default: the
+# installer's own default, kind-ztd, may hold other work). Every helm/kubectl call of the check and
+# of the installer then goes through a kubeconfig that holds only that context.
 need_kind() {
   if [ "${EVAL_KIND:-}" != 1 ]; then
-    echo "UNVERIFIABLE: needs a disposable kind cluster with Cilium chained (scripts/dev/kind-cilium-up.sh) and EVAL_KIND=1; not opted in"; exit 77; fi
-  kind_reachable || { echo "UNVERIFIABLE: kind cluster ${EVAL_KIND_CONTEXT:-kind-ztd} or the Docker socket is not reachable from this shell"; exit 77; }
-  CTX=${EVAL_KIND_CONTEXT:-kind-ztd}
+    echo "UNVERIFIABLE: needs a disposable kind cluster with Cilium chained (scripts/dev/kind-cilium-up.sh), EVAL_KIND=1 and EVAL_KIND_CONTEXT=<its context>; not opted in"; exit 77; fi
+  [ -n "${EVAL_KIND_CONTEXT:-}" ] || { echo "UNVERIFIABLE: EVAL_KIND=1 but EVAL_KIND_CONTEXT is not set; refusing to guess a context"; exit 77; }
+  command -v kubectl >/dev/null && command -v helm >/dev/null || { echo "UNVERIFIABLE: kubectl or helm missing"; exit 77; }
+  CTX=$EVAL_KIND_CONTEXT
+  kubectl config view --minify --flatten --context "$CTX" >"$EVAL_TMP/kind.kubeconfig" 2>/dev/null \
+    || { echo "UNVERIFIABLE: context $CTX not found in the kubeconfig"; exit 77; }
+  export KUBECONFIG="$EVAL_TMP/kind.kubeconfig"
+  kubectl --context "$CTX" get nodes >/dev/null 2>&1 || { echo "UNVERIFIABLE: kind cluster $CTX is not reachable"; exit 77; }
+  kubectl --context "$CTX" -n kube-system get ds cilium >/dev/null 2>&1 \
+    || { echo "UNVERIFIABLE: no Cilium DaemonSet in kube-system of $CTX (the scenario needs Cilium chained)"; exit 77; }
+}
+# ensure_empty: bring the cluster to "no release of the zone installed" with the installer's uninstall.
+ensure_empty() {
+  [ -z "$(releases_installed)" ] && return 0
+  echo "precondition: releases present ($(releases_installed | tr '\n' ' ')); uninstalling them first"
+  install_zone uninstall
+  [ "$rc" -eq 0 ] && [ -z "$(releases_installed)" ] \
+    || { tail -n 20 "$EVAL_TMP/inst.out" "$EVAL_TMP/inst.err"; echo "UNVERIFIABLE: could not empty the cluster (uninstall exit $rc)"; exit 77; }
 }
 install_zone() { # install_zone <cmd> [env...] -> rc, output in $EVAL_TMP/inst.{out,err}
   local cmd=$1; shift

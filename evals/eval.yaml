@@ -1,5 +1,5 @@
 # Created by ops-eval — review me.
-timeout: 180
+timeout: 1800
 # setup: ./evals/setup.sh      # optional; write KEY=VALUE lines to $EVAL_ENV_FILE
 # teardown: ./evals/teardown.sh
 # env: { KEY: value }
