@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# scenario: mesh-identity-enrolment / The evidence lists the refusals
+# level: L2
+# requirement: The capture rule is proven and explained
+# The proof runs only on a kind cluster (Docker); this check reads the evidence it committed and
+# judges it only when that evidence was produced by code that carries the capture rule.
+cd "$EVAL_ROOT" || exit 2
+ev=docs/evidences/mesh-identity/evidence.md env=docs/evidences/mesh-identity/environment.json
+tpl=deployment/helm/zone-policy/templates/validatingadmissionpolicy-proxy-spire-socket.yaml
+[ -f "$ev" ] && [ -f "$env" ] || { echo "FAIL: $ev or $env missing"; exit 1; }
+c=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("commit",""))' "$env")
+echo "evidence recorded at commit ${c:-?}"
+if [ -z "$c" ] || ! git cat-file -e "$c^{commit}" 2>/dev/null; then
+  echo "UNVERIFIABLE: the evidence's commit is unknown to this repository; rerun scripts/verify-mesh-identity/verify.sh on kind"; exit 77; fi
+if ! git show "$c:$tpl" 2>/dev/null | grep -q "sidecar.istio.io/interceptionMode"; then
+  echo "UNVERIFIABLE: the committed evidence was produced at $c, before the capture rule existed in the policy (stale; the proof must be rerun on kind, which needs Docker)"; exit 77; fi
+python3 - "$ev" <<'PY'
+import re, sys
+t = open(sys.argv[1]).read()
+blocks = re.split(r"\n\s*\n", t)
+def block(*pats):
+    return next((b for b in blocks if all(re.search(p, b, re.I) for p in pats)), None)
+pol = r"(ValidatingAdmissionPolicy|proxy-takes-spire-socket)"
+cases = {
+  "excluded application port": [r"excludeInboundPorts", r"8080", pol],
+  "interception mode NONE": [r"interceptionMode", r"NONE", pol],
+  "moved status port": [r"status\.sidecar\.istio\.io/port", pol],
+  "proxy-config override": [r"proxy\.istio\.io/config", pol],
+  "injection opt-out": [r"sidecar\.istio\.io/inject", pol],
+}
+bad = 0
+for k, pats in cases.items():
+    b = block(*pats); print(f"{'found' if b else 'MISSING'}: refusal, {k}"); bad |= not b
+b = block(r"excludeInboundPorts", r"15020", r"(admit|REDIRECT)")
+print(f"{'found' if b else 'MISSING'}: ordinary pod admitted with the status-port exclusion"); bad |= not b
+if bad: sys.exit("FAIL: evidence produced with the capture rule does not list every refusal and the admitted pod")
+print("PASS: evidence lists the five refusals naming the policy and the admitted ordinary pod")
+PY

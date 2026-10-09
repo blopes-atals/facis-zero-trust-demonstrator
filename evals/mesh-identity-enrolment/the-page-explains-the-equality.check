@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# scenario: mesh-identity-enrolment / The page explains the equality
+# level: L1
+# requirement: The capture rule is proven and explained
+f="$EVAL_ROOT/docs/workload-identity.md"
+[ -f "$f" ] || { echo "FAIL: $f missing"; exit 1; }
+python3 - "$f" <<'PY'
+import re, sys
+t = re.sub(r"[`]|\*\*", "", open(sys.argv[1]).read())
+t = re.sub(r"\s+", " ", t)
+paras = re.split(r"(?<=\.)\s(?=[A-Z(])", t)  # sentences, roughly (markdown code ticks and bold removed)
+def sent(*pats):
+    for s in paras:
+        if all(re.search(p, s, re.I) for p in pats):
+            return s.strip()
+claims = {
+  "the injector writes the capture annotations onto every pod":
+      sent(r"injector", r"writes?", r"(annotation|capture)", r"(every|each|all)( injected)? pods?"),
+  "the policy compares their values with the defaults":
+      sent(r"(compar\w*|equal\w*|equality)", r"default"),
+  "host networking and NET_ADMIN are outside this rule":
+      sent(r"host[- ]?network", r"NET_ADMIN") ,
+}
+bad = 0
+for k, s in claims.items():
+    print(f"{'found' if s else 'MISSING'}: {k}" + (f"\n    > {s[:300]}" if s else ""))
+    bad |= not s
+hn = claims["host networking and NET_ADMIN are outside this rule"]
+if hn:
+    window = t[t.find(hn): t.find(hn) + len(hn) + 400]
+    if not re.search(r"(outside|not cover|does not cover|steps? around|not covered|beyond)", window, re.I):
+        print("MISSING: the host-networking/NET_ADMIN sentence does not say they are outside the rule"); bad = 1
+if bad:
+    sys.exit("FAIL: the page does not explain the equality as the scenario requires")
+print("PASS: the page states all three points")
+PY
