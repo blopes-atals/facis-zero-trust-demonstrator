@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# scenario: mesh-identity-enrolment / A step fails
+# level: L2
+# requirement: A zone installs from an empty cluster in one order, idempotently
+. "$EVAL_ROOT/evals/mesh-identity-enrolment/_lib.sh"
+need_kind
+[ -z "$(releases_installed)" ] || { echo "UNVERIFIABLE: the cluster is not empty"; exit 77; }
+install_zone install STEP_TIMEOUT=2s; cat "$EVAL_TMP/inst.out" "$EVAL_TMP/inst.err" | tail -30
+[ $rc -ne 0 ] || { echo "FAIL: expected non-zero exit with a 2s step timeout"; exit 1; }
+named=; for r in $SEVEN; do grep -qw -- "$r" "$EVAL_TMP/inst.err" && named=1; done
+[ -n "$named" ] || { echo "FAIL: the error does not name a release"; exit 1; }
+n=$(releases_installed | wc -l); [ "$n" -lt 7 ] || { echo "FAIL: all seven releases installed; the run did not stop"; exit 1; }
+echo "PASS: stopped with exit $rc, $n release(s) present"

@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# scenario: mesh-identity-enrolment / Uninstall leaves no custom resource definition behind
+# level: L2
+# requirement: A zone installs from an empty cluster in one order, idempotently
+. "$EVAL_ROOT/evals/mesh-identity-enrolment/_lib.sh"
+need_kind
+[ -n "$(releases_installed)" ] || { install_zone install; [ $rc -eq 0 ] || { echo "FAIL: install exited $rc"; exit 1; }; }
+install_zone uninstall; tail -20 "$EVAL_TMP/inst.out" "$EVAL_TMP/inst.err"
+[ $rc -eq 0 ] || { echo "FAIL: uninstall exited $rc"; exit 1; }
+left=$(kubectl --context "$CTX" get crd -o name | grep -E 'spiffe\.io|istio\.io' || true)
+[ -z "$left" ] || { echo "FAIL: CRDs left: $left"; exit 1; }
+echo "PASS: no SPIRE or Istio CRD remains"

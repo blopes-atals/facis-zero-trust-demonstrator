@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# scenario: mesh-identity-enrolment / Render with no names on bash 3.2
+# level: L2
+# requirement: A zone installs from an empty cluster in one order, idempotently
+# Needs a bash 3.2 binary: EVAL_BASH32=/path/to/bash, or `bash3.2` / `bash-3.2` on PATH.
+. "$EVAL_ROOT/evals/mesh-identity-enrolment/_lib.sh"
+B=${EVAL_BASH32:-$(command -v bash3.2 || command -v bash-3.2 || true)}
+if [ -z "$B" ] || ! "$B" --version 2>/dev/null | head -1 | grep -q 'version 3\.2'; then
+  echo "UNVERIFIABLE: no bash 3.2 binary on this host (set EVAL_BASH32, or run in the bash:3.2 container); host bash is $BASH_VERSION, where an empty array under set -u does not fail, so the scenario cannot be reproduced with it"
+  exit 77
+fi
+cache_copy; mkdir -p "$EVAL_TMP/render"
+( cd "$EVAL_ROOT" && env -u CI INSTALL_ZONE_CACHE="$EVAL_TMP/cache" RENDER_DIR="$EVAL_TMP/render" \
+    "$B" scripts/install-zone/install.sh render >"$EVAL_TMP/out" 2>"$EVAL_TMP/err" )
+rc=$?; cat "$EVAL_TMP/out" "$EVAL_TMP/err"
+fail=0
+[ $rc -eq 0 ] || { echo "FAIL: exit $rc"; fail=1; }
+grep -qi 'unbound variable' "$EVAL_TMP/err" && { echo "FAIL: unbound variable error raised"; fail=1; }
+for r in $SEVEN; do [ -s "$EVAL_TMP/render/$r.yaml" ] || { echo "FAIL: $r not rendered"; fail=1; }; done
+exit $fail

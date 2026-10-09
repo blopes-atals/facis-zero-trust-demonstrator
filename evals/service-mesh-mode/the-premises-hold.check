@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# scenario: service-mesh-mode / The premises hold
+# level: L2
+# requirement: The upstream state behind the decision is recorded by a script
+. "$EVAL_ROOT/evals/service-mesh-mode/_lib.sh"
+standins_hold; start_standin
+before=$(evidence_untouched_snapshot)
+run_checker
+fail=0
+[ $rc -eq 0 ] || { echo "FAIL: expected exit 0, got $rc"; fail=1; }
+[ -s "$OUT/upstream-state.md" ] || { echo "FAIL: no record written at OUT_DIR/upstream-state.md"; ls -la "$OUT"; fail=1; }
+[ -s "$OUT/environment.json" ] || { echo "FAIL: no environment.json written"; fail=1; }
+if [ -s "$OUT/environment.json" ]; then
+  echo "-- environment.json:"; cat "$OUT/environment.json"
+  python3 - "$OUT/environment.json" <<'PY' || fail=1
+import json, sys
+e = json.load(open(sys.argv[1])); flat = json.dumps(e).lower()
+miss = [k for k in ("commit", "dirty") if k not in e]
+import re
+# the date: any top-level value that is an ISO-8601 timestamp (the spec names no key)
+if not any(isinstance(v, str) and re.match(r"\d{4}-\d{2}-\d{2}T", v) for v in e.values()): miss.append("date")
+if "tools" not in e and "tool" not in flat: miss.append("tool versions")
+if "host" not in flat: miss.append("host kind")
+if miss: print("FAIL: environment.json lacks", miss); sys.exit(1)
+PY
+fi
+[ "$(evidence_untouched_snapshot)" = "$before" ] || { echo "FAIL: docs/evidences/mesh-mode-upstream-state changed"; fail=1; }
+exit $fail

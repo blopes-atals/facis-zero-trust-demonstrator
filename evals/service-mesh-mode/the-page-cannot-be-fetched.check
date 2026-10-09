@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# scenario: service-mesh-mode / The page cannot be fetched
+# level: L2
+# requirement: The upstream state behind the decision is recorded by a script
+. "$EVAL_ROOT/evals/service-mesh-mode/_lib.sh"
+standins_hold; start_standin
+# a loopback port nothing listens on
+dead=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
+run_checker ISTIO_MIGRATE_URL="http://127.0.0.1:$dead/istio/migrate.html"
+fail=0
+all="$(cat "$EVAL_TMP/stderr-$RUN_N" "$EVAL_TMP/stdout-$RUN_N") $(record)"
+[ $rc -ne 0 ] || { echo "FAIL: expected non-zero exit, got 0"; fail=1; }
+grep -qiE 'unreachable.*migration guide|migration guide.*unreachable' <<<"$all" || { echo "FAIL: the migration guide is not reported as unreachable"; fail=1; }
+grep -qiE 'no longer contains' <<<"$all" && { echo "FAIL: the run claims the statement is absent"; fail=1; }
+echo "-- record:"; record
+exit $fail

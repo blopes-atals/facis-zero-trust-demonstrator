@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# scenario: mesh-identity-enrolment / The baseline record names the mesh
+# level: L1
+# requirement: The mesh enforces TLS 1.3 as the minimum for mesh mTLS
+cd "$EVAL_ROOT" || exit 1
+python3 - docs/adr/tdr-decisions.md <<'PY'
+import os, re, sys
+path = sys.argv[1]
+text = open(path).read()
+m = re.search(r"^## ADR 0*5\b.*?(?=^## )", text, re.S | re.M)
+if not m: sys.exit("FAIL: no ADR 005 section in " + path)
+sec = m.group(0)
+na = re.search(r"\*\*Not yet:?\*\*:?(.*?)(?=\n\n|\Z)", sec, re.S)
+applied = sec[:na.start()] if na else sec
+fail = []
+items = re.split(r"\n(?=- )", applied)
+mesh = [i for i in items if re.search(r"mesh mTLS", i, re.I) and re.search(r"TLS 1\.3", i)]
+if not mesh: fail.append("no applied item names mesh mTLS at TLS 1.3")
+else:
+    item = mesh[0]; print("applied item:", " ".join(item.split()))
+    links = re.findall(r"\]\(([^)]+)\)", item)
+    proof = [l for l in links if "evidence" in l or "verify-mesh-identity" in l]
+    if not proof: fail.append("the mesh mTLS item does not link the proof")
+    for l in proof:
+        f, _, anchor = l.partition("#")
+        target = os.path.normpath(os.path.join(os.path.dirname(path), f))
+        if not os.path.exists(target): fail.append(f"proof link target missing: {target}"); continue
+        if anchor:
+            heads = [re.sub(r"[^\w\- ]", "", h.strip().lower()).replace(" ", "-")
+                     for h in re.findall(r"^#+ (.*)$", open(target).read(), re.M)]
+            if anchor not in heads: fail.append(f"anchor #{anchor} not found in {target}")
+if not na: fail.append("no 'Not yet' paragraph")
+else:
+    t = " ".join(na.group(1).split()); print("not yet:", t)
+    if not re.search(r"endpoint", t, re.I): fail.append("'Not yet' no longer lists the pending endpoints")
+    if re.search(r"mesh mTLS", t, re.I): fail.append("'Not yet' still lists mesh mTLS")
+if fail: print("FAIL: " + "; ".join(fail)); sys.exit(1)
+print("PASS")
+PY

@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# scenario: service-mesh-mode / A premise fails
+# level: L2
+# requirement: The upstream state behind the decision is recorded by a script
+. "$EVAL_ROOT/evals/service-mesh-mode/_lib.sh"
+standins_hold; start_standin
+fail=0
+judge() { # judge <case> <regex naming the moved condition>
+  local all; all="$(cat "$EVAL_TMP/stderr-$RUN_N" "$EVAL_TMP/stdout-$RUN_N") $(record)"
+  [ $rc -ne 0 ] || { echo "FAIL($1): expected non-zero exit, got 0"; fail=1; }
+  [ $rc -ne 2 ] || echo "note($1): exit 2 is the unreachable status, not 'moved'"
+  grep -qiE "$2" <<<"$all" || { echo "FAIL($1): output/record does not name the moved condition (/$2/)"; fail=1; }
+}
+# 1. the migration guide no longer contains the unsupported statement
+cp "$DOCROOT/istio/migrate.html" "$EVAL_TMP/migrate.orig"
+sed -i 's#<li>SPIRE as the certificate provider.*</li>#<li>Nothing here.</li>#' "$DOCROOT/istio/migrate.html"
+run_checker; judge statement 'no longer contains|SPIRE as the certificate provider.*(gone|moved|missing|not found)'
+[ $rc -eq 0 ] || [ $rc -eq 1 ] || echo "observed exit $rc"
+cp "$EVAL_TMP/migrate.orig" "$DOCROOT/istio/migrate.html"
+# 2. a ztunnel client pull request shows as merged
+echo '{"state":"closed","merged_at":"2026-09-30T00:00:00Z","draft":false,"title":"PR 1936","labels":[],"updated_at":"2026-09-30T00:00:00Z"}' >"$DOCROOT/repos/istio/ztunnel/pulls/1936"
+run_checker; judge merged-pr 'ztunnel#1936.*merged|1936.*merged'
+echo '{"state":"open","merged_at":null,"draft":false,"title":"PR 1936","labels":[],"updated_at":"2026-09-01T00:00:00Z"}' >"$DOCROOT/repos/istio/ztunnel/pulls/1936"
+# 3. the Broker API is no longer under the experimental block
+spire_doc stable
+run_checker; judge broker 'Broker API.*outside the .?experimental|broker.*(left|outside).*experimental'
+exit $fail

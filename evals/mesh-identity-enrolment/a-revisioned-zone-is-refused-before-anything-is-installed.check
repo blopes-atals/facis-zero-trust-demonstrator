@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# scenario: mesh-identity-enrolment / A revisioned zone is refused before anything is installed
+# level: L1
+# requirement: A zone installs from an empty cluster in one order, idempotently
+. "$EVAL_ROOT/evals/mesh-identity-enrolment/_lib.sh"
+make_shims
+zone="$EVAL_TMP/zone-revision.yaml"
+derive_zone "$zone" 'z["mesh"]["revision"] = "canary"' || { echo "could not derive the zone file"; exit 1; }
+fail=0
+for cmd in render install; do
+  run_shimmed "$zone" "$cmd"
+  echo "== $cmd: exit $rc"; echo "stderr: $err"; [ -n "$out" ] && echo "stdout: $out"
+  echo "helm/kubectl calls: $(tr '\n' ';' <"$EVAL_TMP/calls.log")"
+  [ "$rc" -ne 0 ] || { echo "FAIL($cmd): expected non-zero exit, got 0"; fail=1; }
+  msg="$out $err"
+  grep -qF 'mesh.revision' <<<"$msg" || { echo "FAIL($cmd): message does not name mesh.revision"; fail=1; }
+  grep -qF 'canary' <<<"$msg" || { echo "FAIL($cmd): message does not name the value canary"; fail=1; }
+  { grep -qi 'unrevisioned' <<<"$msg" && grep -qi 'sidecar' <<<"$msg"; } \
+    || { echo "FAIL($cmd): message does not state the reason (installs the default, unrevisioned istiod in sidecar mode only)"; fail=1; }
+  [ -z "$(ls -A "$EVAL_TMP/render")" ] || { echo "FAIL($cmd): something was rendered: $(ls "$EVAL_TMP/render")"; fail=1; }
+  if grep -qE '^helm (template|upgrade|install)|^kubectl ' "$EVAL_TMP/calls.log"; then
+    echo "FAIL($cmd): a release was rendered/installed or the cluster contacted before the refusal"; fail=1; fi
+  grep -qE '^rendered ' <<<"$out" && { echo "FAIL($cmd): output reports a rendered release"; fail=1; }
+done
+exit $fail

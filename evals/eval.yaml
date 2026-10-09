@@ -1,0 +1,6 @@
+# Created by ops-eval — review me.
+timeout: 180
+# setup: ./evals/setup.sh      # optional; write KEY=VALUE lines to $EVAL_ENV_FILE
+# teardown: ./evals/teardown.sh
+# env: { KEY: value }
+# agentic: { trials: 3, cli: claude }

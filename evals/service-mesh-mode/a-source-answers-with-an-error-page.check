@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# scenario: service-mesh-mode / A source answers with an error page
+# level: L2
+# requirement: The upstream state behind the decision is recorded by a script
+. "$EVAL_ROOT/evals/service-mesh-mode/_lib.sh"
+standins_hold; start_standin
+fail=0
+judge() { # judge <case> <regex for the UNREACHABLE entry in the record>
+  local rec; rec=$(record)
+  [ $rc -eq 2 ] || { echo "FAIL($1): expected the unreachable status 2, got $rc"; fail=1; }
+  grep -qiE "UNREACHABLE.*($2)" <<<"$rec" || { echo "FAIL($1): the record does not list the source as unreachable"; fail=1; }
+  grep -qiE 'not documented' <<<"$rec" && { echo "FAIL($1): the record says the Broker API is not documented"; fail=1; }
+  grep -qiE 'no longer contains' <<<"$rec" && { echo "FAIL($1): the record claims the statement is absent"; fail=1; }
+  echo "-- record UNREACHABLE lines:"; grep -i 'UNREACHABLE' <<<"$rec"
+}
+st() { printf '%s\n' "$@" >"$DOCROOT/_status"; }
+st "404 /spire/$SPIRE_TAG/doc/spire_agent.md"; run_checker; judge spire-doc-404 'SPIRE agent'
+st "500 /spire/$SPIRE_TAG/doc/spire_agent.md"; run_checker; judge spire-doc-500 'SPIRE agent'
+st "404 /istio/migrate.html"; run_checker; judge guide-404 'migration guide'
+st "500 /istio/migrate.html"; run_checker; judge guide-500 'migration guide'
+st "404 /repos/istio/istio/issues/42339"; run_checker; judge github-issue-404 'istio/istio#42339'
+st "500 /repos/istio/ztunnel/pulls/1676"; run_checker; judge github-pr-500 'ztunnel#1676'
+st "500 /repos/spiffe/spire/releases/latest"; run_checker; judge github-spire-release-500 'spiffe/spire'
+exit $fail
