@@ -340,7 +340,7 @@ spec:
          && variables.proxies.all(c, {{ include "zone-policy.takesSocket" $p }})
          && variables.ephemeralProxies.all(c, {{ include "zone-policy.takesSocket" $p }}))
       message: >-
-        a mesh proxy in a plane namespace must take its certificate from SPIRE: every container
+        socket rule: a mesh proxy in a plane namespace must take its certificate from SPIRE: every container
         named istio-proxy, running the proxyv2 image or naming pilot-agent must mount the
         {{ $p.driver }} volume {{ $p.volume }} at {{ $p.mountPath }}, whole (no subPath,
         subPathExpr or mount propagation);

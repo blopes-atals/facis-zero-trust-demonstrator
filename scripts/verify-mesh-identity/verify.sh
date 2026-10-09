@@ -352,13 +352,13 @@ check $? "a pod that chooses its injection templates (inject.istio.io/templates:
 out=$(printf '%s\n' 'apiVersion: v1' 'kind: Pod' 'metadata: { name: optout-proxy, annotations: { sidecar.istio.io/inject: "false" } }' \
   'spec: { containers: [ { name: istio-proxy, image: "registry.k8s.io/e2e-test-images/agnhost:2.53" } ] }' | k -n "$DATA" create --dry-run=server -f - 2>&1); rc=$?
 # The opt-out annotation also breaks the capture rule; the socket rule is evaluated first and named.
-[ $rc -ne 0 ] && grep -q "proxy-takes-spire-socket" <<<"$out" && grep -q 'must take its certificate from SPIRE' <<<"$out"
+[ $rc -ne 0 ] && grep -q "proxy-takes-spire-socket" <<<"$out" && grep -q 'socket rule: a mesh proxy in a plane namespace must take its certificate from SPIRE' <<<"$out"
 check $? "a pod that brings its own istio-proxy without the csi.spiffe.io socket is refused at admission" "$(grep -o 'denied request: .*' <<<"$out" | cut -c1-220)"
 out=$(printf '%s\n' 'apiVersion: v1' 'kind: Pod' 'metadata: { name: optout-agent, annotations: { sidecar.istio.io/inject: "false" } }' \
   "spec: { containers: [ { name: mesh, image: \"$images_proxy\", args: [proxy, sidecar], volumeMounts: [ { name: istio-token, mountPath: /var/run/secrets/tokens } ] } ]," \
   '  volumes: [ { name: istio-token, projected: { sources: [ { serviceAccountToken: { audience: istio-ca, path: istio-token } } ] } } ] }' \
   | k -n "$DATA" create --dry-run=server -f - 2>&1); rc=$?
-[ $rc -ne 0 ] && grep -q "proxy-takes-spire-socket" <<<"$out" && grep -q 'must take its certificate from SPIRE' <<<"$out"
+[ $rc -ne 0 ] && grep -q "proxy-takes-spire-socket" <<<"$out" && grep -q 'socket rule: a mesh proxy in a plane namespace must take its certificate from SPIRE' <<<"$out"
 check $? "a pod that runs Istio's agent itself (proxyv2, proxy sidecar) under another container name, with its own istio-token volume and no injection, is refused at admission" "$(grep -o 'denied request: .*' <<<"$out" | cut -c1-220)"
 STATUS_PORT=$(h get values zone-policy -n "$ISTIO_NS" --all -o json 2>/dev/null | jq -r '.proxySocketPolicy.statusPort // empty')
 say '' "The same policy holds the capture rule (capture-at-injector-defaults). The Istio CNI plugin builds a pod's redirect rules from its capture annotations, so a port excluded from the capture reaches the application outside its proxy, where STRICT never sees it, and an unregistered pod of the namespace could reach it in plaintext. The injector writes those annotations onto every pod it injects, so the policy compares their values with the injector's defaults (interception mode \`REDIRECT\`, all inbound ports, the status port \`$STATUS_PORT\` as the only excluded inbound port, all outbound ranges) and refuses the optional capture annotations, the status-port, proxy-config, proxy-image and pod-supplied proxy overrides, and, in a namespace with the injection label, the injection opt-out. Server-side dry runs in \`$DATA\`:" ''
@@ -436,8 +436,8 @@ out=$(printf '%s\n' 'apiVersion: v1' 'kind: Pod' 'metadata: { name: proxy-socket
   "spec: { containers: [ { name: app, image: \"registry.k8s.io/e2e-test-images/agnhost:2.53\" }, { name: istio-proxy, image: \"$images_proxy\"," \
   '    volumeMounts: [ { name: workload-socket, mountPath: /var/run/secrets/workload-spiffe-uds, subPath: socket } ] } ] }' \
   | k -n "$DATA" create --dry-run=server -f - 2>&1); rc=$?
-[ $rc -ne 0 ] && grep -q "ValidatingAdmissionPolicy '$POLICY'" <<<"$out" && grep -q 'must take its certificate from SPIRE' <<<"$out"
-check $? "socket rule: a pod whose istio-proxy mounts the SPIRE socket volume with a subPath (under a pre-set sidecar.istio.io/status), so that its agent would find no socket and fall back to istiod's CA, is refused at admission: the socket mount is whole, without subPath, subPathExpr or mount propagation" "$(refusal)"
+[ $rc -ne 0 ] && grep -q "ValidatingAdmissionPolicy '$POLICY'" <<<"$out" && grep -q 'socket rule: a mesh proxy in a plane namespace must take its certificate from SPIRE' <<<"$out"
+check $? "socket rule: a pod whose istio-proxy mounts the SPIRE socket volume with a subPath (under a pre-set sidecar.istio.io/status), so that its agent would find no socket and fall back to istiod's CA, is refused at admission, naming the socket rule: the socket mount is whole, without subPath, subPathExpr or mount propagation" "$(refusal)"
 plain=$(k -n "$DATA" run optout-none --image=registry.k8s.io/e2e-test-images/agnhost:2.53 --restart=Never --dry-run=server -o json 2>&1)
 jq -e '.spec.volumes[] | select(.name == "workload-socket" and .csi.driver == "csi.spiffe.io")' <<<"$plain" >/dev/null
 check $? "an ordinary pod in the same namespace is admitted, its proxy on the SPIRE socket"
