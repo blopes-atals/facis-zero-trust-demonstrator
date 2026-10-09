@@ -430,19 +430,28 @@ out=$(printf '%s\n' 'apiVersion: v1' 'kind: Pod' 'metadata: { name: proxy-net-ad
   | k -n "$DATA" create --dry-run=server -f - 2>&1); rc=$?
 proxy_refused
 check $? "proxy rule: a pod whose istio-proxy runs the injector's image but adds the NET_ADMIN capability (under a pre-set sidecar.istio.io/status) is refused at admission: the proxy's securityContext is the injector's (UID and GID 1337, non-root, every capability dropped, read-only root)" "$(refusal)"
-out=$(k -n "$DATA" run optout-none --image=registry.k8s.io/e2e-test-images/agnhost:2.53 --restart=Never --dry-run=server -o json 2>&1)
-jq -e '.spec.volumes[] | select(.name == "workload-socket" and .csi.driver == "csi.spiffe.io")' <<<"$out" >/dev/null
+# A subPath on the socket mount would put a file or a subdirectory of the SPIRE volume where the agent
+# looks for the socket; it would find none and ask istiod's CA. The socket rule requires the mount whole.
+out=$(printf '%s\n' 'apiVersion: v1' 'kind: Pod' 'metadata: { name: proxy-socket-subpath, annotations: { sidecar.istio.io/status: "{\"containers\":[\"istio-proxy\"]}" } }' \
+  "spec: { containers: [ { name: app, image: \"registry.k8s.io/e2e-test-images/agnhost:2.53\" }, { name: istio-proxy, image: \"$images_proxy\"," \
+  '    volumeMounts: [ { name: workload-socket, mountPath: /var/run/secrets/workload-spiffe-uds, subPath: socket } ] } ] }' \
+  | k -n "$DATA" create --dry-run=server -f - 2>&1); rc=$?
+[ $rc -ne 0 ] && grep -q "ValidatingAdmissionPolicy '$POLICY'" <<<"$out" && grep -q 'must take its certificate from SPIRE' <<<"$out"
+check $? "socket rule: a pod whose istio-proxy mounts the SPIRE socket volume with a subPath (under a pre-set sidecar.istio.io/status), so that its agent would find no socket and fall back to istiod's CA, is refused at admission: the socket mount is whole, without subPath, subPathExpr or mount propagation" "$(refusal)"
+plain=$(k -n "$DATA" run optout-none --image=registry.k8s.io/e2e-test-images/agnhost:2.53 --restart=Never --dry-run=server -o json 2>&1)
+jq -e '.spec.volumes[] | select(.name == "workload-socket" and .csi.driver == "csi.spiffe.io")' <<<"$plain" >/dev/null
 check $? "an ordinary pod in the same namespace is admitted, its proxy on the SPIRE socket"
 out=$(k -n "$DATA" run proxy-prometheus --image=registry.k8s.io/e2e-test-images/agnhost:2.53 --restart=Never \
   --annotations=prometheus.io/scrape=true --annotations=prometheus.io/port=9090 --dry-run=server -o json 2>&1)
 jq -e '[(.spec.initContainers // [])[], .spec.containers[]] | map(select(.name == "istio-proxy")) | .[0].env | map(.name) | index("ISTIO_PROMETHEUS_ANNOTATIONS")' <<<"$out" >/dev/null
 check $? "proxy rule: an ordinary pod annotated prometheus.io/scrape \"true\" and prometheus.io/port \"9090\" is admitted, its proxy carrying the ISTIO_PROMETHEUS_ANNOTATIONS the injector writes under the mesh's enablePrometheusMerge" \
   "$(jq -c '[(.spec.initContainers // [])[], .spec.containers[]] | map(select(.name == "istio-proxy")) | .[0].env | map(select(.name == "ISTIO_PROMETHEUS_ANNOTATIONS")) | .[0] // empty' <<<"$out" 2>/dev/null || grep -v '^Warning: ' <<<"$out" | head -1 | cut -c1-200)"
-excluded=$(jq -r '.metadata.annotations["traffic.sidecar.istio.io/excludeInboundPorts"] // "absent"' <<<"$out" 2>/dev/null)
-mode=$(jq -r '.metadata.annotations["sidecar.istio.io/interceptionMode"] // "absent"' <<<"$out" 2>/dev/null)
+# The equality check reads the plain ordinary pod (optout-none), not the prometheus.io one above.
+excluded=$(jq -r '.metadata.annotations["traffic.sidecar.istio.io/excludeInboundPorts"] // "absent"' <<<"$plain" 2>/dev/null)
+mode=$(jq -r '.metadata.annotations["sidecar.istio.io/interceptionMode"] // "absent"' <<<"$plain" 2>/dev/null)
 [ "$excluded" = "$STATUS_PORT" ] && [ "$mode" = REDIRECT ]
 check $? "capture-at-injector-defaults: the equality rule admits exactly what the injector writes: the admitted pod carries traffic.sidecar.istio.io/excludeInboundPorts \"$STATUS_PORT\" (the status port alone) and sidecar.istio.io/interceptionMode REDIRECT" \
-  "$(jq -c '.metadata.annotations // {} | with_entries(select(.key | test("^(traffic\\.)?sidecar\\.istio\\.io/(interceptionMode|includeInboundPorts|excludeInboundPorts|includeOutboundIPRanges)$")))' <<<"$out" 2>/dev/null)"
+  "$(jq -c '.metadata.annotations // {} | with_entries(select(.key | test("^(traffic\\.)?sidecar\\.istio\\.io/(interceptionMode|includeInboundPorts|excludeInboundPorts|includeOutboundIPRanges)$")))' <<<"$plain" 2>/dev/null)"
 say '' "The injection opt-out is refused only where the namespace carries the injection label. The control-plane namespaces the zone file declares \`mesh: false\` carry the plane label but no injection label, and Istio's own pods there opt out of injection; a server-side dry run of a pod built from the installed istiod Deployment's and istio-cni DaemonSet's pod templates, as their controllers would recreate them in \`$ISTIO_NS\`:" ''
 for w in deployment/istiod daemonset/istio-cni-node; do
   out=$(k -n "$ISTIO_NS" get "$w" -o json | jq --arg n "capture-recreate-${w#*/}" \
@@ -455,12 +464,22 @@ for w in deployment/istiod daemonset/istio-cni-node; do
   [ $rc -ne 0 ] && grep -q "ValidatingAdmissionPolicy '$POLICY'" <<<"$out" && grep -q 'denied request: capture rule' <<<"$out"
   check $? "capture-at-injector-defaults: the same $w pod is refused in $DATA, which carries the injection label" "$(refusal)"
 done
-say '' "The policy also runs on every pod update. The capture and proxy rules look only at what an update changes (an annotation or label whose value is unchanged, a container whose name and image are unchanged is not checked again), so a running pod still takes a label after an Istio upgrade; what the update adds is checked. Server-side dry runs against the running proxy-less \`probe\` in \`$DATA\`, which carries the opt-out from its creation in section 5:" ''
+say '' "The policy also runs on every pod update and on every status update (\`pods/status\`, which can change annotations too). The capture and proxy rules look only at what an update changes (an annotation or label whose value is unchanged, a container whose name and image are unchanged is not checked again), so a running pod still takes a label after an Istio upgrade; what the update adds is checked, and an update may not remove the injector's \`sidecar.istio.io/status\` or capture annotations. Server-side dry runs against the running proxy-less \`probe\` in \`$DATA\`, which carries the opt-out from its creation in section 5, and against the running injected \`peer\`:" ''
 out=$(k -n "$DATA" label pod probe mesh-identity/update-check=1 --dry-run=server 2>&1); rc=$?
 check $rc "capture-at-injector-defaults: a label added to a running pod is admitted although the pod carries the opt-out: unchanged metadata is not checked again" "$(head -1 <<<"$out" | cut -c1-200)"
 out=$(k -n "$DATA" annotate pod probe traffic.sidecar.istio.io/excludeInboundPorts=8080 --dry-run=server 2>&1); rc=$?
 [ $rc -ne 0 ] && grep -q "ValidatingAdmissionPolicy '$POLICY'" <<<"$out" && grep -q 'denied request: capture rule' <<<"$out"
 check $? "capture-at-injector-defaults: an update that adds an excluded port to the same running pod is refused" "$(refusal)"
+out=$(k -n "$DATA" patch pod probe --subresource=status --type=merge \
+  -p "{\"metadata\":{\"annotations\":{\"proxy.istio.io/config\":\"discoveryAddress: pdp-adapter.$DATA.svc:15012\"}}}" --dry-run=server 2>&1); rc=$?
+[ $rc -ne 0 ] && grep -q "ValidatingAdmissionPolicy '$POLICY'" <<<"$out" && grep -q 'denied request: capture rule' <<<"$out"
+check $? "capture-at-injector-defaults: the same annotation change through the pods/status subresource (proxy.istio.io/config added by a status update) is refused: the policy also matches status updates" "$(refusal)"
+out=$(k -n "$DATA" patch pod peer --subresource=status --type=strategic \
+  -p '{"status":{"conditions":[{"type":"mesh-identity/update-check","status":"True"}]}}' --dry-run=server 2>&1); rc=$?
+check $rc "capture-at-injector-defaults: a status update that changes no annotation (a pod condition on the running injected peer) is admitted, as the kubelet's and the controllers' are" "$(grep -v '^Warning: ' <<<"$out" | head -1 | cut -c1-200)"
+out=$(k -n "$DATA" annotate pod peer sidecar.istio.io/status- --dry-run=server 2>&1); rc=$?
+[ $rc -ne 0 ] && grep -q "ValidatingAdmissionPolicy '$POLICY'" <<<"$out" && grep -q 'denied request: capture rule' <<<"$out"
+check $? "capture-at-injector-defaults: an update that removes sidecar.istio.io/status from the running injected peer (without it the CNI plugin sets up no redirect the next time it runs for the pod) is refused" "$(refusal)"
 
 say '' "Outside the plane namespaces the policy does not apply, and istiod's injector still injects a pod labelled \`sidecar.istio.io/inject: \"true\"\` with the templates it names. A pod in a scratch namespace without the plane label:" ''
 OUTSIDE=mesh-identity-outside

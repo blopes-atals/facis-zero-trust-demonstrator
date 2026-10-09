@@ -96,7 +96,12 @@ without the annotation). So a mesh proxy is admitted only:
   `PROXY_CONFIG` an empty object (the zone sets no per-pod proxy configuration, so the injector
   writes `{}`; `ISTIO_BOOTSTRAP_OVERRIDE` is not among the allowed names);
 - with only the injector's volume mounts, each at the injector's path, and the service-account
-  token;
+  token, none with `subPath`, `subPathExpr` or mount propagation, over volumes of the injector's
+  kinds: the SPIRE socket a `csi.spiffe.io` volume, `istio-podinfo` the downward API, `istio-token`
+  a projected service-account token and nothing else, `istiod-ca-cert` and `istio-ca-crl` their
+  configMaps (`istio-ca-root-cert`, `istio-ca-crl`), `istio-envoy`, `istio-data`,
+  `credential-socket` and `workload-certs` `emptyDir` (on an injected pod the injector's template
+  owns these volumes; the pin matters where the injector does not run);
 - with the injector's lifecycle: none, or `exec [pilot-agent, wait]` as `postStart` (when
   `holdApplicationUntilProxyStarts` is on) and `exec [pilot-agent, request,
   --debug-port=<status port>, POST, drain]` as `preStop` (native sidecars), so no command of the pod
@@ -119,12 +124,19 @@ datadog tracer's, `meshConfig.defaultConfig.proxyMetadata` keys) are refused; th
 such a setting extends `proxyEnv`.
 
 **Updates.** The policy also runs on every pod update (a label, a finalizer, an image, an added
-ephemeral container). The capture and proxy rules look only at what the update changes: an
-annotation or label whose value is unchanged, and a container whose name and image are unchanged
-(nothing else of an existing container can change), is not checked again, so a pod admitted before
-an Istio upgrade still takes metadata updates while its proxy runs the previous image. A changed
-image or a new ephemeral proxy is checked in full. The template and socket rules, which do not
-depend on the Istio version, check the whole pod on every update.
+ephemeral container) and on every update of `pods/status`, which can change a pod's annotations and
+labels as well (the agent rereads its annotations from the downward-API file `istio-podinfo`
+whenever the proxy restarts, and the CNI plugin reads them when the pod's sandbox is recreated).
+The capture and proxy rules look only at what the update changes: an annotation or label whose
+value is unchanged, and a container whose name and image are unchanged (nothing else of an existing
+container can change), is not checked again, so a pod admitted before an Istio upgrade still takes
+metadata updates while its proxy runs the previous image. A changed image or a new ephemeral proxy
+is checked in full. An update may not remove `sidecar.istio.io/status` or one of the four capture
+annotations the injector wrote, nor change `sidecar.istio.io/status`: the CNI plugin sets up no
+redirect for a pod without the status annotation the next time it runs for the pod. The template
+and socket rules, which do not depend on the Istio version, check the whole pod on every pod
+update; they do not run on a status update, which cannot change the pod's spec, so the kubelet's
+and the controllers' status updates are never refused by them.
 
 An ordinary pod satisfies both rules with exactly what the injector writes. A workload that needs a
 capture exception or a proxy setting gets it mesh-wide through the charts (for example
@@ -139,7 +151,17 @@ namespaces with a `runAsUser`/`runAsGroup` rule, the follow-up change. Under the
 `enablePrometheusMerge`, the proxy's agent fetches the metrics path a pod names in its
 `prometheus.io/*` annotations from the application and serves it on the status port, which is
 outside the capture: that one path is readable in plaintext, as on any Istio sidecar with the merge
-on.
+on. The probe rewrite (`ISTIO_KUBE_APP_PROBERS`, on by default) does the same for every `httpGet`
+probe of an application container: the agent fetches the probe's path from the application and
+serves it on the status port as `/app-health/<container>/livez`, `readyz` or `startupz`, readable
+in plaintext by any pod of the namespace. The variable is not pinned: a pod chooses its own probe
+paths and the injector writes whatever they are, so a probe path must reveal nothing beyond health.
+Two more things stay open for the Pod Security follow-up: the proxy's other environment values
+(`ISTIO_META_CLUSTER_ID`, `ISTIO_META_NODE_NAME`, `ISTIO_META_WORKLOAD_NAME`, `ISTIO_META_OWNER`,
+`OTEL_RESOURCE_ATTRIBUTES`, also through `valueFrom`) are not pinned; they change how istiod files
+and labels the proxy (registry lookup, telemetry), not its certificate, which SPIRE issues for the
+pod's service account. And an ephemeral container that targets `istio-proxy`, or
+`shareProcessNamespace`, lets another container (as root, or as UID 1337) reach the proxy's process.
 
 **Status-port coupling.** `proxySocketPolicy.statusPort` must equal the `istiod` release's
 `global.proxy.statusPort`, which `deployment/helm/values/istiod.yaml` leaves at Istio's default,
