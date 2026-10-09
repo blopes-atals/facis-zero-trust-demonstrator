@@ -62,11 +62,17 @@ func Listen(addr string, cfg Config) (*Listener, error) {
 
 // Accept returns the next attested connection. A refused connection is reported as an *Error
 // matching one of the refusal sentinels and carrying the address of the refused peer; the
-// listener stays open and Accept can be called again. Two errors are not an *Error: ctx.Err()
-// when ctx ends first, and net.ErrClosed after Close.
+// listener stays open and Accept can be called again. A connection whose ValidUntil has passed
+// before Accept takes it is closed and refused. Two errors are not an *Error: ctx.Err() when ctx
+// ends first, and net.ErrClosed after Close.
 func (l *Listener) Accept(ctx context.Context) (*Conn, error) {
 	select {
 	case c := <-l.ready:
+		// The delivery may win the race against the connection's expiry timer in handle.
+		if !time.Now().Before(c.peer.ValidUntil) {
+			_ = c.Close()
+			return nil, attribute(expired(c.peer), c.RemoteAddr())
+		}
 		return c, nil
 	case err := <-l.refusals:
 		return nil, err
@@ -133,15 +139,35 @@ func (l *Listener) handle(raw net.Conn) {
 	peer := raw.RemoteAddr()
 
 	conn, err := l.handshake(ctx, raw)
+	cancel()
 	if err != nil {
 		l.refused(attribute(err, peer))
 		return
 	}
+	// Deliver the connection to Accept, unless its validity ends first: then close it and report
+	// the refusal, so no caller receives a channel whose ValidUntil has passed.
+	expiry := time.NewTimer(time.Until(conn.peer.ValidUntil))
+	defer expiry.Stop()
 	select {
 	case l.ready <- conn:
+	case <-expiry.C:
+		_ = conn.Close()
+		l.refused(attribute(expired(conn.peer), peer))
 	case <-l.ctx.Done():
 		_ = conn.Close()
 	}
+}
+
+// expired is the refusal of a handshaken connection whose ValidUntil passed before Accept took
+// it: evidence expired when the peer's evidence validity set ValidUntil, a handshake timeout when
+// the channel lifetime did.
+func expired(p PeerAttestation) *Error {
+	if !p.EvidenceNotAfter.IsZero() && !p.EvidenceNotAfter.After(p.ValidUntil) {
+		return refuse(ErrEvidenceExpired, fmt.Sprintf("peer evidence expired at %s before Accept took the connection",
+			p.EvidenceNotAfter.UTC().Format(time.RFC3339)), nil)
+	}
+	return refuse(ErrHandshakeTimeout, fmt.Sprintf("the channel lifetime ended at %s before Accept took the connection",
+		p.ValidUntil.UTC().Format(time.RFC3339)), nil)
 }
 
 // handshake runs CMC's server-side attestation on one raw connection through a one-shot CMC

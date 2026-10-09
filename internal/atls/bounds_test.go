@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/eclipse-xfsc/facis-zero-trust-demonstrator/internal/atls"
+	"github.com/eclipse-xfsc/facis-zero-trust-demonstrator/internal/atls/atlstest"
 )
 
 // listenerHandlers counts the goroutines that handle one incoming connection of a listener.
@@ -124,4 +125,95 @@ func TestSilentClientsWaitInBacklog(t *testing.T) {
 	if refusals != silent {
 		t.Fatalf("%d refusals for %d silent clients", refusals, silent)
 	}
+}
+
+// expiringFixture is a fixture whose dialing zone's evidence ends on a whole second about two
+// seconds from now (signed metadata states its validity in whole seconds); end is that second.
+func expiringFixture(t *testing.T) (f *fixture, end time.Time) {
+	t.Helper()
+	// Start just after a whole second, so the evidence has close to two seconds left.
+	next := time.Now().Truncate(time.Second).Add(time.Second)
+	time.Sleep(time.Until(next) + 20*time.Millisecond)
+	end = next.Add(2 * time.Second)
+	return newFixture(t, atlstest.WithEvidenceValidity(time.Now().Add(-time.Minute), end)), end
+}
+
+// handshakeUnaccepted completes one handshake against ln without calling Accept and returns the
+// dialer's end.
+func handshakeUnaccepted(t *testing.T, ln *atls.Listener, f *fixture) *atls.Conn {
+	t.Helper()
+	cli, err := dial(t, ln.Addr().String(), f.a.Config(t, f.b))
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	t.Cleanup(func() { _ = cli.Close() })
+	return cli
+}
+
+// sleepPast sleeps until two seconds have passed since from, and at least until after end.
+func sleepPast(from, end time.Time) {
+	until := from.Add(2 * time.Second)
+	if !until.After(end) {
+		until = end.Add(200 * time.Millisecond)
+	}
+	time.Sleep(time.Until(until))
+}
+
+// A handshaken connection that nobody accepts before its ValidUntil is closed and refused; Accept
+// never returns a connection whose validity has passed.
+func TestPendingConnectionExpires(t *testing.T) {
+	t.Run("accept called after the evidence expired", func(t *testing.T) {
+		f, end := expiringFixture(t)
+		ln := listen(t, f.b.Config(t, f.a))
+		cli := handshakeUnaccepted(t, ln, f)
+		if !time.Now().Before(end) {
+			t.Fatal("the handshake ended after the evidence expired")
+		}
+		sleepPast(time.Now(), end)
+		err := (<-acceptOne(ln, 5*time.Second)).err
+		assertRefusal(t, err, atls.ErrEvidenceExpired)
+		if ae := refusalError(t, err); ae.Peer == nil || ae.Peer.String() != cli.LocalAddr().String() {
+			t.Fatalf("refusal names peer %v, want %s", ae.Peer, cli.LocalAddr())
+		}
+		expectClosed(t, cli)
+	})
+	t.Run("nobody accepts before the evidence expires", func(t *testing.T) {
+		f, end := expiringFixture(t)
+		ln := listen(t, f.b.Config(t, f.a))
+		cli := handshakeUnaccepted(t, ln, f)
+		// The listener closes the connection at its ValidUntil without any Accept call.
+		_ = cli.SetReadDeadline(end.Add(2 * time.Second))
+		if _, err := cli.Read(make([]byte, 1)); err == nil {
+			t.Fatal("the dialer received data")
+		} else if ne, ok := err.(net.Error); ok && ne.Timeout() {
+			t.Fatal("the listener did not close the connection at its ValidUntil")
+		}
+		if time.Now().Before(end) {
+			t.Fatalf("the listener closed the connection before its ValidUntil %v", end)
+		}
+		assertRefusal(t, (<-acceptOne(ln, 5*time.Second)).err, atls.ErrEvidenceExpired)
+	})
+	t.Run("channel lifetime ends first", func(t *testing.T) {
+		f := newFixture(t)
+		sc := f.b.Config(t, f.a)
+		sc.ChannelLifetime = time.Second
+		ln := listen(t, sc)
+		handshakeUnaccepted(t, ln, f)
+		time.Sleep(2 * time.Second)
+		assertRefusal(t, (<-acceptOne(ln, 5*time.Second)).err, atls.ErrHandshakeTimeout)
+	})
+	t.Run("accept called in time", func(t *testing.T) {
+		f, end := expiringFixture(t)
+		ln := listen(t, f.b.Config(t, f.a))
+		cli := handshakeUnaccepted(t, ln, f)
+		a := <-acceptOne(ln, 5*time.Second)
+		if a.err != nil {
+			t.Fatalf("accept in time: %v", a.err)
+		}
+		defer func() { _ = a.conn.Close() }()
+		if p := a.conn.Peer(); !p.ValidUntil.Equal(end) || !p.EvidenceNotAfter.Equal(end) {
+			t.Fatalf("ValidUntil %v / EvidenceNotAfter %v, want %v", p.ValidUntil, p.EvidenceNotAfter, end)
+		}
+		exchange(t, cli, a.conn, "in time")
+	})
 }

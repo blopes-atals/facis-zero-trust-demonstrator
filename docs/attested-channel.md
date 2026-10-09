@@ -154,13 +154,13 @@ the wrapper reaches the decision today; it is not part of the freeze.
 |---|---|---|
 | `ErrNotAttested` | The peer's attestation did not verify as `success`: failed verification, `warn`, no result, a result for another peer, or the peer reported that it could not verify this end | wrapper verdict rules; CMC result; CMC error text |
 | `ErrBindingMismatch` | The peer's report is not bound to this TLS session (for example relayed from another session) | CMC result: freshness check failed (error code `Freshness`) |
-| `ErrEvidenceExpired` | The peer's evidence is past its validity | CMC result: metadata validity check `Expired`; wrapper check at return time |
+| `ErrEvidenceExpired` | The peer's evidence is past its validity | CMC result: metadata validity check `Expired`; wrapper check at return time and before `Accept` delivers |
 | `ErrIdentityMismatch` | The peer's certificate is untrusted, lacks the expected identity or uses a key outside the crypto baseline; or the peer refused this end's certificate | wrapper TLS verification; TLS alert text |
 | `ErrPlainTLS` | The peer does not speak attested TLS 1.3: no TLS at all, TLS 1.2 or older, or a malformed first attestation message | TLS error text; CMC error text |
 | `ErrPeerAborted` | The peer completed TLS 1.3 with a valid zone certificate and left before the attestation exchange completed. Typically its attester is down. A TLS 1.3 client that holds a zone certificate and never speaks attestation looks the same | CMC error text of the final handshake exchange, with no attestation result on this end |
 | `ErrAttestModeMismatch` | The peer requested an attestation mode other than mutual | CMC error text |
 | `ErrAttesterUnavailable` | This zone's `cmcd` could not be reached or failed | CMC error text (gRPC / in-process backend) |
-| `ErrHandshakeTimeout` | The handshake did not end within the caller's deadline or `HandshakeTimeout`, or, for `Dial`, no handshake slot became free in time | wrapper deadline; `i/o timeout` from CMC |
+| `ErrHandshakeTimeout` | The handshake did not end within the caller's deadline or `HandshakeTimeout`, or, for `Dial`, no handshake slot became free in time | wrapper deadline; `i/o timeout` from CMC; a channel lifetime that ended before `Accept` took the connection |
 | `ErrPeerRejected` | The `PeerVerifier` refused the attested peer. Its error is wrapped and stays inspectable | wrapper |
 | `ErrPeerUnreachable` | No TCP connection to the peer. This is a transport failure, not a refusal | dial error text |
 | `ErrConfig` | Invalid configuration; no connection was attempted | wrapper validation |
@@ -202,6 +202,13 @@ evidence. TLS 1.3 does not renegotiate, so evidence never refreshes on a live ch
 the channel must re-establish it before `ValidUntil`. The default lifetime of 15 minutes matches
 the channel rotation.
 
+`Accept` never delivers a connection whose `ValidUntil` has passed. A handshaken connection that no
+`Accept` call takes by its `ValidUntil` is closed by the listener, and the next `Accept` reports a
+refusal attributed to that peer: `ErrEvidenceExpired` when the evidence validity end set
+`ValidUntil`, `ErrHandshakeTimeout` when the channel lifetime did. `Accept` checks `ValidUntil`
+again when it takes a connection. A channel that `Dial` or `Accept` has returned is still not
+closed at `ValidUntil`; that stays with its owner.
+
 The evidence validity end is the earliest of:
 
 - the `Validity.NotAfter` of the peer's signed metadata (image description, manifests, company
@@ -222,7 +229,8 @@ sw-driver evidence is signed with a bare key and has no certificate.
   holds no goroutine, descriptor or timer for them, so the cap bounds what incoming connections
   cost the listener. A connection's `HandshakeTimeout` starts when the listener accepts it, not
   while it waits in the backlog. A connection keeps its slot until `Accept` takes it or the
-  listener closes it, so a caller that stops calling `Accept` also stops the listener accepting.
+  listener closes it, at the latest at its `ValidUntil`, so a caller that stops calling `Accept`
+  also stops the listener accepting.
 - A `Dial` call waits for a slot up to its deadline and is then refused with
   `ErrHandshakeTimeout`; the listener never refuses for want of a slot.
 - `Dial` returns within the context deadline or `HandshakeTimeout`, whichever is sooner. If CMC is
@@ -333,8 +341,9 @@ one sentinel.
   deadline; the read timeout arrives unwrapped and leaves the channel usable.
 - **A write deadline that expires makes the channel unusable** (see above). A caller that bounds
   its writes must discard the channel after a write timeout.
-- **The wrapper does not close a channel at `ValidUntil`.** It reports the time; the owner of the
-  channel re-establishes it before then and closes the old one.
+- **The wrapper does not close a returned channel at `ValidUntil`.** It reports the time; the
+  owner of the channel re-establishes it before then and closes the old one. Only a connection
+  that no `Accept` call has taken yet is closed at its `ValidUntil` (see [Lifetime](#lifetime)).
 - **Losing this zone's `cmcd` is silent on open channels.** The attester is needed only during a
   handshake, so the loss shows at the next handshake as `ErrAttesterUnavailable`. `cmcd` v0.9.15
   has no health endpoint, and this interface offers no attester check; a check is a possible
