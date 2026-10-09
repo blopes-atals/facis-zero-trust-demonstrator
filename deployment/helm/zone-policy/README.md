@@ -96,7 +96,27 @@ without the annotation). So a mesh proxy is admitted only:
   `PROXY_CONFIG` an empty object (the zone sets no per-pod proxy configuration, so the injector
   writes `{}`; `ISTIO_BOOTSTRAP_OVERRIDE` is not among the allowed names);
 - with only the injector's volume mounts, each at the injector's path, and the service-account
-  token.
+  token;
+- with the injector's lifecycle: none, or `exec [pilot-agent, wait]` as `postStart` (when
+  `holdApplicationUntilProxyStarts` is on) and `exec [pilot-agent, request,
+  --debug-port=<status port>, POST, drain]` as `preStop` (native sidecars), so no command of the pod
+  runs in the proxy container as UID 1337;
+- with the injector's probes: no liveness probe, and the startup and readiness probes, when present,
+  `httpGet /healthz/ready` on `15021` with no host (their timings follow the
+  `readiness.status.sidecar.istio.io/*` annotations and stay free);
+- with the injector's `securityContext`: `runAsUser` and `runAsGroup` 1337, `runAsNonRoot`, no
+  privilege escalation, not privileged, read-only root filesystem, capabilities `drop: [ALL]` and
+  none added, and no `seLinuxOptions`, `seccompProfile`, `appArmorProfile`, `procMount` or
+  `windowsOptions`. `sidecar.istio.io/capNetBindService: "true"`, with which the injector runs the
+  proxy as root with `NET_BIND_SERVICE`, is therefore refused.
+
+The allowed environment variables (`proxyEnv`) are the ones the 1.31.1 injector writes for this
+zone, from the template and from its code after the template: `ISTIO_KUBE_APP_PROBERS` when it
+rewrites an application's probes, and `ISTIO_PROMETHEUS_ANNOTATIONS` when a pod carries
+`prometheus.io/*` annotations (the mesh sets `enablePrometheusMerge`). Variables it writes only
+under settings the zone does not make (`COMPLIANCE_POLICY`, `GODEBUG`, `ISTIO_META_NETWORK`, the
+datadog tracer's, `meshConfig.defaultConfig.proxyMetadata` keys) are refused; the change that makes
+such a setting extends `proxyEnv`.
 
 **Updates.** The policy also runs on every pod update (a label, a finalizer, an image, an added
 ephemeral container). The capture and proxy rules look only at what the update changes: an
@@ -115,7 +135,11 @@ redirect rules let UID and GID 1337, the proxy's own, leave without capture, so 
 container running as 1337 (by its `securityContext` or its image's `USER`) sends its outbound
 traffic past the proxy. The injector also skips host-networked pods, so such a pod could bring its
 own `istio-proxy` with its own environment. Those belong to a Pod Security level on the plane
-namespaces with a `runAsUser`/`runAsGroup` rule, the follow-up change.
+namespaces with a `runAsUser`/`runAsGroup` rule, the follow-up change. Under the mesh's
+`enablePrometheusMerge`, the proxy's agent fetches the metrics path a pod names in its
+`prometheus.io/*` annotations from the application and serves it on the status port, which is
+outside the capture: that one path is readable in plaintext, as on any Istio sidecar with the merge
+on.
 
 **Status-port coupling.** `proxySocketPolicy.statusPort` must equal the `istiod` release's
 `global.proxy.statusPort`, which `deployment/helm/values/istiod.yaml` leaves at Istio's default,

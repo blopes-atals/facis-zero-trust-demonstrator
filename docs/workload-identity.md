@@ -291,7 +291,17 @@ domain>` and the three log-level flags, with only `--stsPort`, `--log_as_json` o
 `--outlierLogPath` besides), no `envFrom`, only the environment variables the injector writes, with
 `PILOT_CERT_PROVIDER`, `CA_ADDR`, `ISTIO_META_INTERCEPTION_MODE` and `TRUST_DOMAIN` at the
 injector's values and `PROXY_CONFIG` an empty object (the zone sets no per-pod proxy
-configuration), and only the injector's volume mounts at the injector's paths.
+configuration), and only the injector's volume mounts at the injector's paths. The allowed
+variables include the two the injector's code adds from pod annotations after the template,
+`ISTIO_KUBE_APP_PROBERS` (rewritten application probes) and `ISTIO_PROMETHEUS_ANNOTATIONS` (a pod
+annotated `prometheus.io/*`, since the mesh merges the application's metrics). The proxy's
+lifecycle, probes and `securityContext` are pinned as well, so that no command of the pod runs in
+the proxy container as UID 1337 and the proxy gains no capability: the lifecycle is none, or the
+injector's `pilot-agent wait` (`postStart`) and `pilot-agent request … POST drain` (`preStop`); no
+liveness probe, and startup and readiness probes only as `httpGet /healthz/ready` on `15021`; the
+`securityContext` UID and GID 1337, non-root, without privilege escalation, read-only, every
+capability dropped and none added. A pod annotated `sidecar.istio.io/capNetBindService: "true"`, for
+which the injector runs the proxy as root, is refused by this rule.
 
 The policy also runs on every pod update. The capture and proxy rules look only at what an update
 changes: an annotation or label whose value is unchanged, and a container whose name and image are
@@ -304,7 +314,9 @@ An ordinary pod satisfies both rules with exactly what the injector writes, and 
 admitted with the status-port exclusion and `REDIRECT`, next to the refusal of an excluded
 application port, capture mode `NONE`, a moved status port, a proxy-config override, an opt-out, a
 swapped proxy image and a pod-supplied `istio-proxy`, the proxy rule's refusal of an
-`istio-proxy` with another image and of a second proxy, the admission of the istiod and
+`istio-proxy` with another image, of a second proxy, and of an `istio-proxy` of the injector's
+image with a pod-supplied `postStart` hook or `NET_ADMIN`, the admission of a pod with
+`prometheus.io/*` annotations, the admission of the istiod and
 `istio-cni` pods in `istio-system` and their refusal in the data plane, and a label admitted on a
 running pod while an added exclusion is refused ([evidence](evidences/mesh-identity/README.md)). A workload that needs a capture exception or a
 proxy setting gets it mesh-wide through the charts (`meshConfig.defaultConfig`, or a value that
@@ -320,7 +332,10 @@ also skips host-networked pods, so such a pod could bring its own `istio-proxy` 
 environment. Those belong to a Pod Security Admission level on the plane namespaces, with a rule on
 `runAsUser` and `runAsGroup` (an image's `USER` is not visible at admission, so that rule must
 require an explicit non-1337 user), which the namespaces do not carry today and which is the next
-change, not this policy.
+change, not this policy. And with the mesh's `enablePrometheusMerge`, the proxy's agent fetches the
+metrics path a pod names in its `prometheus.io/*` annotations from the application and serves it on
+the status port, which is outside the capture, so that one path is readable in plaintext, as on any
+Istio sidecar with the merge on.
 
 ## Telemetry
 

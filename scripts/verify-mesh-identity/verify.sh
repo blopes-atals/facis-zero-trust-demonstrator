@@ -389,7 +389,7 @@ out=$(printf '%s\n' 'apiVersion: v1' 'kind: Pod' 'metadata: { name: capture-prox
   | k -n "$DATA" create --dry-run=server -f - 2>&1); rc=$?
 [ $rc -ne 0 ] && grep -q "ValidatingAdmissionPolicy '$POLICY'" <<<"$out" && grep -q 'denied request: capture rule' <<<"$out"
 check $? "capture-at-injector-defaults: a pod that brings its own istio-proxy container (another image, merged over the injected proxy and recorded in proxy.istio.io/overrides) is refused at admission" "$(refusal)"
-say '' "Behind the capture rule, the proxy rule of the same policy holds every mesh proxy to the injector's own, whatever path brought it into the pod: named \`istio-proxy\`, the image \`$images_proxy\`, the injector's arguments, environment and mounts, and only in a namespace with the injection label. Two proxies that pass the socket and capture rules (each mounts the SPIRE socket, and no override is recorded), server-side dry runs in \`$DATA\`:" ''
+say '' "Behind the capture rule, the proxy rule of the same policy holds every mesh proxy to the injector's own, whatever path brought it into the pod: named \`istio-proxy\`, the image \`$images_proxy\`, the injector's arguments, environment, mounts, lifecycle, probes and securityContext, and only in a namespace with the injection label. Proxies that pass the socket and capture rules (each mounts the SPIRE socket, and no override is recorded), server-side dry runs in \`$DATA\`:" ''
 # proxy_refused: status 0 when the last dry run ($rc, $out) was refused naming the policy and its proxy rule
 proxy_refused() { [ "$rc" -ne 0 ] && grep -q "ValidatingAdmissionPolicy '$POLICY'" <<<"$out" && grep -q 'denied request: proxy rule' <<<"$out"; }
 # A pod that claims to be injected already (sidecar.istio.io/status) has its own istio-proxy merged
@@ -408,9 +408,36 @@ out=$(printf '%s\n' 'apiVersion: v1' 'kind: Pod' 'metadata: { name: proxy-second
   | k -n "$DATA" create --dry-run=server -f - 2>&1); rc=$?
 proxy_refused
 check $? "proxy rule: a second proxy next to the injected one (container mesh, the injector's image and arguments, its own PROXY_CONFIG, the SPIRE socket mounted) is refused at admission: every mesh proxy is the injector's istio-proxy" "$(refusal)"
+# Control: the same pre-set status with the injector's own image and nothing added is admitted, so
+# the two refusals below come from what each adds.
+out=$(printf '%s\n' 'apiVersion: v1' 'kind: Pod' 'metadata: { name: proxy-preset, annotations: { sidecar.istio.io/status: "{\"containers\":[\"istio-proxy\"]}" } }' \
+  "spec: { containers: [ { name: app, image: \"registry.k8s.io/e2e-test-images/agnhost:2.53\" }, { name: istio-proxy, image: \"$images_proxy\" } ] }" \
+  | k -n "$DATA" create --dry-run=server -f - 2>&1); rc=$?
+check $rc "proxy rule: the same pre-set sidecar.istio.io/status with an istio-proxy of the injector's image and nothing else is admitted (the control for the next two refusals)" "$(grep -v '^Warning: ' <<<"$out" | head -1 | cut -c1-200)"
+# The same pre-set status with the injector's own image: everything the injector writes stays, and
+# only what the pod adds to istio-proxy differs. A postStart hook would run the pod's own command in
+# the proxy container as UID 1337, whose traffic leaves without capture; NET_ADMIN would let it
+# rewrite the pod's redirect rules.
+out=$(printf '%s\n' 'apiVersion: v1' 'kind: Pod' 'metadata: { name: proxy-hook, annotations: { sidecar.istio.io/status: "{\"containers\":[\"istio-proxy\"]}" } }' \
+  "spec: { containers: [ { name: app, image: \"registry.k8s.io/e2e-test-images/agnhost:2.53\" }, { name: istio-proxy, image: \"$images_proxy\"," \
+  '    lifecycle: { postStart: { exec: { command: [sh, -c, "echo hook"] } } } } ] }' \
+  | k -n "$DATA" create --dry-run=server -f - 2>&1); rc=$?
+proxy_refused
+check $? "proxy rule: a pod whose istio-proxy runs the injector's image but adds its own postStart hook (exec sh -c, under a pre-set sidecar.istio.io/status) is refused at admission: the proxy's lifecycle is the injector's (pilot-agent drain or wait) or none" "$(refusal)"
+out=$(printf '%s\n' 'apiVersion: v1' 'kind: Pod' 'metadata: { name: proxy-net-admin, annotations: { sidecar.istio.io/status: "{\"containers\":[\"istio-proxy\"]}" } }' \
+  "spec: { containers: [ { name: app, image: \"registry.k8s.io/e2e-test-images/agnhost:2.53\" }, { name: istio-proxy, image: \"$images_proxy\"," \
+  '    securityContext: { capabilities: { add: [NET_ADMIN] } } } ] }' \
+  | k -n "$DATA" create --dry-run=server -f - 2>&1); rc=$?
+proxy_refused
+check $? "proxy rule: a pod whose istio-proxy runs the injector's image but adds the NET_ADMIN capability (under a pre-set sidecar.istio.io/status) is refused at admission: the proxy's securityContext is the injector's (UID and GID 1337, non-root, every capability dropped, read-only root)" "$(refusal)"
 out=$(k -n "$DATA" run optout-none --image=registry.k8s.io/e2e-test-images/agnhost:2.53 --restart=Never --dry-run=server -o json 2>&1)
 jq -e '.spec.volumes[] | select(.name == "workload-socket" and .csi.driver == "csi.spiffe.io")' <<<"$out" >/dev/null
 check $? "an ordinary pod in the same namespace is admitted, its proxy on the SPIRE socket"
+out=$(k -n "$DATA" run proxy-prometheus --image=registry.k8s.io/e2e-test-images/agnhost:2.53 --restart=Never \
+  --annotations=prometheus.io/scrape=true --annotations=prometheus.io/port=9090 --dry-run=server -o json 2>&1)
+jq -e '[(.spec.initContainers // [])[], .spec.containers[]] | map(select(.name == "istio-proxy")) | .[0].env | map(.name) | index("ISTIO_PROMETHEUS_ANNOTATIONS")' <<<"$out" >/dev/null
+check $? "proxy rule: an ordinary pod annotated prometheus.io/scrape \"true\" and prometheus.io/port \"9090\" is admitted, its proxy carrying the ISTIO_PROMETHEUS_ANNOTATIONS the injector writes under the mesh's enablePrometheusMerge" \
+  "$(jq -c '[(.spec.initContainers // [])[], .spec.containers[]] | map(select(.name == "istio-proxy")) | .[0].env | map(select(.name == "ISTIO_PROMETHEUS_ANNOTATIONS")) | .[0] // empty' <<<"$out" 2>/dev/null || grep -v '^Warning: ' <<<"$out" | head -1 | cut -c1-200)"
 excluded=$(jq -r '.metadata.annotations["traffic.sidecar.istio.io/excludeInboundPorts"] // "absent"' <<<"$out" 2>/dev/null)
 mode=$(jq -r '.metadata.annotations["sidecar.istio.io/interceptionMode"] // "absent"' <<<"$out" 2>/dev/null)
 [ "$excluded" = "$STATUS_PORT" ] && [ "$mode" = REDIRECT ]

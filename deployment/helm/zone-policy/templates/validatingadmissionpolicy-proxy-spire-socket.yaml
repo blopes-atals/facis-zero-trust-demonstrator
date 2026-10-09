@@ -72,6 +72,20 @@ the environment variables the injector writes (proxyEnv), with PILOT_CERT_PROVID
 ISTIO_META_INTERCEPTION_MODE and TRUST_DOMAIN at the injector's values and PROXY_CONFIG an empty
 object (the zone sets no per-pod proxy configuration, so the injector writes {}), and only the
 injector's volume mounts at the injector's paths (proxyMounts, plus the service-account token).
+proxyEnv also holds the variables the injector's code adds after the template from pod
+annotations: ISTIO_KUBE_APP_PROBERS (the probe rewrite) and ISTIO_PROMETHEUS_ANNOTATIONS (a pod
+annotated prometheus.io/*, under the mesh's enablePrometheusMerge). The variables it writes only
+under istiod or mesh settings the zone does not make (COMPLIANCE_POLICY, GODEBUG,
+ISTIO_META_NETWORK, the datadog tracer's, meshConfig proxyMetadata keys) are not admitted.
+The proxy's lifecycle, probes and securityContext are the injector's too, so that no command of the
+pod runs in the proxy container as UID 1337 and the proxy gains no capability: lifecycle none, or
+exec [pilot-agent wait] (postStart, holdApplicationUntilProxyStarts) and exec [pilot-agent request
+--debug-port=<status port> POST drain] (preStop, native sidecars); no liveness probe; startup and
+readiness probes, when present, httpGet /healthz/ready on 15021 with no host; securityContext
+runAsUser and runAsGroup 1337, runAsNonRoot, no privilege escalation, not privileged, read-only
+root, capabilities drop [ALL] and none added, and no seLinuxOptions, seccompProfile,
+appArmorProfile, procMount or windowsOptions. sidecar.istio.io/capNetBindService: "true" makes the
+injector run the proxy as root with NET_BIND_SERVICE; the proxy rule refuses that pod.
 
 Updates. The policy also runs on every pod UPDATE (a label, a finalizer, an image, an added
 ephemeral container). The capture and proxy rules look only at what the update changes: an
@@ -87,7 +101,10 @@ proxy's own UID and GID 1337 leave without capture, so an application container 
 (by its securityContext or its image's USER) sends its outbound traffic past the proxy. The injector
 also skips host-networked pods, so such a pod could bring its own istio-proxy with its own
 environment. Those belong to a Pod Security level on the plane namespaces and a rule on
-runAsUser/runAsGroup, the follow-up change, not to this policy.
+runAsUser/runAsGroup, the follow-up change, not to this policy. Under enablePrometheusMerge the
+proxy's agent also fetches the metrics path a pod names in its prometheus.io annotations from the
+application and serves it on the status port, which is outside the capture: that one path of the
+application is readable in plaintext, as on every Istio sidecar with the merge on.
 */ -}}
 {{- $p := .Values.proxySocketPolicy }}
 {{- define "zone-policy.isProxy" -}}
@@ -113,7 +130,33 @@ runAsUser/runAsGroup, the follow-up change, not to this policy.
       && (e.name != 'PROXY_CONFIG' || (has(e.value) && e.value.matches('^\\s*[{]\\s*[}]\\s*$')))))
   && (!has(c.volumeMounts) || c.volumeMounts.all(m,
       (m.name in variables.proxyMounts && m.mountPath == variables.proxyMounts[m.name])
-      || (m.name.startsWith('kube-api-access-') && m.mountPath == '/var/run/secrets/kubernetes.io/serviceaccount'))))
+      || (m.name.startsWith('kube-api-access-') && m.mountPath == '/var/run/secrets/kubernetes.io/serviceaccount')))
+  && (!has(c.lifecycle)
+      || ((!has(c.lifecycle.postStart)
+           || (has(c.lifecycle.postStart.exec) && has(c.lifecycle.postStart.exec.command)
+               && c.lifecycle.postStart.exec.command == ['pilot-agent', 'wait']))
+          && (!has(c.lifecycle.preStop)
+           || (has(c.lifecycle.preStop.exec) && has(c.lifecycle.preStop.exec.command)
+               && c.lifecycle.preStop.exec.command == ['pilot-agent', 'request', '--debug-port={{ .statusPort }}', 'POST', 'drain']))))
+  && !has(c.livenessProbe)
+  && (!has(c.startupProbe) || (has(c.startupProbe.httpGet) && !has(c.startupProbe.httpGet.host)
+      && has(c.startupProbe.httpGet.path) && c.startupProbe.httpGet.path == '/healthz/ready'
+      && string(c.startupProbe.httpGet.port) == '15021'))
+  && (!has(c.readinessProbe) || (has(c.readinessProbe.httpGet) && !has(c.readinessProbe.httpGet.host)
+      && has(c.readinessProbe.httpGet.path) && c.readinessProbe.httpGet.path == '/healthz/ready'
+      && string(c.readinessProbe.httpGet.port) == '15021'))
+  && has(c.securityContext)
+  && has(c.securityContext.runAsUser) && c.securityContext.runAsUser == 1337
+  && has(c.securityContext.runAsGroup) && c.securityContext.runAsGroup == 1337
+  && has(c.securityContext.runAsNonRoot) && c.securityContext.runAsNonRoot
+  && has(c.securityContext.allowPrivilegeEscalation) && !c.securityContext.allowPrivilegeEscalation
+  && (!has(c.securityContext.privileged) || !c.securityContext.privileged)
+  && has(c.securityContext.readOnlyRootFilesystem) && c.securityContext.readOnlyRootFilesystem
+  && has(c.securityContext.capabilities) && !has(c.securityContext.capabilities.add)
+  && has(c.securityContext.capabilities.drop) && c.securityContext.capabilities.drop == ['ALL']
+  && !has(c.securityContext.seLinuxOptions) && !has(c.securityContext.seccompProfile)
+  && !has(c.securityContext.appArmorProfile) && !has(c.securityContext.procMount)
+  && !has(c.securityContext.windowsOptions))
 {{- end }}
 {{- define "zone-policy.takesSocket" -}}
 (has(c.volumeMounts) && c.volumeMounts.exists(m, m.name == {{ .volume | squote }} && m.mountPath == {{ .mountPath | squote }}))
@@ -162,7 +205,7 @@ spec:
           'GOMEMLIMIT', 'GOMAXPROCS', 'ISTIO_META_CLUSTER_ID', 'ISTIO_META_NODE_NAME',
           'ISTIO_META_INTERCEPTION_MODE', 'ISTIO_META_WORKLOAD_NAME', 'ISTIO_META_OWNER',
           'ISTIO_META_MESH_ID', 'TRUST_DOMAIN', 'OTEL_RESOURCE_ATTRIBUTES', 'ISTIO_KUBE_APP_PROBERS',
-          'REWRITE_PROBE_LEGACY_LOCALHOST_DESTINATION'
+          'REWRITE_PROBE_LEGACY_LOCALHOST_DESTINATION', 'ISTIO_PROMETHEUS_ANNOTATIONS'
         ]
     - name: proxyEnvValues
       expression: >-
@@ -286,8 +329,11 @@ spec:
         {{ $p.proxyImage }}, no command, the arguments proxy sidecar --domain
         $(POD_NAMESPACE).svc.<cluster domain> and the three log levels (only --stsPort,
         --log_as_json and --outlierLogPath besides), no envFrom, only the injector's environment
-        variables (PROXY_CONFIG {}, CA_ADDR istiod's, no ISTIO_BOOTSTRAP_OVERRIDE) and only the
-        injector's volume mounts; leave out any istio-proxy override and any second proxy. If
+        variables (PROXY_CONFIG {}, CA_ADDR istiod's, no ISTIO_BOOTSTRAP_OVERRIDE), only the
+        injector's volume mounts, and the injector's lifecycle (pilot-agent wait or drain), probes
+        (httpGet /healthz/ready on 15021, no liveness probe) and securityContext (UID and GID 1337,
+        non-root, every capability dropped and none added, so no
+        sidecar.istio.io/capNetBindService); leave out any istio-proxy override and any second proxy. If
         every injected pod is refused, check that zone-policy proxySocketPolicy.proxyImage equals
         istiod global.proxy.image
       reason: Forbidden

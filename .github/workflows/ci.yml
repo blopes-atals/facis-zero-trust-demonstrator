@@ -322,17 +322,26 @@ jobs:
             [ -z "$(ls -A "$out")" ] || { echo "install-zone rendered into $out before refusing" >&2; exit 1; }
           done
           # zone-policy pins the injected proxy's image and status port; a copy of the tree whose
-          # zone-policy status port differs from istiod's must be refused before anything renders.
-          copy="$RUNNER_TEMP/coupling"
-          mkdir -p "$copy/scripts" "$copy/deployment/helm"
-          cp -r scripts/install-zone "$copy/scripts/"
-          cp -r deployment/helm/values deployment/helm/zone-policy deployment/helm/ztd "$copy/deployment/helm/"
-          sed -i 's/^  statusPort: 15020$/  statusPort: 15021/' "$copy/deployment/helm/zone-policy/values.yaml"
-          if RENDER_DIR="$copy/out" "$copy/scripts/install-zone/install.sh" render istiod 2>"$copy.err"; then
-            echo "install-zone rendered istiod with a zone-policy status port other than istiod's" >&2; exit 1
-          fi
-          cat "$copy.err"
-          grep -q 'proxySocketPolicy.statusPort' "$copy.err" || { echo "the refusal does not name the status port" >&2; exit 1; }
+          # zone-policy image or status port differs from istiod's must be refused before anything
+          # renders, and the refusal must name the value that differs.
+          for field in statusPort proxyImage; do
+            copy="$RUNNER_TEMP/coupling-$field"
+            mkdir -p "$copy/scripts" "$copy/deployment/helm"
+            cp -r scripts/install-zone "$copy/scripts/"
+            cp -r deployment/helm/values deployment/helm/zone-policy deployment/helm/ztd "$copy/deployment/helm/"
+            case $field in
+              statusPort) sed -i 's/^  statusPort: 15020$/  statusPort: 15021/' "$copy/deployment/helm/zone-policy/values.yaml" ;;
+              proxyImage) sed -i 's|^  proxyImage: .*$|  proxyImage: docker.io/istio/proxyv2:1.31.0|' "$copy/deployment/helm/zone-policy/values.yaml" ;;
+            esac
+            ! cmp -s "$copy/deployment/helm/zone-policy/values.yaml" deployment/helm/zone-policy/values.yaml \
+              || { echo "the test did not change zone-policy proxySocketPolicy.$field" >&2; exit 1; }
+            if RENDER_DIR="$copy/out" "$copy/scripts/install-zone/install.sh" render istiod 2>"$copy.err"; then
+              echo "install-zone rendered istiod with a zone-policy $field other than istiod's" >&2; exit 1
+            fi
+            cat "$copy.err"
+            grep -q "proxySocketPolicy.$field" "$copy.err" || { echo "the refusal does not name proxySocketPolicy.$field" >&2; exit 1; }
+            [ ! -e "$copy/out/istiod.yaml" ] || { echo "install-zone rendered istiod before refusing the $field mismatch" >&2; exit 1; }
+          done
 
       # The upstream-state checker against local stand-ins that answer 404, 500 and the wrong
       # document: an error page must count as unreachable, never as the document. Its record goes

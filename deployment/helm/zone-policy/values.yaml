@@ -52,7 +52,8 @@ peerAuthentication:
 # off, move the status port, override the proxy's configuration, image, bootstrap or volumes, or, in
 # a namespace with the injection label, opt out of injection (README.md, "The capture rule"); and
 # every mesh proxy must be the injector's istio-proxy, in a namespace with the injection label, with
-# the injector's image, arguments, environment and mounts (the proxy rule). On a pod update both rules
+# the injector's image, arguments, environment, mounts, lifecycle, probes and securityContext (the
+# proxy rule). On a pod update both rules
 # check only what the update changes.
 proxySocketPolicy:
   name: proxy-takes-spire-socket
