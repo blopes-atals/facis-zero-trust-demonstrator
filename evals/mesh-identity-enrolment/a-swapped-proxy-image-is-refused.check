@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# scenario: mesh-identity-enrolment / A swapped proxy image is refused
+# level: L2
+# requirement: The overrides that move or replace the capture or the proxy are refused in a plane namespace
+. "$EVAL_ROOT/evals/mesh-identity-enrolment/_capture.sh"
+if kind_available; then
+  cluster_setup
+  # "with any value": any image reference other than the injector's
+  dry_run eval-proxy-image --annotations=sidecar.istio.io/proxyImage=docker.io/library/busybox:1.36
+  expect_refused
+fi
+static_mentions sidecar.istio.io/proxyImage annotations

@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+# scenario: mesh-identity-enrolment / A proxy image that differs from istiod's is refused at install
+# level: L1
+# requirement: The pinned proxy image and status port equal istiod's
+# A copy of the repository with one value changed; helm and kubectl are recording shims (kubectl
+# answers `version` so `install` passes its reachability preflight), so the check proves nothing
+# was rendered or installed and touches no cluster.
+command -v python3 >/dev/null && python3 -c 'import yaml' 2>/dev/null || { echo "UNVERIFIABLE: python3 with PyYAML needed"; exit 77; }
+command -v jq >/dev/null || { echo "UNVERIFIABLE: jq needed by the installer"; exit 77; }
+R="$EVAL_TMP/repo"; mkdir -p "$R"
+cp -r "$EVAL_ROOT/scripts" "$EVAL_ROOT/deployment" "$R/"
+mkdir -p "$EVAL_TMP/cache"; [ -d "$HOME/.cache/ztd-install-zone" ] && cp -r "$HOME/.cache/ztd-install-zone/." "$EVAL_TMP/cache/"
+mkdir -p "$EVAL_TMP/bin"
+cat >"$EVAL_TMP/bin/helm" <<SH
+#!/usr/bin/env bash
+echo "helm \$*" >>"$EVAL_TMP/calls.log"; exit 1
+SH
+cat >"$EVAL_TMP/bin/kubectl" <<SH
+#!/usr/bin/env bash
+echo "kubectl \$*" >>"$EVAL_TMP/calls.log"
+case " \$* " in *" version "*) echo '{"serverVersion":{"gitVersion":"v1.35.0"}}'; exit 0;; *" config view "*) echo "apiVersion: v1"; exit 0;; esac
+exit 1
+SH
+cat >"$R/scripts/lifecycle.sh" <<SH
+#!/usr/bin/env bash
+echo "lifecycle \$*" >>"$EVAL_TMP/calls.log"; exit 1
+SH
+chmod +x "$EVAL_TMP/bin/"* "$R/scripts/lifecycle.sh"
+: >"$EVAL_TMP/kubeconfig"
+orig_vals=$(cat "$R/deployment/helm/zone-policy/values.yaml")
+read -r IST_IMG < <(python3 -c 'import sys,yaml; print(yaml.safe_load(open(sys.argv[1]))["global"]["proxy"]["image"])' "$R/deployment/helm/values/istiod.yaml")
+echo "istiod global.proxy.image: $IST_IMG"
+OTHER_IMG=docker.io/istio/proxyv2:1.30.0
+OTHER_PORT=15999
+bad=0
+run() { # run <label> <key> <value> <expect-a> <expect-b> <cmd>
+  local label=$1 key=$2 val=$3 a=$4 b=$5 cmd=$6
+  printf '%s\n' "$orig_vals" >"$R/deployment/helm/zone-policy/values.yaml"
+  python3 - "$R/deployment/helm/zone-policy/values.yaml" "$key" "$val" <<'PY'
+import re, sys
+f, key, val = sys.argv[1:4]
+t = open(f).read()
+t2, n = re.subn(rf"^(  {key}:)\s*\S.*$", rf"\g<1> {val}", t, count=1, flags=re.M)
+assert n == 1, f"no proxySocketPolicy.{key} line"
+open(f, "w").write(t2)
+PY
+  rm -rf "$EVAL_TMP/render"; mkdir -p "$EVAL_TMP/render"; : >"$EVAL_TMP/calls.log"
+  ( cd "$R" && env -u CI PATH="$EVAL_TMP/bin:$PATH" KUBECONFIG="$EVAL_TMP/kubeconfig" KUBE_CONTEXT=eval-shim \
+      RENDER_DIR="$EVAL_TMP/render" INSTALL_ZONE_CACHE="$EVAL_TMP/cache" timeout 120 bash scripts/install-zone/install.sh $cmd \
+      >"$EVAL_TMP/out" 2>&1 </dev/null ); local rc=$?
+  local o; o=$(cat "$EVAL_TMP/out")
+  local rendered; rendered=$(grep -E '^(helm (template|upgrade|install)|lifecycle)' "$EVAL_TMP/calls.log")
+  echo "--- $label ($cmd): exit $rc"; tail -n 4 <<<"$o"
+  [ -n "$rendered" ] && echo "calls: $rendered"
+  [ -n "$(ls -A "$EVAL_TMP/render")" ] && echo "render dir: $(ls "$EVAL_TMP/render")"
+  if [ $rc -eq 0 ]; then echo "FAIL: $label: the installer accepted it"; bad=1; return; fi
+  if [ -n "$rendered" ] || [ -n "$(ls -A "$EVAL_TMP/render")" ] || grep -q '^rendered ' <<<"$o"; then
+    echo "FAIL: $label: something was rendered or installed before the refusal"; bad=1; return; fi
+  grep -qF -- "$a" <<<"$o" && grep -qF -- "$b" <<<"$o" || { echo "FAIL: $label: the refusal does not name both values ($a, $b)"; bad=1; return; }
+  echo "ok: $label refused before anything was rendered or installed, naming $a and $b"
+}
+run "proxyImage differs" proxyImage "$OTHER_IMG" "$OTHER_IMG" "$IST_IMG" render
+run "statusPort differs" statusPort "$OTHER_PORT" "$OTHER_PORT" "15020" render
+run "proxyImage differs" proxyImage "$OTHER_IMG" "$OTHER_IMG" "$IST_IMG" install
+run "statusPort differs" statusPort "$OTHER_PORT" "$OTHER_PORT" "15020" install
+[ $bad -eq 0 ] && echo "PASS: both mismatches refused by render and install before anything is rendered or installed, naming both values"
+exit $bad

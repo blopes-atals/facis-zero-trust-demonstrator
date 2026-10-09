@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# scenario: mesh-identity-enrolment / An ordinary pod keeps the injector's exclusion and is admitted
+# level: L2
+# requirement: A pod in a plane namespace keeps the proxy's traffic capture at the injector's defaults
+. "$EVAL_ROOT/evals/mesh-identity-enrolment/_capture.sh"
+if kind_available; then
+  cluster_setup
+  rel=$(helm --kube-context "$CTX" list -A -o json 2>/dev/null | python3 -c "import json,sys; print(next((r[\"name\"]+\" \"+r[\"namespace\"] for r in json.load(sys.stdin) if r[\"chart\"].startswith(\"zone-policy-\")), \"\"))")
+  port=$(helm --kube-context "$CTX" get values ${rel%% *} -n ${rel##* } -a -o json 2>/dev/null | python3 -c "import json,sys; print((json.load(sys.stdin).get(\"proxySocketPolicy\") or {}).get(\"statusPort\", \"\"))")
+  [ -n "$port" ] || { echo "UNVERIFIABLE: could not read proxySocketPolicy.statusPort of the installed zone-policy release ($rel)"; exit 77; }
+  echo "status port (zone-policy release $rel): $port"
+  dry_run eval-ordinary
+  [ "$rc" -eq 0 ] || { echo "$out" | head -20; echo "FAIL: ordinary pod refused (exit $rc)"; exit 1; }
+  printf "%s" "$out" | python3 -c "
+import json, sys
+p = json.load(sys.stdin); a = p[\"metadata\"].get(\"annotations\") or {}
+ex = a.get(\"traffic.sidecar.istio.io/excludeInboundPorts\"); im = a.get(\"sidecar.istio.io/interceptionMode\")
+names = [c[\"name\"] for c in (p[\"spec\"].get(\"initContainers\") or []) + p[\"spec\"][\"containers\"]]
+print(f\"containers {names}; excludeInboundPorts={ex!r} interceptionMode={im!r}\")
+if \"istio-proxy\" not in names: sys.exit(\"FAIL: the admitted pod was not injected\")
+if ex != sys.argv[1]: sys.exit(f\"FAIL: expected excludeInboundPorts {sys.argv[1]!r}\")
+if im != \"REDIRECT\": sys.exit(\"FAIL: expected interceptionMode REDIRECT\")
+print(\"PASS: ordinary pod admitted, injected, excludeInboundPorts = status port, interceptionMode REDIRECT\")
+" "$port"; exit $?
+fi
+render_policy
+python3 - "$EVAL_TMP/zp.yaml" <<"PY"
+import sys, yaml, re
+docs = [d for d in yaml.safe_load_all(open(sys.argv[1])) if isinstance(d, dict)]
+vaps = [d for d in docs if d.get("kind") == "ValidatingAdmissionPolicy"]
+txt = yaml.safe_dump(vaps)
+ok = "traffic.sidecar.istio.io/excludeInboundPorts" in txt and "15020" in txt and "REDIRECT" in txt
+print("render: zone-policy policy names excludeInboundPorts with 15020 and interceptionMode REDIRECT:", ok)
+if not ok: sys.exit("FAIL: the render does not carry the injector defaults the ordinary pod must match")
+print("UNVERIFIABLE: admission of an injected ordinary pod needs a kind cluster with the zone installed (Docker unreachable or EVAL_KIND not set)")
+sys.exit(77)
+PY

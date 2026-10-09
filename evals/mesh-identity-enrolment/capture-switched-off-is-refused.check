@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# scenario: mesh-identity-enrolment / Capture switched off is refused
+# level: L2
+# requirement: A pod in a plane namespace keeps the proxy's traffic capture at the injector's defaults
+. "$EVAL_ROOT/evals/mesh-identity-enrolment/_capture.sh"
+if kind_available; then
+  cluster_setup
+  dry_run eval-intercept-none --annotations=sidecar.istio.io/interceptionMode=NONE
+  expect_refused
+fi
+static_mentions sidecar.istio.io/interceptionMode annotations

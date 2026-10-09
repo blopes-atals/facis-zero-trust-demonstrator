@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# scenario: mesh-identity-enrolment / The evidence lists the refusals
+# level: L2
+# requirement: The capture rule is proven and explained
+# The proof needs Docker and a kind cluster; this check reads the evidence it committed, after
+# confirming the evidence was produced from a clean tree whose policy, proof script and installer
+# equal the ones on this branch (otherwise it is stale: UNVERIFIABLE).
+cd "$EVAL_ROOT" || exit 2
+ev=docs/evidences/mesh-identity/evidence.md env=docs/evidences/mesh-identity/environment.json
+[ -f "$ev" ] && [ -f "$env" ] || { echo "FAIL: $ev or $env missing"; exit 1; }
+read -r c dirty fails < <(python3 -c 'import json,sys; j=json.load(open(sys.argv[1])); print(j.get("commit") or "-", j.get("dirty"), (j.get("result") or {}).get("failures"))' "$env")
+echo "evidence recorded at commit $c, dirty=$dirty, failures=$fails"
+if [ "$c" = - ] || ! git cat-file -e "$c^{commit}" 2>/dev/null; then
+  echo "UNVERIFIABLE: the evidence's commit is unknown to this repository; rerun scripts/verify-mesh-identity/verify.sh on kind"; exit 77; fi
+changed=$(git diff --name-only "$c" HEAD -- deployment/helm/zone-policy scripts/verify-mesh-identity scripts/install-zone deployment/helm/values)
+if [ -n "$changed" ] || [ "$dirty" != False ]; then
+  echo "changed since the evidence commit: ${changed:-none}"
+  echo "UNVERIFIABLE: the committed evidence is stale (policy, proof or installer changed since $c, or the tree was dirty); rerun the proof on kind"; exit 77; fi
+python3 - "$ev" <<'PY'
+import re, sys
+t = open(sys.argv[1]).read()
+# Items: "- PASS: ..." / "- FAIL: ..." with their indented continuation lines.
+items = re.findall(r"^- (PASS|FAIL): (.*(?:\n  .*)*)", t, re.M)
+def find(*pats):
+    return [(s, b) for s, b in items if all(re.search(p, b, re.I) for p in pats)]
+pol = r"ValidatingAdmissionPolicy 'proxy-takes-spire-socket'|proxy-takes-spire-socket"
+cases = {
+  "refusal: excluded port": [r"excludeInboundPorts", r"8080", r"refused", pol],
+  "refusal: capture mode NONE": [r"interceptionMode", r"NONE", r"refused", pol],
+  "refusal: moved status port": [r"status\.sidecar\.istio\.io/port", r"refused", pol],
+  "refusal: proxy-config override": [r"proxy\.istio\.io/config", r"refused", pol],
+  "refusal: injection opt-out": [r"sidecar\.istio\.io/inject", r"opt", r"refused", pol],
+  "refusal: swapped proxy image": [r"sidecar\.istio\.io/proxyImage", r"refused", pol],
+  "refusal: pod-supplied istio-proxy": [r"(brings|own|pod-supplied) istio-proxy", r"refused", pol],
+  "proxy rule: istio-proxy of another image on the SPIRE socket": [r"istio-proxy", r"another image", r"SPIRE socket", r"refused", r"proxy rule", pol],
+  "proxy rule: second proxy under another name": [r"second proxy", r"refused", r"proxy rule", pol],
+  "ordinary pod admitted with the status-port exclusion": [r"admit", r"excludeInboundPorts", r"15020", r"REDIRECT"],
+  "istiod pod admitted in istio-system": [r"istiod", r"admitted in istio-system"],
+  "istiod pod refused in an injected plane namespace": [r"istiod", r"refused in", r"injection label", pol],
+  "istio-cni pod admitted in istio-system": [r"istio-cni", r"admitted in istio-system"],
+  "istio-cni pod refused in an injected plane namespace": [r"istio-cni", r"refused in", r"injection label", pol],
+  "update: label on a running pod admitted": [r"label", r"running pod", r"admitted"],
+  "update: added exclusion refused": [r"update", r"exclu", r"refused", pol],
+}
+bad = 0
+for k, pats in cases.items():
+    hits = find(*pats)
+    ok = any(s == "PASS" for s, _ in hits) and not any(s == "FAIL" for s, _ in hits)
+    first = hits[0][1].splitlines()[0][:150] if hits else ""
+    print(f"{'found' if ok else 'MISSING'}: {k}" + (f"\n    > {first}" if hits else ""))
+    bad |= not ok
+if bad: sys.exit("FAIL: the evidence does not show every refusal and admission the scenario lists")
+print("PASS: the evidence lists every refusal naming the policy, the proxy-rule refusals, the admitted pods and the update pair")
+PY

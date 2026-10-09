@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# scenario: mesh-identity-enrolment / An injection opt-out is refused
+# level: L2
+# requirement: The injection opt-out is refused where the plane namespace is injected
+. "$EVAL_ROOT/evals/mesh-identity-enrolment/_capture.sh"
+# "labelled or annotated": both forms must be refused.
+if kind_available; then
+  cluster_setup
+  dry_run eval-optout-label --labels=sidecar.istio.io/inject=false
+  echo "--- label form"; ( expect_refused ) || exit 1
+  dry_run eval-optout-annotation --annotations=sidecar.istio.io/inject=false
+  echo "--- annotation form"; ( expect_refused ) || exit 1
+  echo "PASS: both the label and the annotation opt-out are refused naming the policy"; exit 0
+fi
+( static_mentions sidecar.istio.io/inject labels ); a=$?
+( static_mentions sidecar.istio.io/inject annotations ); b=$?
+[ $a -eq 1 ] || [ $b -eq 1 ] && exit 1
+exit 77
