@@ -201,7 +201,9 @@ func (l *Listener) handshake(ctx context.Context, raw net.Conn) (*Conn, error) {
 		_ = tc.Close()
 		return nil, timeoutError(ctx)
 	}
-	return l.p.finish(ctx, tc, rec)
+	// The verdict, the PeerVerifier and the binding count within the deadline and the slot,
+	// which handle holds until the connection is delivered.
+	return l.p.finishWithin(ctx, tc, rec)
 }
 
 func (l *Listener) refused(err error) {

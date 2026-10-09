@@ -48,8 +48,8 @@ type Config struct {
 	// otherwise.
 	ExpectedPeerIdentity string
 
-	// HandshakeTimeout bounds the whole handshake, attestation included. Zero means
-	// DefaultHandshakeTimeout. Dial also honours the context deadline, whichever is sooner.
+	// HandshakeTimeout bounds the whole handshake, attestation and PeerVerifier included. Zero
+	// means DefaultHandshakeTimeout. Dial also honours the context deadline, whichever is sooner.
 	HandshakeTimeout time.Duration
 
 	// ChannelLifetime bounds PeerAttestation.ValidUntil. Zero means DefaultChannelLifetime.
@@ -60,7 +60,8 @@ type Config struct {
 	MaxConcurrentHandshakes int
 
 	// PeerVerifier, when set, is asked after a successful attestation whether the peer may
-	// connect. Any error refuses the channel.
+	// connect. Any error refuses the channel. It runs within the handshake deadline and slot: a
+	// verifier still running at the deadline refuses the channel with ErrHandshakeTimeout.
 	PeerVerifier PeerVerifier
 
 	// inProcess selects the in-process CMC (libapi). Set only through atlstest.

@@ -224,6 +224,12 @@ sw-driver evidence is signed with a bare key and has no certificate.
   delay the others.
 - At most `MaxConcurrentHandshakes` handshakes run at once per listener, and at most that many
   across all `Dial` calls of the process.
+- The handshake slot and the handshake deadline cover the whole handshake: TLS, the attestation
+  exchange, the verdict rules, the `PeerVerifier` and the channel binding. A `PeerVerifier` therefore
+  never runs more often at once than the cap allows. When the deadline passes while it runs, the
+  connection is closed at once and the handshake is refused with `ErrHandshakeTimeout`, also when
+  the verifier ignores its context and accepts the peer later. On the listener the slot stays
+  taken until the verifier returns.
 - A listener takes a handshake slot before it accepts a TCP connection. While every slot is busy it
   stops accepting, and further connections wait in the operating system's backlog: the process
   holds no goroutine, descriptor or timer for them, so the cap bounds what incoming connections
@@ -233,9 +239,11 @@ sw-driver evidence is signed with a bare key and has no certificate.
   also stops the listener accepting.
 - A `Dial` call waits for a slot up to its deadline and is then refused with
   `ErrHandshakeTimeout`; the listener never refuses for want of a slot.
-- `Dial` returns within the context deadline or `HandshakeTimeout`, whichever is sooner. If CMC is
-  still blocked in the peer exchange at that point, the connection it returns later is closed. Its
-  goroutine keeps its handshake slot until CMC gives up, so stalled peers cannot exceed the cap.
+- `Dial` returns within the context deadline or `HandshakeTimeout`, whichever is sooner, peer
+  verification included. If CMC is still blocked in the peer exchange at that point, the
+  connection it returns later is closed; a connection whose `PeerVerifier` is still running is
+  closed at the deadline. The goroutine keeps its handshake slot until CMC and the verifier have
+  returned, so stalled peers and slow verifiers cannot exceed the cap.
 - The listener closes a connection whose handshake outlives `HandshakeTimeout`.
 
 ## Errors of an established channel

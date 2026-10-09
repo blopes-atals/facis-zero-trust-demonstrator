@@ -6,10 +6,13 @@ package atls_test
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"net"
 	"os"
 	"runtime"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -216,4 +219,149 @@ func TestPendingConnectionExpires(t *testing.T) {
 		}
 		exchange(t, cli, a.conn, "in time")
 	})
+}
+
+// Verifiers for the slow-verifier tests: one waits for its context to end, one sleeps past the
+// deadline ignoring its context and then accepts the peer.
+var (
+	blockingVerifier = atls.PeerVerifierFunc(func(ctx context.Context, _ atls.PeerAttestation) error {
+		<-ctx.Done()
+		return ctx.Err()
+	})
+	lateVerifier = atls.PeerVerifierFunc(func(context.Context, atls.PeerAttestation) error {
+		time.Sleep(3 * time.Second)
+		return nil
+	})
+)
+
+// The PeerVerifier runs within the handshake deadline: a verifier still running when the deadline
+// passes refuses the channel as a handshake timeout, whether it honours its context or not.
+func TestSlowVerifierTimesOut(t *testing.T) {
+	f := newFixture(t)
+	const deadline = 1500 * time.Millisecond
+	verifiers := map[string]atls.PeerVerifier{"honours its context": blockingVerifier, "ignores its context": lateVerifier}
+
+	for name, v := range verifiers {
+		t.Run("dialer, verifier "+name, func(t *testing.T) {
+			ln := listen(t, f.b.Config(t, f.a))
+			acc := acceptOne(ln, 15*time.Second)
+			cc := f.a.Config(t, f.b)
+			cc.HandshakeTimeout = deadline
+			cc.PeerVerifier = v
+			start := time.Now()
+			c, err := atls.Dial(context.Background(), ln.Addr().String(), cc)
+			if c != nil {
+				_ = c.Close()
+			}
+			assertRefusal(t, err, atls.ErrHandshakeTimeout)
+			if d := time.Since(start); d > deadline+time.Second {
+				t.Fatalf("Dial returned after %v, handshake timeout %v", d, deadline)
+			}
+			srv := <-acc
+			if srv.err != nil {
+				t.Fatalf("accept: %v", srv.err)
+			}
+			defer func() { _ = srv.conn.Close() }()
+			// The dialer closes its end at the deadline, not when the verifier returns.
+			_ = srv.conn.SetReadDeadline(start.Add(deadline + time.Second))
+			if _, err := srv.conn.Read(make([]byte, 1)); err == nil {
+				t.Fatal("the dialer sent data")
+			} else if ne, ok := err.(net.Error); ok && ne.Timeout() {
+				t.Fatal("the dialer did not close the connection at the deadline")
+			}
+		})
+		t.Run("listener, verifier "+name, func(t *testing.T) {
+			sc := f.b.Config(t, f.a)
+			sc.HandshakeTimeout = deadline
+			sc.PeerVerifier = v
+			ln := listen(t, sc)
+			acc := acceptOne(ln, 15*time.Second)
+			start := time.Now()
+			cli, err := dial(t, ln.Addr().String(), f.a.Config(t, f.b))
+			if err != nil {
+				t.Fatalf("dial: %v", err)
+			}
+			defer func() { _ = cli.Close() }()
+			// The listener closes the connection at the deadline, not when the verifier returns.
+			_ = cli.SetReadDeadline(start.Add(deadline + time.Second))
+			if _, err := cli.Read(make([]byte, 1)); err == nil {
+				t.Fatal("the listener sent data")
+			} else if ne, ok := err.(net.Error); ok && ne.Timeout() {
+				t.Fatal("the listener did not close the connection at the deadline")
+			}
+			err = (<-acc).err
+			assertRefusal(t, err, atls.ErrHandshakeTimeout)
+			if ae := refusalError(t, err); ae.Peer == nil || ae.Peer.String() != cli.LocalAddr().String() {
+				t.Fatalf("refusal names peer %v, want %s", ae.Peer, cli.LocalAddr())
+			}
+		})
+	}
+}
+
+// Peer verification holds the handshake slot: with a slow verifier on both ends, no end runs
+// more verifications at once than its cap.
+func TestSlowVerifiersRespectCap(t *testing.T) {
+	f := newFixture(t)
+	const clients, capacity = 6, 2
+	var srvRunning, srvPeak, cliRunning, cliPeak atomic.Int64
+	slow := func(running, peak *atomic.Int64) atls.PeerVerifier {
+		return atls.PeerVerifierFunc(func(context.Context, atls.PeerAttestation) error {
+			n := running.Add(1)
+			for p := peak.Load(); n > p && !peak.CompareAndSwap(p, n); p = peak.Load() {
+			}
+			time.Sleep(300 * time.Millisecond)
+			running.Add(-1)
+			return nil
+		})
+	}
+	sc := f.b.Config(t, f.a)
+	sc.MaxConcurrentHandshakes = capacity
+	sc.HandshakeTimeout = 30 * time.Second
+	sc.PeerVerifier = slow(&srvRunning, &srvPeak)
+	ln := listen(t, sc)
+	cc := f.a.Config(t, f.b)
+	cc.MaxConcurrentHandshakes = capacity
+	cc.HandshakeTimeout = 30 * time.Second
+	cc.PeerVerifier = slow(&cliRunning, &cliPeak)
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 2*clients)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for range clients {
+			a := <-acceptOne(ln, 30*time.Second)
+			if a.err != nil {
+				errs <- a.err
+				continue
+			}
+			_ = a.conn.Close()
+		}
+	}()
+	for range clients {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			c, err := dial(t, ln.Addr().String(), cc)
+			if err != nil {
+				errs <- err
+				return
+			}
+			_ = c.Close()
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Errorf("handshake: %v", err)
+	}
+	if p := srvPeak.Load(); p > capacity {
+		t.Fatalf("listener ran %d verifications at once, cap %d", p, capacity)
+	}
+	if p := cliPeak.Load(); p > capacity {
+		t.Fatalf("dialer ran %d verifications at once, cap %d", p, capacity)
+	}
+	if srvPeak.Load() < 2 && cliPeak.Load() < 2 {
+		t.Fatal("no verifications overlapped; the test proves nothing")
+	}
 }

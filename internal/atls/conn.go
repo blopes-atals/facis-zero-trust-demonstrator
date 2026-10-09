@@ -159,6 +159,24 @@ func (p *prepared) finish(ctx context.Context, tc *tls.Conn, rec *recorder) (*Co
 	return conn, nil
 }
 
+// finishWithin runs finish within the handshake deadline: the connection is closed when ctx
+// ends, so a PeerVerifier blocked on it is cut short, and an outcome reached after the deadline
+// — a success from a verifier that ignores ctx included — is refused as a handshake timeout.
+func (p *prepared) finishWithin(ctx context.Context, tc *tls.Conn, rec *recorder) (*Conn, error) {
+	if ctx.Err() != nil {
+		_ = tc.Close()
+		return nil, attribute(timeoutError(ctx), tc.RemoteAddr())
+	}
+	stop := context.AfterFunc(ctx, func() { _ = tc.Close() })
+	conn, err := p.finish(ctx, tc, rec)
+	timedOut := !stop()
+	if timedOut || ctx.Err() != nil {
+		_ = tc.Close()
+		return nil, attribute(timeoutError(ctx), tc.RemoteAddr())
+	}
+	return conn, err
+}
+
 // accept is finish without the handling of a refusal.
 func (p *prepared) accept(ctx context.Context, tc *tls.Conn, rec *recorder) (*Conn, error) {
 	cs := tc.ConnectionState()
@@ -191,8 +209,8 @@ func (p *prepared) accept(ctx context.Context, tc *tls.Conn, rec *recorder) (*Co
 
 // Dial opens a mutually attested TLS 1.3 channel to addr. It returns only when the server's
 // certificate carries the expected identity, both attestations verified with verdict success,
-// the peer's evidence is valid and the PeerVerifier (if any) accepted the peer. The handshake is
-// bounded by ctx and Config.HandshakeTimeout, whichever ends first.
+// the peer's evidence is valid and the PeerVerifier (if any) accepted the peer. The handshake,
+// peer verification included, is bounded by ctx and Config.HandshakeTimeout, whichever ends first.
 func Dial(ctx context.Context, addr string, cfg Config) (*Conn, error) {
 	p, err := cfg.prepare(roleClient)
 	if err != nil {
@@ -213,31 +231,34 @@ func Dial(ctx context.Context, addr string, cfg Config) (*Conn, error) {
 	}
 
 	type dialed struct {
-		conn *tls.Conn
+		conn *Conn
 		err  error
 	}
 	done := make(chan dialed, 1)
 	go func() {
-		// The slot is held until CMC returns, so stalled handshakes the caller gave up on still
-		// count against the cap.
+		// The slot is held until CMC returns and the connection is finished, so stalled
+		// handshakes the caller gave up on and peer verifications still running count against
+		// the cap.
 		defer dialGate.release()
 		c, err := attestedtls.Dial("tcp", addr, tlsCfg, opts...)
-		done <- dialed{c, err}
+		if err != nil {
+			refusal := classify(err, rec, false, ctx)
+			// CMC v0.9.15 returns no connection with an error, so such a refusal carries no
+			// peer address; should it ever return one, close it and name its peer.
+			if c != nil {
+				refusal.Peer = c.RemoteAddr()
+				_ = c.Close()
+			}
+			done <- dialed{nil, refusal}
+			return
+		}
+		conn, err := p.finishWithin(ctx, c, rec)
+		done <- dialed{conn, err}
 	}()
 
 	select {
 	case d := <-done:
-		if d.err != nil {
-			refusal := classify(d.err, rec, false, ctx)
-			// CMC v0.9.15 returns no connection with an error, so such a refusal carries no
-			// peer address; should it ever return one, close it and name its peer.
-			if d.conn != nil {
-				refusal.Peer = d.conn.RemoteAddr()
-				_ = d.conn.Close()
-			}
-			return nil, refusal
-		}
-		return p.finish(ctx, d.conn, rec)
+		return d.conn, d.err
 	case <-ctx.Done():
 		// CMC's attestation phase has no deadline; close whatever it returns later.
 		go func() {
