@@ -1,6 +1,6 @@
-# Mesh identity evidence (2026-10-09T12:53:33Z)
+# Mesh identity evidence (2026-10-09T13:41:31Z)
 
-Cluster context `kind-ztd`, zone file `deployment/helm/ztd/ci/values.yaml` (trust domain `kind.facis-ztd.local`), installed with `scripts/install-zone/install.sh`: the seven releases `ztd`, `spire-crds`, `spire`, `istio-base`, `istiod`, `istio-cni`, `zone-policy`. Commit `9c16abd8fb1f01b655a05f977f37da0fb7039644`, tree dirty: false. Versions in `environment.json`.
+Cluster context `kind-ztd`, zone file `deployment/helm/ztd/ci/values.yaml` (trust domain `kind.facis-ztd.local`), installed with `scripts/install-zone/install.sh`: the seven releases `ztd`, `spire-crds`, `spire`, `istio-base`, `istiod`, `istio-cni`, `zone-policy`. Commit `9a6b3b9d9027543caf8f66f16ae4847ce5bc91d2`, tree dirty: false. Versions in `environment.json`.
 
 Probe results: an HTTP code with the first line of the body when the call went through its proxies; `denied(28)` when a raw TCP connection timed out because the policy dropped the packets; `denied(56)` when the peer reset the connection; `error(<exit>)`, which fails a negative check, for any other failure (a name that does not resolve, an exec that failed).
 
@@ -34,7 +34,7 @@ ztd-worker Ready <none> 3d4h v1.35.5 172.18.0.4 <none> Debian GNU/Linux 13 (trix
 ## 2. install-order-idempotent: the zone from an empty cluster, twice
 
 - PASS: first installer run from an empty cluster returns 0, no manual step between the releases
-  124s
+  113s
 
 ```
   1/7  ztd          into ztd-system    chart deployment/helm/ztd values the zone file
@@ -62,7 +62,7 @@ zone installed: every pod in ztd-mgmt ztd-data spire-system istio-system is Read
 ```
 
 - PASS: second installer run returns 0
-  80s; 7 releases upgraded in place
+  75s; 7 releases upgraded in place
 - PASS: helm get manifest of every release is identical between the two runs
   7 of 7 identical
 - PASS: every pod in the plane and control-plane namespaces is Ready (the installer's exit condition)
@@ -85,14 +85,14 @@ ztd ztd-system 2 deployed ztd-0.2.0
 
 ```
 NAME READY STATUS RESTARTS AGE IP NODE NOMINATED NODE READINESS GATES
-spire-agent-vgbmn 1/1 Running 0 3m8s 172.18.0.4 ztd-worker <none> <none>
-spire-server-0 2/2 Running 0 3m8s 10.244.1.250 ztd-worker <none> <none>
-spire-spiffe-csi-driver-x8cxs 2/2 Running 0 3m8s 10.244.1.152 ztd-worker <none> <none>
+spire-agent-zpp2j 1/1 Running 0 2m53s 172.18.0.4 ztd-worker <none> <none>
+spire-server-0 2/2 Running 0 2m53s 10.244.1.187 ztd-worker <none> <none>
+spire-spiffe-csi-driver-rhrlw 2/2 Running 0 2m53s 10.244.1.185 ztd-worker <none> <none>
 
 NAME READY STATUS RESTARTS AGE IP NODE NOMINATED NODE READINESS GATES
-istio-cni-node-njxlm 1/1 Running 0 114s 10.244.1.173 ztd-worker <none> <none>
-istio-cni-node-vdqss 1/1 Running 0 114s 10.244.0.122 ztd-control-plane <none> <none>
-istiod-84f7f755d9-5qxqj 1/1 Running 0 2m1s 10.244.1.190 ztd-worker <none> <none>
+istio-cni-node-4d659 1/1 Running 0 106s 10.244.1.148 ztd-worker <none> <none>
+istio-cni-node-mrqkl 1/1 Running 0 106s 10.244.0.133 ztd-control-plane <none> <none>
+istiod-84f7f755d9-d87nd 1/1 Running 0 115s 10.244.1.63 ztd-worker <none> <none>
 ```
 
 
@@ -114,10 +114,10 @@ istiod-84f7f755d9-5qxqj 1/1 Running 0 2m1s 10.244.1.190 ztd-worker <none> <none>
 
 ```
 NAME STATUS AGE PLANE ISTIO-INJECTION
-ztd-mgmt Active 3m36s management enabled
-ztd-data Active 3m36s data enabled
-spire-system Active 3m36s management 
-istio-system Active 3m36s management 
+ztd-mgmt Active 3m18s management enabled
+ztd-data Active 3m18s data enabled
+spire-system Active 3m18s management 
+istio-system Active 3m18s management 
 ```
 
 - PASS: spire-system is a management-plane namespace without the injection label
@@ -165,19 +165,19 @@ The three proxy-less stand-ins (`unregistered-svid` in ztd-data, `probe` in ztd-
 
 ```
 NAME READY STATUS RESTARTS AGE IP NODE NOMINATED NODE READINESS GATES
-caller 3/3 Running 0 21s 10.244.1.144 ztd-worker <none> <none>
-data-plain 2/2 Running 0 21s 10.244.1.191 ztd-worker <none> <none>
-pdp-adapter 2/2 Running 0 21s 10.244.1.145 ztd-worker <none> <none>
-peer 2/2 Running 0 21s 10.244.1.223 ztd-worker <none> <none>
-probe 1/1 Running 0 18s 10.244.1.30 ztd-worker <none> <none>
-unregistered 0/2 Init:1/2 0 21s 10.244.1.45 ztd-worker <none> <none>
-unregistered-svid 1/1 Running 0 18s 10.244.1.208 ztd-worker <none> <none>
+caller 3/3 Running 0 22s 10.244.1.35 ztd-worker <none> <none>
+data-plain 2/2 Running 0 22s 10.244.1.18 ztd-worker <none> <none>
+pdp-adapter 2/2 Running 0 22s 10.244.1.163 ztd-worker <none> <none>
+peer 2/2 Running 0 22s 10.244.1.175 ztd-worker <none> <none>
+probe 1/1 Running 0 18s 10.244.1.49 ztd-worker <none> <none>
+unregistered 0/2 Init:1/2 0 22s 10.244.1.52 ztd-worker <none> <none>
+unregistered-svid 1/1 Running 0 18s 10.244.1.165 ztd-worker <none> <none>
 
 NAME READY STATUS RESTARTS AGE IP NODE NOMINATED NODE READINESS GATES
-mgmt-caller 2/2 Running 0 21s 10.244.1.111 ztd-worker <none> <none>
-openbao 2/2 Running 0 21s 10.244.1.143 ztd-worker <none> <none>
-probe 1/1 Running 0 18s 10.244.1.93 ztd-worker <none> <none>
-tsa-policy-engine 2/2 Running 0 21s 10.244.1.110 ztd-worker <none> <none>
+mgmt-caller 2/2 Running 0 21s 10.244.1.205 ztd-worker <none> <none>
+openbao 2/2 Running 0 21s 10.244.1.123 ztd-worker <none> <none>
+probe 1/1 Running 0 18s 10.244.1.202 ztd-worker <none> <none>
+tsa-policy-engine 2/2 Running 0 21s 10.244.1.46 ztd-worker <none> <none>
 ```
 
 
@@ -188,13 +188,13 @@ tsa-policy-engine 2/2 Running 0 21s 10.244.1.110 ztd-worker <none> <none>
 - PASS: the SVID fetched over the mounted socket carries the SPIFFE ID of the pod's service account in the zone's trust domain
   spiffe://kind.facis-ztd.local/ns/ztd-data/sa/stand-in
 - PASS: the SVID chains to the SPIRE server's CA (the bundle read from the server)
-  issuer=serialNumber=294705433083770389919104975681959342629,CN=kind.facis-ztd.local,O=FACIS ZTD,C=ARPA; SPIRE CA subject=serialNumber=294705433083770389919104975681959342629,CN=kind.facis-ztd.local,O=FACIS ZTD,C=ARPA
+  issuer=serialNumber=44780954344649204200196373083196263492,CN=kind.facis-ztd.local,O=FACIS ZTD,C=ARPA; SPIRE CA subject=serialNumber=44780954344649204200196373083196263492,CN=kind.facis-ztd.local,O=FACIS ZTD,C=ARPA
 
 ```
 subject=O=SPIRE,C=US
-issuer=serialNumber=294705433083770389919104975681959342629,CN=kind.facis-ztd.local,O=FACIS ZTD,C=ARPA
-notBefore=Oct  9 12:57:44 2026 GMT
-notAfter=Oct  9 16:57:54 2026 GMT
+issuer=serialNumber=44780954344649204200196373083196263492,CN=kind.facis-ztd.local,O=FACIS ZTD,C=ARPA
+notBefore=Oct  9 13:44:59 2026 GMT
+notAfter=Oct  9 17:45:09 2026 GMT
 X509v3 Subject Alternative Name: 
     URI:spiffe://kind.facis-ztd.local/ns/ztd-data/sa/stand-in
 ```
@@ -221,18 +221,18 @@ X509v3 Subject Alternative Name:
 
 ```
 RESOURCE NAME     TYPE           STATUS     VALID CERT     SERIAL NUMBER                        NOT AFTER                NOT BEFORE               TRUST DOMAIN
-default           Cert Chain     ACTIVE     true           0add432190806e3a9d835496f8bdb910     2026-10-09T16:57:54Z     2026-10-09T12:57:44Z     kind.facis-ztd.local
-ROOTCA            CA             ACTIVE     true           ddb633ab74ca7fb36452a20a8459b225     2026-10-10T12:54:33Z     2026-10-09T12:54:23Z     kind.facis-ztd.local
+default           Cert Chain     ACTIVE     true           5d89dca874a7fd003e146bd44a6f3ccb     2026-10-09T17:45:09Z     2026-10-09T13:44:59Z     kind.facis-ztd.local
+ROOTCA            CA             ACTIVE     true           21b07f82e54c183f44500abef1fc8c44     2026-10-10T13:41:57Z     2026-10-09T13:41:47Z     kind.facis-ztd.local
 ```
 
 - PASS: the proxy's workload certificate (default) has O = SPIRE in its subject
   subject=O=SPIRE,C=US
 - PASS: its issuer is the SPIRE server CA and it chains to SPIRE's bundle
-  issuer=serialNumber=294705433083770389919104975681959342629,CN=kind.facis-ztd.local,O=FACIS ZTD,C=ARPA
+  issuer=serialNumber=44780954344649204200196373083196263492,CN=kind.facis-ztd.local,O=FACIS ZTD,C=ARPA
 - PASS: its URI SAN equals the SVID fetched over the socket
   spiffe://kind.facis-ztd.local/ns/ztd-data/sa/stand-in
 - PASS: the proxy holds a root bundle under ROOTCA, and it is the SPIRE server's CA
-  ROOTCA (SPIFFE validator, trust domains: kind.facis-ztd.local) 5D:7B:DA:97:7E:4E:C8:A6:75:F7:1A:D8:00:29:A2:96:FB:BA:9E:36:4D:A9:81:C7:1D:EC:72:34:E7:32:9F:AE, SPIRE CA 5D:7B:DA:97:7E:4E:C8:A6:75:F7:1A:D8:00:29:A2:96:FB:BA:9E:36:4D:A9:81:C7:1D:EC:72:34:E7:32:9F:AE
+  ROOTCA (SPIFFE validator, trust domains: kind.facis-ztd.local) D4:ED:32:8D:3F:4C:FF:2A:D9:60:51:73:18:B8:E1:CC:3F:94:D0:23:A0:E8:54:70:B5:6A:1F:4F:CD:5B:1A:61, SPIRE CA D4:ED:32:8D:3F:4C:FF:2A:D9:60:51:73:18:B8:E1:CC:3F:94:D0:23:A0:E8:54:70:B5:6A:1F:4F:CD:5B:1A:61
 - PASS: the ROOTCA bundle trusts the zone's trust domain and no other
   kind.facis-ztd.local
 - PASS: istiod's own CA did not issue it (istiod's root is a certificate, and the leaf does not verify against it)
@@ -264,13 +264,21 @@ The same policy holds the capture rule (capture-at-injector-defaults). The Istio
 - PASS: capture-at-injector-defaults: a pod that brings its own istio-proxy container (another image, merged over the injected proxy and recorded in proxy.istio.io/overrides) is refused at admission
   error when creating "STDIN": pods "capture-proxy-override" is forbidden: ValidatingAdmissionPolicy 'proxy-takes-spire-socket' with binding 'proxy-takes-spire-socket' denied request: capture rule: a po
 
-Behind the capture rule, the proxy rule of the same policy holds every mesh proxy to the injector's own, whatever path brought it into the pod: named `istio-proxy`, the image `docker.io/istio/proxyv2:1.31.1@sha256:d86cba0dd1eb15c00b6901c69ce5ae3d2d5f8427a47751098cf8c3ab2a4a62e9`, the injector's arguments, environment and mounts, and only in a namespace with the injection label. Two proxies that pass the socket and capture rules (each mounts the SPIRE socket, and no override is recorded), server-side dry runs in `ztd-data`:
+Behind the capture rule, the proxy rule of the same policy holds every mesh proxy to the injector's own, whatever path brought it into the pod: named `istio-proxy`, the image `docker.io/istio/proxyv2:1.31.1@sha256:d86cba0dd1eb15c00b6901c69ce5ae3d2d5f8427a47751098cf8c3ab2a4a62e9`, the injector's arguments, environment, mounts, lifecycle, probes and securityContext, and only in a namespace with the injection label. Proxies that pass the socket and capture rules (each mounts the SPIRE socket, and no override is recorded), server-side dry runs in `ztd-data`:
 
 - PASS: proxy rule: a pod whose istio-proxy runs another image and mounts the SPIRE socket (merged over the injected proxy under a pre-set sidecar.istio.io/status, so no override is recorded) is refused at admission, naming the proxy rule
   error when creating "STDIN": pods "proxy-other-image" is forbidden: ValidatingAdmissionPolicy 'proxy-takes-spire-socket' with binding 'proxy-takes-spire-socket' denied request: proxy rule: every mesh 
 - PASS: proxy rule: a second proxy next to the injected one (container mesh, the injector's image and arguments, its own PROXY_CONFIG, the SPIRE socket mounted) is refused at admission: every mesh proxy is the injector's istio-proxy
   error when creating "STDIN": pods "proxy-second" is forbidden: ValidatingAdmissionPolicy 'proxy-takes-spire-socket' with binding 'proxy-takes-spire-socket' denied request: proxy rule: every mesh proxy
+- PASS: proxy rule: the same pre-set sidecar.istio.io/status with an istio-proxy of the injector's image and nothing else is admitted (the control for the next two refusals)
+  pod/proxy-preset created (server dry run)
+- PASS: proxy rule: a pod whose istio-proxy runs the injector's image but adds its own postStart hook (exec sh -c, under a pre-set sidecar.istio.io/status) is refused at admission: the proxy's lifecycle is the injector's (pilot-agent drain or wait) or none
+  error when creating "STDIN": pods "proxy-hook" is forbidden: ValidatingAdmissionPolicy 'proxy-takes-spire-socket' with binding 'proxy-takes-spire-socket' denied request: proxy rule: every mesh proxy i
+- PASS: proxy rule: a pod whose istio-proxy runs the injector's image but adds the NET_ADMIN capability (under a pre-set sidecar.istio.io/status) is refused at admission: the proxy's securityContext is the injector's (UID and GID 1337, non-root, every capability dropped, read-only root)
+  error when creating "STDIN": pods "proxy-net-admin" is forbidden: ValidatingAdmissionPolicy 'proxy-takes-spire-socket' with binding 'proxy-takes-spire-socket' denied request: proxy rule: every mesh pr
 - PASS: an ordinary pod in the same namespace is admitted, its proxy on the SPIRE socket
+- PASS: proxy rule: an ordinary pod annotated prometheus.io/scrape "true" and prometheus.io/port "9090" is admitted, its proxy carrying the ISTIO_PROMETHEUS_ANNOTATIONS the injector writes under the mesh's enablePrometheusMerge
+  {"name":"ISTIO_PROMETHEUS_ANNOTATIONS","value":"{\"scrape\":\"true\",\"path\":\"\",\"port\":\"9090\"}"}
 - PASS: capture-at-injector-defaults: the equality rule admits exactly what the injector writes: the admitted pod carries traffic.sidecar.istio.io/excludeInboundPorts "15020" (the status port alone) and sidecar.istio.io/interceptionMode REDIRECT
   {"sidecar.istio.io/interceptionMode":"REDIRECT","traffic.sidecar.istio.io/excludeInboundPorts":"15020","traffic.sidecar.istio.io/includeInboundPorts":"*","traffic.sidecar.istio.io/includeOutboundIPRanges":"*"}
 
@@ -331,7 +339,7 @@ The security baseline sets TLS 1.3 as the minimum (ADR 005), and the `istiod` re
 ## 10. traffic-through-the-proxies
 
 - PASS: the peer sees the caller's SPIFFE identity in X-Forwarded-Client-Cert
-  By=spiffe://kind.facis-ztd.local/ns/ztd-data/sa/stand-in;Hash=a5f2625c7db6766d4499e6b748f5d6e980aadb6cc5a7cbc3e4f8ae010404beff;Subject="O=SPIRE,C=US";URI=spiffe://kind.facis-ztd.local/ns/ztd-data/sa/stand-in
+  By=spiffe://kind.facis-ztd.local/ns/ztd-data/sa/stand-in;Hash=1db10a52af4e277c999cd937551deb7742d0c6753b9f73a88dce3b79d7ec311d;Subject="O=SPIRE,C=US";URI=spiffe://kind.facis-ztd.local/ns/ztd-data/sa/stand-in
 - PASS: both proxies counted the request (istio_requests_total)
   caller (reporter=source) 1 → 2, peer (reporter=destination) 3 → 4
 - PASS: the peer's proxy records the requests as mutual_tls
@@ -355,7 +363,7 @@ The security baseline sets TLS 1.3 as the minimum (ADR 005), and the `istiod` re
 - PASS: management pod → data plane: DENIED (the default deny is both directions)
   → denied(28)
 - PASS: DNS bypass: names still resolve
-  Name:	openbao.ztd-mgmt.svc.cluster.local Address: 10.96.83.102 
+  Name:	openbao.ztd-mgmt.svc.cluster.local Address: 10.96.171.215 
 
 ## 12. control-planes-under-default-deny
 
@@ -366,7 +374,7 @@ The security baseline sets TLS 1.3 as the minimum (ADR 005), and the `istiod` re
 - PASS: the API server reaches the controller-manager's webhook (9443) through the controlPlaneWebhooks opening: it refuses a ClusterSPIFFEID with a broken template
   Error from server (Forbidden): error when creating "STDIN": admission webhook "vclusterspiffeid.kb.io" denied the request: invalid SPIFFEID template: template: spiffeIDTemplate:1: unclosed action
 
-Raw TCP probes from the proxy-less `probe` pods to the SPIRE server (10.244.1.250) and istiod (10.244.1.190), on every port they listen on:
+Raw TCP probes from the proxy-less `probe` pods to the SPIRE server (10.244.1.187) and istiod (10.244.1.63), on every port they listen on:
 
 - PASS: ztd-data → SPIRE server :8081 DENIED
   → denied(28)
@@ -415,7 +423,7 @@ Raw TCP probes from the proxy-less `probe` pods to the SPIRE server (10.244.1.25
 - PASS: node ztd-worker: the SPIRE agent's metrics port 9988 listens on the loopback only, not on the node's addresses
   listening (hex address:port): 0100007F:2704 
 - PASS: node ztd-worker: the agent's metrics answer on 127.0.0.1:9988 (the contract with a node-local collector)
-  105 spire_agent samples
+  111 spire_agent samples
 
 ## 13. A declared registration without its entry fails the release
 
@@ -431,9 +439,9 @@ The registrations-reconciled check counts the running labelled pods of every pla
 ## 14. Render guards (no cluster)
 
 - PASS: the spire release does not render without the trust domain
-  install-zone: release spire: the zone file /tmp/tmp.VyP4FfQNrk/no-td.yaml does not state the zone fact zone.trustDomain (for global.spire.trustDomain), zone.trustDomain (for global.spire.caSubject.commonName)
+  install-zone: release spire: the zone file /tmp/tmp.MKWZ6TNW7p/no-td.yaml does not state the zone fact zone.trustDomain (for global.spire.trustDomain), zone.trustDomain (for global.spire.caSubject.commonName)
 - PASS: the istiod release does not render without the trust domain
-  install-zone: release istiod: the zone file /tmp/tmp.VyP4FfQNrk/no-td.yaml does not state the zone fact zone.trustDomain (for meshConfig.trustDomain)
+  install-zone: release istiod: the zone file /tmp/tmp.MKWZ6TNW7p/no-td.yaml does not state the zone fact zone.trustDomain (for meshConfig.trustDomain)
 - PASS: the umbrella refuses a meshed zone without a trust domain, on the schema
   at '/zone/trustDomain': minLength: got 0, want 1
 - PASS: the umbrella renders zones/ionos.yaml (mesh none) without a trust domain
