@@ -4,10 +4,10 @@ The zones talk to each other only over a mutually attested TLS 1.3 channel (ZT-2
 Go package `internal/atls` is the one place that establishes such a channel. It wraps the
 Fraunhofer AISEC CMC attested-TLS library and exposes only the demonstrator's own types.
 
-!!! note "v1 — frozen at `7e1d7ec`, 2026-10-01"
+!!! note "v1 — frozen at `7e1d7ec`, 2026-10-05"
     This page is the contract of interface **IF-07 Attested channel control** in the
     [interface registry](api-docs.md): the Go interface of `internal/atls`, frozen at **v1** at
-    commit `7e1d7ec` on 2026-10-01. The exported identifiers and their signatures are listed in
+    commit `7e1d7ec` on 2026-10-05. The exported identifiers and their signatures are listed in
     `internal/atls/api_v1.txt`, and a test fails when the package differs from that listing.
     [Stability](#stability) states what is frozen and how the interface may change. The freeze
     is ours; the partner sign-off under the interface-freeze process is pending.
@@ -273,7 +273,7 @@ Limits, stated plainly:
 
 ## Stability
 
-The interface is frozen at **v1** (commit `7e1d7ec`, 2026-10-01).
+The interface is frozen at **v1** (commit `7e1d7ec`, 2026-10-05).
 
 ### What is frozen
 
