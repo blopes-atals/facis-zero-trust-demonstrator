@@ -28,7 +28,7 @@ plane namespace. An upgrade of a chart re-reads every digest.
 | `spire` | `spiffe-csi-driver.image.tag` | `ghcr.io/spiffe/spiffe-csi-driver:0.2.7` |
 | `spire` | `spiffe-csi-driver.nodeDriverRegistrar.image.tag` | `registry.k8s.io/sig-storage/csi-node-driver-registrar:v2.15.0` |
 | `istiod` | `pilot.image` | `docker.io/istio/pilot:1.31.1` |
-| `istiod` | `global.proxy.image` | `docker.io/istio/proxyv2:1.31.1`, the injected proxy |
+| `istiod` | `global.proxy.image` | `docker.io/istio/proxyv2:1.31.1@sha256:d86c…`, the injected proxy; the whole reference, digest included, is mirrored in `zone-policy` `proxySocketPolicy.proxyImage` |
 | `istiod` | `global.proxy_init.image` | `docker.io/istio/proxyv2:1.31.1`, the injected `istio-validation` init container (the chart would otherwise build it from hub and tag, without a digest) |
 | `istio-cni` | `cni.image` | `docker.io/istio/install-cni:1.31.1` |
 
@@ -129,8 +129,10 @@ capture rule, `deployment/helm/zone-policy/README.md`). Changing the status port
 changing it there refuses every injected pod in the plane namespaces.
 
 `global.proxy.image` is mirrored the same way in `zone-policy` `proxySocketPolicy.proxyImage`: the
-proxy rule of the same policy admits a mesh proxy only with that exact image reference, so an Istio
-upgrade changes both, or every injected pod in the plane namespaces is refused.
+proxy rule of the same policy admits a mesh proxy only with that exact image reference, digest
+included, so an Istio upgrade changes both, or every injected pod in the plane namespaces is
+refused. `scripts/install-zone/install.sh` compares both pairs (image and status port) before it
+renders or installs, and refuses a zone where they differ.
 
 ## `istio-cni.yaml`
 

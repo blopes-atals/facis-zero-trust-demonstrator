@@ -78,10 +78,33 @@ plane label:
   from the plane entry's `mesh` field and its verification hook checks it; every other clause
   applies in those namespaces too.
 
-**The proxy rule** (fourth validation): every mesh proxy must be the injector's own, the image
-`proxySocketPolicy.proxyImage`, no command, arguments starting with `proxy sidecar`, and no
-`ISTIO_BOOTSTRAP_OVERRIDE` in its environment; a proxy of another image that mounts the SPIRE
-socket would pass the socket rule and could accept plaintext on the inbound capture port.
+**The proxy rule** (fourth validation): every mesh proxy must be the injector's own. A proxy of
+another image, or a second `proxyv2` container with its own `--templateFile`, `PROXY_CONFIG` or
+bootstrap, that mounts the SPIRE socket would pass the socket rule and could accept plaintext on the
+inbound capture port, and `proxy.istio.io/overrides` does not catch every path (a pod that arrives
+with `sidecar.istio.io/status` already set has its own `istio-proxy` merged over the injected one
+without the annotation). So a mesh proxy is admitted only:
+
+- in a namespace with the injection label (none in a `mesh: false` plane namespace, where nothing is
+  injected), and only under the name `istio-proxy`, so there is no second proxy under another name;
+- with the image `proxySocketPolicy.proxyImage` and no command;
+- with the arguments the 1.31.1 injector writes: `proxy sidecar --domain
+  $(POD_NAMESPACE).svc.<cluster domain>`, the three log-level flags, and only `--stsPort`,
+  `--log_as_json` or `--outlierLogPath` besides;
+- with no `envFrom`, only the environment variables the injector writes, `PILOT_CERT_PROVIDER`,
+  `CA_ADDR`, `ISTIO_META_INTERCEPTION_MODE` and `TRUST_DOMAIN` at the injector's values, and
+  `PROXY_CONFIG` an empty object (the zone sets no per-pod proxy configuration, so the injector
+  writes `{}`; `ISTIO_BOOTSTRAP_OVERRIDE` is not among the allowed names);
+- with only the injector's volume mounts, each at the injector's path, and the service-account
+  token.
+
+**Updates.** The policy also runs on every pod update (a label, a finalizer, an image, an added
+ephemeral container). The capture and proxy rules look only at what the update changes: an
+annotation or label whose value is unchanged, and a container whose name and image are unchanged
+(nothing else of an existing container can change), is not checked again, so a pod admitted before
+an Istio upgrade still takes metadata updates while its proxy runs the previous image. A changed
+image or a new ephemeral proxy is checked in full. The template and socket rules, which do not
+depend on the Istio version, check the whole pod on every update.
 
 An ordinary pod satisfies both rules with exactly what the injector writes. A workload that needs a
 capture exception or a proxy setting gets it mesh-wide through the charts (for example
@@ -90,8 +113,9 @@ cover what bypasses the capture without an annotation: capture is iptables insid
 network namespace, so a host-networked pod or a container with `NET_ADMIN` steps around it, and the
 redirect rules let UID and GID 1337, the proxy's own, leave without capture, so an application
 container running as 1337 (by its `securityContext` or its image's `USER`) sends its outbound
-traffic past the proxy. Those belong to a Pod Security level on the plane namespaces with a
-`runAsUser`/`runAsGroup` rule, the follow-up change.
+traffic past the proxy. The injector also skips host-networked pods, so such a pod could bring its
+own `istio-proxy` with its own environment. Those belong to a Pod Security level on the plane
+namespaces with a `runAsUser`/`runAsGroup` rule, the follow-up change.
 
 **Status-port coupling.** `proxySocketPolicy.statusPort` must equal the `istiod` release's
 `global.proxy.statusPort`, which `deployment/helm/values/istiod.yaml` leaves at Istio's default,
@@ -102,7 +126,8 @@ application port silently excluded.
 **Proxy-image coupling.** `proxySocketPolicy.proxyImage` must equal the `istiod` release's
 `global.proxy.image` in `deployment/helm/values/istiod.yaml`, the whole reference with its digest.
 If the two differ, every injected pod in a plane namespace is refused by the proxy rule; an Istio
-upgrade changes both.
+upgrade changes both. `scripts/install-zone/install.sh` refuses to render or install a zone whose
+two proxy images or two status ports differ, and CI runs that check with every render.
 
 ## Values
 

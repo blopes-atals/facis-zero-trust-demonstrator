@@ -277,17 +277,36 @@ carries one or a meshed namespace lacks it, and relabelling a namespace is the p
 already removes the plane label the policy is bound on, so the scope adds no new trust. Every other
 clause of the rule applies in those namespaces too.
 
-A fourth rule of the same policy, the proxy rule, holds every mesh proxy to the injector's own: the
-image `proxySocketPolicy.proxyImage` (which must equal the `istiod` release's
-`global.proxy.image`), no command, arguments starting with `proxy sidecar`, and no
-`ISTIO_BOOTSTRAP_OVERRIDE` in its environment. A proxy of another image that mounts the SPIRE
-socket would pass the socket rule and could accept plaintext on the inbound capture port.
+A fourth rule of the same policy, the proxy rule, holds every mesh proxy to the injector's own. A
+proxy of another image, or a second `proxyv2` container with its own `--templateFile`,
+`PROXY_CONFIG` or bootstrap, that mounts the SPIRE socket would pass the socket rule and could
+accept plaintext on the inbound capture port; and `proxy.istio.io/overrides` does not catch every
+path, since a pod that arrives with `sidecar.istio.io/status` already set has its own `istio-proxy`
+merged over the injected one without that annotation. A mesh proxy is therefore admitted only in a
+namespace with the injection label, only under the name `istio-proxy` (no second proxy under
+another name), with the image `proxySocketPolicy.proxyImage` (which must equal the `istiod`
+release's `global.proxy.image`; the installer refuses a zone where they differ), no command, the
+arguments the 1.31.1 injector writes (`proxy sidecar --domain $(POD_NAMESPACE).svc.<cluster
+domain>` and the three log-level flags, with only `--stsPort`, `--log_as_json` or
+`--outlierLogPath` besides), no `envFrom`, only the environment variables the injector writes, with
+`PILOT_CERT_PROVIDER`, `CA_ADDR`, `ISTIO_META_INTERCEPTION_MODE` and `TRUST_DOMAIN` at the
+injector's values and `PROXY_CONFIG` an empty object (the zone sets no per-pod proxy
+configuration), and only the injector's volume mounts at the injector's paths.
+
+The policy also runs on every pod update. The capture and proxy rules look only at what an update
+changes: an annotation or label whose value is unchanged, and a container whose name and image are
+unchanged (nothing else of an existing container can change), is not checked again. A pod admitted
+before an Istio upgrade, whose proxy still runs the previous image, therefore keeps taking labels,
+annotations and finalizer changes; an update that adds a refused annotation, changes an image or
+adds an ephemeral proxy is checked in full.
 
 An ordinary pod satisfies both rules with exactly what the injector writes, and the proof shows it
 admitted with the status-port exclusion and `REDIRECT`, next to the refusal of an excluded
 application port, capture mode `NONE`, a moved status port, a proxy-config override, an opt-out, a
-swapped proxy image and a pod-supplied `istio-proxy`, and the admission of the istiod and
-`istio-cni` pods in `istio-system` ([evidence](evidences/mesh-identity/README.md)). A workload that needs a capture exception or a
+swapped proxy image and a pod-supplied `istio-proxy`, the proxy rule's refusal of an
+`istio-proxy` with another image and of a second proxy, the admission of the istiod and
+`istio-cni` pods in `istio-system` and their refusal in the data plane, and a label admitted on a
+running pod while an added exclusion is refused ([evidence](evidences/mesh-identity/README.md)). A workload that needs a capture exception or a
 proxy setting gets it mesh-wide through the charts (`meshConfig.defaultConfig`, or a value that
 widens the rule) in its own change, never through a pod annotation. Interception mode `TPROXY`,
 which also captures, is refused with the rest: the zone does not use it.
@@ -296,10 +315,12 @@ What the rule does not cover: capture is iptables inside the pod's network names
 host-networked pod or a container with `NET_ADMIN` steps around it without any annotation. And the
 redirect rules let the proxy's own UID and GID, 1337, leave without capture (otherwise the proxy
 would capture itself), so an application container that runs as UID or GID 1337, through its
-`securityContext` or its image's `USER`, sends its outbound traffic past the proxy. Those belong to
-a Pod Security Admission level on the plane namespaces, with a rule on `runAsUser` and `runAsGroup`
-(an image's `USER` is not visible at admission, so that rule must require an explicit non-1337
-user), which the namespaces do not carry today and which is the next change, not this policy.
+`securityContext` or its image's `USER`, sends its outbound traffic past the proxy. The injector
+also skips host-networked pods, so such a pod could bring its own `istio-proxy` with its own
+environment. Those belong to a Pod Security Admission level on the plane namespaces, with a rule on
+`runAsUser` and `runAsGroup` (an image's `USER` is not visible at admission, so that rule must
+require an explicit non-1337 user), which the namespaces do not carry today and which is the next
+change, not this policy.
 
 ## Telemetry
 
