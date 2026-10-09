@@ -18,7 +18,31 @@ agent. Pod updates and ephemeral containers are checked too, so a container cann
 after creation. What stays open (design D7, docs/workload-identity.md): a program that is none of
 these and calls istiod's CA on 15012 itself; the certificate it gets is refused by every peer,
 because every proxy trusts SPIRE's bundle only, and the proof shows that refusal.
-Pods without a proxy are not concerned: under the mesh-wide STRICT policy they reach no meshed peer.
+Pods without a proxy are not concerned by the socket rule: under the mesh-wide STRICT policy they
+reach no meshed peer. They are concerned by the capture rule below, which refuses them.
+
+The capture rule (third validation). The Istio CNI plugin builds each pod's redirect rules from the
+pod's capture annotations, so a registered pod annotated
+traffic.sidecar.istio.io/excludeInboundPorts: "8080" gets that port delivered to the application
+outside its proxy: STRICT never sees the connection, and an unregistered pod of the same namespace
+reaches it in plaintext through the intra-plane lane. The injector writes four capture annotations
+onto every pod it injects (sidecar.istio.io/interceptionMode, traffic.sidecar.istio.io/
+includeInboundPorts, excludeInboundPorts with the status port, includeOutboundIPRanges), from the
+pod's own value when there is one, and this policy runs after the injector, so it cannot tell a
+written value from a requested one: the rule is an equality with the injector's defaults, not an
+absence check. In a plane namespace a pod is admitted only when each of those four annotations it
+carries equals its default (REDIRECT, all inbound ports, the status port alone, all outbound
+ranges), when it carries none of the annotations the injector writes only on request (outbound
+exclusions, outbound port lists, excluded or virtual interfaces), none of those that move or
+replace the capture or the proxy's control (status.sidecar.istio.io/port, which excludes an
+application port without naming excludeInboundPorts; proxy.istio.io/config, which can point the
+proxy at another discovery server), and no injection opt-out (sidecar.istio.io/inject, as an
+annotation or a label, whatever its value): a pod without a proxy in a plane namespace is
+reachable in plaintext the same way an excluded port is. The status port is the chart value
+proxySocketPolicy.statusPort and must equal the istiod release's global.proxy.statusPort.
+What stays open: capture is iptables inside the pod's network namespace, so a host-networked pod
+or a container with NET_ADMIN steps around it without any annotation; that belongs to a Pod
+Security level on the plane namespaces, not to this policy.
 */ -}}
 {{- $p := .Values.proxySocketPolicy }}
 {{- define "zone-policy.isProxy" -}}
@@ -57,6 +81,30 @@ spec:
       expression: >-
         has(object.spec.volumes) && object.spec.volumes.exists(v, v.name == {{ $p.volume | squote }}
           && has(v.csi) && v.csi.driver == {{ $p.driver | squote }})
+    - name: ann
+      expression: >-
+        has(object.metadata.annotations) ? object.metadata.annotations : {}
+    - name: captureDefaults
+      expression: >-
+        {
+          'sidecar.istio.io/interceptionMode': 'REDIRECT',
+          'traffic.sidecar.istio.io/includeInboundPorts': '*',
+          'traffic.sidecar.istio.io/excludeInboundPorts': {{ $p.statusPort | toString | squote }},
+          'traffic.sidecar.istio.io/includeOutboundIPRanges': '*'
+        }
+    - name: captureForbidden
+      expression: >-
+        [
+          'traffic.sidecar.istio.io/excludeOutboundIPRanges',
+          'traffic.sidecar.istio.io/includeOutboundPorts',
+          'traffic.sidecar.istio.io/excludeOutboundPorts',
+          'traffic.sidecar.istio.io/excludeInterfaces',
+          'traffic.sidecar.istio.io/kubevirtInterfaces',
+          'istio.io/reroute-virtual-interfaces',
+          'status.sidecar.istio.io/port',
+          'proxy.istio.io/config',
+          'sidecar.istio.io/inject'
+        ]
   validations:
     - expression: >-
         !has(object.metadata.annotations) || !('inject.istio.io/templates' in object.metadata.annotations)
@@ -74,6 +122,22 @@ spec:
         named istio-proxy, running the proxyv2 image or naming pilot-agent must mount the
         {{ $p.driver }} volume {{ $p.volume }} at {{ $p.mountPath }};
         leave out the inject.istio.io/templates annotation and any istio-proxy override
+      reason: Forbidden
+    - expression: >-
+        variables.captureDefaults.all(k, !(k in variables.ann) || variables.ann[k] == variables.captureDefaults[k])
+        && !variables.captureForbidden.exists(k, k in variables.ann)
+        && !(has(object.metadata.labels) && 'sidecar.istio.io/inject' in object.metadata.labels)
+      message: >-
+        capture rule: a pod in a plane namespace must keep the proxy's traffic capture at the
+        injector's defaults (sidecar.istio.io/interceptionMode REDIRECT,
+        traffic.sidecar.istio.io/includeInboundPorts *, traffic.sidecar.istio.io/excludeInboundPorts
+        {{ $p.statusPort }} (the status port only), traffic.sidecar.istio.io/includeOutboundIPRanges *)
+        and may not carry traffic.sidecar.istio.io/excludeOutboundIPRanges, includeOutboundPorts,
+        excludeOutboundPorts, excludeInterfaces, kubevirtInterfaces,
+        istio.io/reroute-virtual-interfaces, status.sidecar.istio.io/port, proxy.istio.io/config, or
+        sidecar.istio.io/inject (annotation or label, any value); a capture exception is declared
+        mesh-wide in the charts, never by a pod annotation. If every injected pod is refused, check
+        that zone-policy proxySocketPolicy.statusPort equals istiod global.proxy.statusPort
       reason: Forbidden
 ---
 apiVersion: admissionregistration.k8s.io/v1

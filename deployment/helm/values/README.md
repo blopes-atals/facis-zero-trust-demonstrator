@@ -122,6 +122,12 @@ installer's uninstall removes the CRDs the release owned.
 | `base.validationFailurePolicy` | `Fail` | as in `istio-base`: identical manifests on every run, and the webhook fails closed |
 | `sidecarInjectorWebhook.defaultTemplates` | `[sidecar, spire]` | the `spire` template applies to every injection, so a workload does not lose the SPIRE socket by leaving out an annotation; a pod that names its own templates (`inject.istio.io/templates`) is refused in the plane namespaces by the `zone-policy` admission policy `proxy-takes-spire-socket`, because istiod's CA, which also signs istiod's own serving certificates, cannot be switched off |
 
+`global.proxy.statusPort` is not set and stays at Istio's default, `15020`. The `zone-policy` chart
+mirrors it in `proxySocketPolicy.statusPort`: its admission policy admits a pod in a plane namespace
+only when the injector's `traffic.sidecar.istio.io/excludeInboundPorts` is that port alone (the
+capture rule, `deployment/helm/zone-policy/README.md`). Changing the status port here without
+changing it there refuses every injected pod in the plane namespaces.
+
 ## `istio-cni.yaml`
 
 | Value | Set to | Why |

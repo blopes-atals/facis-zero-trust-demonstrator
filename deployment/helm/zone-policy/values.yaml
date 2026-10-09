@@ -47,11 +47,19 @@ peerAuthentication:
 # a pod cannot drop the `spire` injection template, or run Istio's agent under another name, and
 # take a certificate from istiod's CA.
 # The volume name and path are those of Istio's `sidecar` template and the istiod values file.
+# The same policy keeps the proxy's traffic capture at the injector's defaults: in a plane
+# namespace a pod may not exclude a port or an address range from the capture, switch the capture
+# off, move the status port, override the proxy's configuration, or opt out of injection
+# (README.md, "The capture rule").
 proxySocketPolicy:
   name: proxy-takes-spire-socket
   volume: workload-socket
   mountPath: /var/run/secrets/workload-spiffe-uds
   driver: csi.spiffe.io
+  # The proxy's status port: the one inbound port the injector excludes from the capture. It MUST
+  # equal the istiod release's global.proxy.statusPort (deployment/helm/values/istiod.yaml leaves it
+  # at Istio's default, 15020); if the two differ, the policy refuses every injected pod.
+  statusPort: 15020
 
 # Identity-band checks (hook-weight band "identity", 20-39): post-install and post-upgrade Jobs that
 # only read, through the Kubernetes API, and fail the release when identity is not there. They run
