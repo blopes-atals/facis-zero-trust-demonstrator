@@ -75,7 +75,9 @@ the pinned Syft and Grype write by default.
 CMC v0.9.15 adds the following modules to `go.mod`. All of them are free and open-source software.
 Like every other third-party component, each is declared in writing with its licence (tender
 clause 9.5), and the client confirms the included FOSS components and their versions (TDR,
-"Open-Source Software"). That confirmation includes the CMC pin, v0.9.15, itself.
+"Open-Source Software"). That confirmation includes the CMC pin, v0.9.15, itself, and the two
+MPL-2.0 modules it adds, `github.com/veraison/go-cose` and `github.com/edgelesssys/ego` (see
+[MPL-2.0 dependencies](#mpl-20-dependencies)).
 
 The last column says whether a CGO-free production build with the tags `nodefaults,grpc` still
 links the module on Linux. That build keeps only the gRPC attester and drops the TEE drivers and
@@ -146,20 +148,17 @@ MPL-2.0 was already part of the module before CMC:
 CMC adds `github.com/veraison/go-cose` (always linked) and `github.com/edgelesssys/ego` (default
 cgo build only).
 
-**Which reading applies is not decided yet.** [ADR-0004](adr/0004-openbao-as-x509-key-value-store.md)
-reads the TDR as requiring a written exception for any non-Apache licence and applies it to
-OpenBao, an MPL-2.0 service the requirements prescribe; that notice stands. The paragraph above
-reads the same documents as requiring notice only for licences outside the approved list. No
-recorded decision settles which of the two readings governs MPL-2.0 code linked into a
-deliverable: the decision is pending with the project owner, alongside the open client decision
-on the licence exception notice that ADR-0004 records (follow-up requirement F-07).
+These two modules are approved-licence components too: they need no exception notice, and they
+are covered by the client's confirmation of the included FOSS components and their versions, like
+the rest of [what CMC brings in](#brought-in-by-cmc). The TDR asks for written notice only for
+content outside the [Eclipse approved licence list](https://www.eclipse.org/legal/licenses.php#approved),
+which lists MPL-2.0 as approved.
 
-Until it is taken, the interim reading is this page's: the linked MPL-2.0 modules above are
-declared and scanned like any other approved-licence component, and no exception notice is filed
-for them. This page does not overrule ADR-0004, which remains the record for OpenBao. If the
-decision adopts the ADR-0004 reading for linked modules as well, the same notice route covers
-`go-cose` and `ego`, and this paragraph and the ADR are updated with a link to the decision;
-nothing in the code changes either way.
+[ADR-0004](adr/0004-openbao-as-x509-key-value-store.md) records a licence exception notice for
+OpenBao, an MPL-2.0 service the requirements prescribe, filed under a stricter reading than the
+TDR wording: an exception for any non-Apache licence. The notice stands and remains the record for
+OpenBao. That reading is not applied to approved-licence modules linked into a deliverable, because
+the TDR wording summarised above does not ask for it.
 
 ### Public-domain SQLite
 
