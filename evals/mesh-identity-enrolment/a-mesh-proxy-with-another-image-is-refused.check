@@ -22,15 +22,18 @@ spec:
       volumeMounts:
         - { name: workload-socket, mountPath: /var/run/secrets/workload-spiffe-uds, readOnly: true }
 YAML
-  # For information: the same pod with a pre-set sidecar.istio.io/status (the injector then does not
-  # merge it and writes no proxy.istio.io/overrides), so only the proxy rule can answer.
+  # WHEN: the pod already carries sidecar.istio.io/status (the injector records no
+  # proxy.istio.io/overrides for it); THEN: refused naming the policy and the proxy rule.
   sed 's/^metadata: { name: eval-proxy-other-image }$/metadata: { name: eval-proxy-other-image-st, annotations: { sidecar.istio.io\/status: "{}" } }/' \
     "$EVAL_TMP/pod.yaml" >"$EVAL_TMP/pod-st.yaml"
-  dry_run_file "$NS" "$EVAL_TMP/pod-st.yaml"
-  echo "--- info: variant with a pre-set sidecar.istio.io/status: exit $rc"; echo "$out" | head -n 3 | cut -c1-400
-  # The scenario as written: a pod whose istio-proxy runs another image and mounts the SPIRE socket.
-  echo "--- scenario pod"
+  grep -q 'sidecar.istio.io/status' "$EVAL_TMP/pod-st.yaml" || { echo "FAIL(check): status annotation not added"; exit 2; }
+  echo "--- AND: the same container on a pod without sidecar.istio.io/status (capture rule)"
   dry_run_file "$NS" "$EVAL_TMP/pod.yaml"
+  echo "exit $rc"; echo "$out" | head -n 5 | cut -c1-400
+  [ "$rc" -ne 0 ] || { echo "FAIL: the pod without the status annotation was admitted"; exit 1; }
+  grep -qi "capture rule" <<<"$out" || { echo "FAIL: the pod without the status annotation was not refused by the capture rule"; exit 1; }
+  echo "--- scenario pod (pre-set sidecar.istio.io/status)"
+  dry_run_file "$NS" "$EVAL_TMP/pod-st.yaml"
   expect_refused "proxy rule"
 fi
 # Without a cluster: the rendered, Deny-bound, plane-scoped policy compares every mesh proxy's image
