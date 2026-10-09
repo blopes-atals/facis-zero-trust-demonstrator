@@ -19,7 +19,8 @@ const refusalBuffer = 64
 
 // Listener accepts mutually attested TLS 1.3 channels. Each incoming connection is handshaken in
 // its own goroutine, at most Config.MaxConcurrentHandshakes at a time, so one slow peer does not
-// delay the others.
+// delay the others. The listener takes a handshake slot before it accepts a TCP connection: while
+// every slot is busy, further connections wait in the kernel backlog and cost the process nothing.
 type Listener struct {
 	ln       net.Listener
 	p        *prepared
@@ -95,8 +96,14 @@ func (l *Listener) serve() {
 	defer l.wg.Done()
 	var backoff time.Duration
 	for {
+		// Take the slot first, so a connection is only accepted when it can be handshaken at
+		// once. The slot belongs to handle from here on.
+		if err := l.gate.acquire(l.ctx, l.p.maxConcurrent); err != nil {
+			return
+		}
 		raw, err := l.ln.Accept()
 		if err != nil {
+			l.gate.release()
 			if l.ctx.Err() != nil || errors.Is(err, net.ErrClosed) {
 				return
 			}
@@ -115,18 +122,16 @@ func (l *Listener) serve() {
 	}
 }
 
+// handle owns the handshake slot serve took for raw. It keeps the slot until the connection is
+// delivered to Accept or closed, so the connections the listener holds never exceed the cap.
 func (l *Listener) handle(raw net.Conn) {
 	defer l.wg.Done()
+	defer l.gate.release()
 	ctx, cancel := l.p.handshakeContext(l.ctx)
 	defer cancel()
 	// Every refusal Accept returns names the transport address of the connection it refused.
 	peer := raw.RemoteAddr()
 
-	if err := l.gate.acquire(ctx, l.p.maxConcurrent); err != nil {
-		_ = raw.Close()
-		l.refused(attribute(refuse(ErrHandshakeTimeout, "no handshake slot became free before the deadline", nil), peer))
-		return
-	}
 	conn, err := l.handshake(ctx, raw)
 	if err != nil {
 		l.refused(attribute(err, peer))
@@ -146,13 +151,11 @@ func (l *Listener) handshake(ctx context.Context, raw net.Conn) (*Conn, error) {
 	tlsCfg := l.p.connTLS(rec)
 	opts, err := l.p.cmcOptions(rec)
 	if err != nil {
-		l.gate.release()
 		_ = raw.Close()
 		return nil, refuse(ErrConfig, "cannot build the attestation configuration", textCause(err))
 	}
 	cc, err := attestedtls.NewCmcConfig(opts...)
 	if err != nil {
-		l.gate.release()
 		_ = raw.Close()
 		return nil, refuse(ErrConfig, "cannot build the attestation configuration", textCause(err))
 	}
@@ -163,7 +166,6 @@ func (l *Listener) handshake(ctx context.Context, raw net.Conn) (*Conn, error) {
 	stop := context.AfterFunc(ctx, func() { _ = tc.Close() })
 	c, err := cmcLn.Accept()
 	timedOut := !stop()
-	l.gate.release()
 
 	if err != nil {
 		_ = tc.Close()

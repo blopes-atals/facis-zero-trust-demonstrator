@@ -160,7 +160,7 @@ the wrapper reaches the decision today; it is not part of the freeze.
 | `ErrPeerAborted` | The peer completed TLS 1.3 with a valid zone certificate and left before the attestation exchange completed. Typically its attester is down. A TLS 1.3 client that holds a zone certificate and never speaks attestation looks the same | CMC error text of the final handshake exchange, with no attestation result on this end |
 | `ErrAttestModeMismatch` | The peer requested an attestation mode other than mutual | CMC error text |
 | `ErrAttesterUnavailable` | This zone's `cmcd` could not be reached or failed | CMC error text (gRPC / in-process backend) |
-| `ErrHandshakeTimeout` | The handshake did not end within the caller's deadline or `HandshakeTimeout`, or no handshake slot became free in time | wrapper deadline; `i/o timeout` from CMC |
+| `ErrHandshakeTimeout` | The handshake did not end within the caller's deadline or `HandshakeTimeout`, or, for `Dial`, no handshake slot became free in time | wrapper deadline; `i/o timeout` from CMC |
 | `ErrPeerRejected` | The `PeerVerifier` refused the attested peer. Its error is wrapped and stays inspectable | wrapper |
 | `ErrPeerUnreachable` | No TCP connection to the peer. This is a transport failure, not a refusal | dial error text |
 | `ErrConfig` | Invalid configuration; no connection was attempted | wrapper validation |
@@ -216,8 +216,15 @@ sw-driver evidence is signed with a bare key and has no certificate.
 - A listener handshakes each incoming connection in its own goroutine, so one slow peer does not
   delay the others.
 - At most `MaxConcurrentHandshakes` handshakes run at once per listener, and at most that many
-  across all `Dial` calls of the process. A connection waits for a slot up to the handshake
-  timeout and is then refused with `ErrHandshakeTimeout`.
+  across all `Dial` calls of the process.
+- A listener takes a handshake slot before it accepts a TCP connection. While every slot is busy it
+  stops accepting, and further connections wait in the operating system's backlog: the process
+  holds no goroutine, descriptor or timer for them, so the cap bounds what incoming connections
+  cost the listener. A connection's `HandshakeTimeout` starts when the listener accepts it, not
+  while it waits in the backlog. A connection keeps its slot until `Accept` takes it or the
+  listener closes it, so a caller that stops calling `Accept` also stops the listener accepting.
+- A `Dial` call waits for a slot up to its deadline and is then refused with
+  `ErrHandshakeTimeout`; the listener never refuses for want of a slot.
 - `Dial` returns within the context deadline or `HandshakeTimeout`, whichever is sooner. If CMC is
   still blocked in the peer exchange at that point, the connection it returns later is closed. Its
   goroutine keeps its handshake slot until CMC gives up, so stalled peers cannot exceed the cap.
@@ -335,10 +342,17 @@ one sentinel.
 
 ### Handshake queue
 
-Handshakes beyond `MaxConcurrentHandshakes` wait for a free slot. The wait and the handshake share
-one budget: a connection that has waited and handshaken for `HandshakeTimeout` in total — or, for
-`Dial`, until the caller's context ends, if sooner — is refused with `ErrHandshakeTimeout`. There
-is no separate queue timeout and no limit on the number of waiting connections.
+Handshakes beyond `MaxConcurrentHandshakes` wait for a free slot.
+
+- **`Dial`:** the wait and the handshake share one budget. A call that has waited and handshaken
+  for `HandshakeTimeout` in total, or until the caller's context ends if sooner, is refused with
+  `ErrHandshakeTimeout`. There is no separate queue timeout.
+- **Listener:** incoming connections wait in the operating system's backlog, which the listener
+  does not read while every slot is busy. Its length is the kernel's limit for the listening
+  socket, not a `Config` field. Connections that wait there are not refused by the wrapper. Their
+  handshake budget of `HandshakeTimeout` starts when the listener accepts them. A peer that fills
+  every slot with silent connections delays the others by at most one handshake timeout per
+  batch of slots.
 
 ## Attester selection and builds
 

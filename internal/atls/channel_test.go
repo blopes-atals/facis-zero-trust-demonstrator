@@ -322,7 +322,7 @@ func TestAcceptRefusalCarriesPeerAddress(t *testing.T) {
 		sc.MaxConcurrentHandshakes = 1
 		ln := listen(t, sc)
 		// Two peers that connect and stay silent: one holds the only handshake slot, the other
-		// waits for it. Both are refused once the timeout passes.
+		// waits in the backlog until it frees. Both are refused once their timeout passes.
 		want := map[string]bool{}
 		for range 2 {
 			c, err := net.Dial("tcp", ln.Addr().String())
