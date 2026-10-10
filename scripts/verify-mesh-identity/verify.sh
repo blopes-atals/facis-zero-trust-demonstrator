@@ -1,14 +1,19 @@
 #!/usr/bin/env bash
 # Evidence that the zone's mesh identities are SPIRE's, on the local kind cluster with Cilium chained
-# (scripts/dev/kind-cilium-up.sh). Installs the zone from an empty cluster with
+# (scripts/dev/kind-cilium-up.sh) or on one of the two participant clusters with the provider's
+# Cilium. Installs the zone from an empty cluster with
 # scripts/install-zone/install.sh, twice, then proves with stand-in pods: an SVID over the CSI socket,
 # the proxy's certificate and root bundle issued by SPIRE, no proxy without the SPIRE socket and a
 # certificate from istiod's CA refused by a meshed peer, the proxy's traffic capture held at the
 # injector's defaults (the capture rule), the TLS 1.3 minimum of mesh mTLS, an
 # unregistered workload cut off, traffic through the proxies, the default deny intact with the
-# chained CNI and both control planes inside it, the native-sidecar version rule, the identity-band checks, and a teardown that leaves nothing
-# behind. Writes docs/evidences/mesh-identity/evidence.md and environment.json; the exit status is
-# non-zero if any check failed. Never run by CI: the evidence is the record of a run on a cluster.
+# chained CNI and both control planes inside it, the native-sidecar version rule, the identity-band
+# checks, the cluster's CNI left as found, and a teardown that leaves nothing behind (or, on a
+# participant cluster with the keep opt-in and every check passed, the record of what stays).
+# Writes evidence.md and environment.json to docs/evidences/mesh-identity/ (kind) or
+# docs/evidences/mesh-identity-provider-cni/<zone name>/ (participant cluster); the exit status is
+# the number of failed checks (capped at 125). Never run by CI: the evidence is the record of a run
+# on a cluster.
 #
 # Usage:
 #   scripts/verify-mesh-identity/verify.sh           run the proof: DESTRUCTIVE, it uninstalls the zone
@@ -17,9 +22,21 @@
 # Any other argument prints this text and exits 2 without touching the cluster.
 #
 # Environment:
-#   KUBE_CONTEXT   kubectl context   (default: kind-ztd); refused unless it is a kind cluster (the
-#                  context is named kind-<name> and every node's provider ID is kind://...)
-#   ZONE_VALUES    zone file         (default: deployment/helm/ztd/ci/values.yaml, the kind zone)
+#   KUBE_CONTEXT          kubectl context (default: kind-ztd). Accepted: a kind cluster (named
+#                         kind-<name>, every node's provider ID kind://...), or the participant
+#                         cluster zerotrust-a or zerotrust-b when all of these hold: ZTD_CONFIRM_CLUSTER
+#                         equals the context name, the context's API server host begins with
+#                         api.<context>., every node's provider ID begins with onmetal:// and every
+#                         node name contains --<context>-. Anything else is refused (exit 2) before
+#                         the cluster is read or written.
+#   ZTD_CONFIRM_CLUSTER   on a participant cluster: the context name, typed for this run
+#   ZTD_KEEP_ZONE         on a participant cluster: the context name to leave the zone installed when
+#                         every check passed (the teardown is replaced by the record of what remains);
+#                         unset, a failed check or an interrupted run tears the zone down. Refused on
+#                         kind and with any other value.
+#   ZONE_VALUES           zone file (default: deployment/helm/ztd/ci/values.yaml on kind,
+#                         deployment/helm/ztd/zones/zone-<a|b>.yaml on zerotrust-<a|b>); on a
+#                         participant cluster its zone.name must be zone-<a|b> of that context
 #
 # Every check is "<test>; check $? <title>": the status of the test is what the check records.
 # shellcheck disable=SC2319,SC2016,SC2181,SC1091
@@ -34,30 +51,64 @@ if [ -n "${CI:-}" ]; then
   echo "verify-mesh-identity: refusing to run under CI; the evidence is written from a run on a cluster" >&2
   exit 2
 fi
+# A relative zone file is the caller's, read before the script moves into its own directory.
+[ -n "${ZONE_VALUES:-}" ] && ZONE_VALUES=$(realpath -m -- "$ZONE_VALUES")
 cd "$(dirname "$0")" || exit 1
 REPO=$(git rev-parse --show-toplevel)
 CHART=$REPO/deployment/helm/ztd
-ZONE_VALUES=${ZONE_VALUES:-$CHART/ci/values.yaml}
 CONTEXT=${KUBE_CONTEXT:-kind-ztd}
-# The run uninstalls and reinstalls the zone: refuse any cluster that is not a local kind cluster,
-# before anything is read from it or written to it.
-case $CONTEXT in
-  kind-?*) ;;
-  *) echo "verify-mesh-identity: refusing context '$CONTEXT': not a kind cluster (kind-<name>); the run uninstalls the zone" >&2; exit 2;;
-esac
-providers=$(kubectl --context "$CONTEXT" get nodes -o jsonpath='{range .items[*]}{.spec.providerID}{"\n"}{end}' 2>/dev/null)
-if [ -z "$providers" ] || grep -qv '^kind://' <<<"$providers"; then
-  echo "verify-mesh-identity: refusing context '$CONTEXT': unreachable, or a node whose provider ID is not kind://" >&2
-  exit 2
-fi
-INSTALL=$REPO/scripts/install-zone/install.sh
-EVID=$REPO/docs/evidences/mesh-identity
-export ZONE_VALUES KUBE_CONTEXT=$CONTEXT
 # yaml_get <file> <key>... : one value out of a YAML file; the path travels as an argument, never inside the source
 yaml_get() { python3 -c 'import sys,yaml
 v=yaml.safe_load(open(sys.argv[1]))
 for k in sys.argv[2:]: v=v[k]
 print(v)' "$@"; }
+refuse() { echo "verify-mesh-identity: refusing context '$CONTEXT': $*" >&2; exit 2; }
+# The run uninstalls and reinstalls the zone: refuse any cluster that is neither a local kind cluster
+# nor a confirmed participant cluster, before anything is read from it or written to it.
+KEEP=0
+case $CONTEXT in
+  kind-?*)
+    [ -z "${ZTD_KEEP_ZONE:-}" ] || refuse "ZTD_KEEP_ZONE is set ('$ZTD_KEEP_ZONE'), expected unset: the keep opt-in applies to a participant cluster only (kind-cilium-up.sh recreates a kind zone)"
+    CLUSTER_KIND=kind
+    ZONE_VALUES=${ZONE_VALUES:-$CHART/ci/values.yaml}
+    providers=$(kubectl --context "$CONTEXT" get nodes -o jsonpath='{range .items[*]}{.spec.providerID}{"\n"}{end}' 2>/dev/null)
+    if [ -z "$providers" ] || grep -qv '^kind://' <<<"$providers"; then
+      refuse "unreachable, or a node whose provider ID is not kind://"
+    fi
+    ;;
+  zerotrust-a|zerotrust-b)
+    [ "${ZTD_CONFIRM_CLUSTER:-}" = "$CONTEXT" ] \
+      || refuse "a participant cluster: expected ZTD_CONFIRM_CLUSTER=$CONTEXT, found ${ZTD_CONFIRM_CLUSTER:+ZTD_CONFIRM_CLUSTER=}${ZTD_CONFIRM_CLUSTER:-it unset}"
+    case ${ZTD_KEEP_ZONE:-} in
+      '') ;;
+      "$CONTEXT") KEEP=1;;
+      *) refuse "expected ZTD_KEEP_ZONE unset or ZTD_KEEP_ZONE=$CONTEXT, found ZTD_KEEP_ZONE=$ZTD_KEEP_ZONE";;
+    esac
+    CLUSTER_KIND=provider
+    zone_name=zone-${CONTEXT#zerotrust-}
+    ZONE_VALUES=${ZONE_VALUES:-$CHART/zones/$zone_name.yaml}
+    [ "$(yaml_get "$ZONE_VALUES" zone name 2>/dev/null)" = "$zone_name" ] \
+      || refuse "expected a zone file whose zone.name is $zone_name, found '$(yaml_get "$ZONE_VALUES" zone name 2>/dev/null)' in $ZONE_VALUES"
+    # The binding of the local context name to the cluster it points at: the API host's prefix, the
+    # nodes' provider and the nodes' names (no address or domain is kept in the repository).
+    api=$(kubectl config view --minify --context "$CONTEXT" -o jsonpath='{.clusters[0].cluster.server}' 2>/dev/null)
+    api_host=${api#*://}; api_host=${api_host%%[:/]*}
+    [[ $api_host == "api.$CONTEXT."* ]] || refuse "expected the context's API server host to begin with api.$CONTEXT., found '${api_host:-none}'"
+    nodes=$(kubectl --context "$CONTEXT" get nodes -o jsonpath='{range .items[*]}{.metadata.name} {.spec.providerID}{"\n"}{end}' 2>/dev/null)
+    [ -n "$nodes" ] || refuse "unreachable, or no node listed"
+    bad=$(awk '$2 !~ /^onmetal:\/\// {print $1 " (provider ID " ($2 == "" ? "none" : $2) ")"}' <<<"$nodes")
+    [ -z "$bad" ] || refuse "expected every node's provider ID to begin with onmetal://, found $(paste -sd, - <<<"$bad")"
+    bad=$(awk -v c="--$CONTEXT-" '!index($1, c) {print $1}' <<<"$nodes")
+    [ -z "$bad" ] || refuse "expected every node name to contain --$CONTEXT-, found $(paste -sd, - <<<"$bad")"
+    ;;
+  *) refuse "neither a kind cluster (kind-<name>) nor a participant cluster (zerotrust-a, zerotrust-b); the run uninstalls the zone";;
+esac
+INSTALL=$REPO/scripts/install-zone/install.sh
+ZONE_NAME=$(yaml_get "$ZONE_VALUES" zone name)
+# The evidence folder is the cluster kind's: a participant-cluster run never writes the kind record.
+if [ "$CLUSTER_KIND" = kind ]; then EVID=$REPO/docs/evidences/mesh-identity
+else EVID=$REPO/docs/evidences/mesh-identity-provider-cni/$ZONE_NAME; fi
+export ZONE_VALUES KUBE_CONTEXT=$CONTEXT
 MGMT=$(yaml_get "$CHART/values.yaml" planes management namespace)
 DATA=$(yaml_get "$CHART/values.yaml" planes data namespace)
 TD=$(yaml_get "$ZONE_VALUES" zone trustDomain)
@@ -79,8 +130,26 @@ restore_capture() {
     | jq -e '[.spec.validations[].expression | contains("variables.captureDefaults")] | index(true) == null' >/dev/null || return 0
   kubectl --context "$CONTEXT" patch validatingadmissionpolicy "$POLICY" --type=json --patch-file "$work/restore.json" >/dev/null
 }
-# On any exit, an interrupt included, the capture validation lifted in section 5 is put back first.
-trap 'restore_capture; rm -rf "$work"' EXIT
+# kept: 1 only once the record of what remains passed (section 15); cleaned: 1 once the teardown ran.
+kept=0; cleaned=0
+# provider_cleanup: on a participant cluster, unless the run ended with the zone kept or already torn
+# down, removes everything the run put there (the fixture of section 13, the scratch namespace of
+# section 8, the seven releases, the release namespace), so that an error, INT or TERM leaves the
+# cluster as it was found; idempotent, every step ignores what is already gone.
+# shellcheck disable=SC2317  # called from the EXIT trap only
+provider_cleanup() {
+  [ "$CLUSTER_KIND" = provider ] && [ "$kept" != 1 ] && [ "$cleaned" != 1 ] || return 0
+  echo "verify-mesh-identity: the run did not end with the zone kept; tearing it down on $CONTEXT" >&2
+  kubectl --context "$CONTEXT" -n kube-public delete pod declared-not-reconciled --ignore-not-found --wait=true >/dev/null 2>&1
+  kubectl --context "$CONTEXT" label ns kube-public ztd.facis.io/plane- >/dev/null 2>&1
+  kubectl --context "$CONTEXT" delete namespace mesh-identity-outside --ignore-not-found --wait=true >/dev/null 2>&1
+  "$INSTALL" uninstall >/dev/null 2>&1
+  kubectl --context "$CONTEXT" delete namespace ztd-system --ignore-not-found --wait=true >/dev/null 2>&1
+  cleaned=1
+}
+# On any exit, an interrupt included, the capture validation lifted in section 5 is put back first;
+# on a participant cluster the zone is then torn down unless the run kept it (kind: unchanged).
+trap 'restore_capture; provider_cleanup; rm -rf "$work"' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 OUT=$work/evidence.md
@@ -132,6 +201,14 @@ metric() {
 
 : > "$OUT"
 say "# Mesh identity evidence ($started)" ''
+if [ "$CLUSTER_KIND" = kind ]; then
+  say "Cluster kind: **kind**, the local cluster from \`scripts/dev/kind-cilium-up.sh\` with Cilium chained. Keep opt-in: not applicable on kind; the run tears the zone down." ''
+else
+  keep_text="not set: the run tears the zone down"
+  [ "$KEEP" = 1 ] && keep_text="set (\`ZTD_KEEP_ZONE=$CONTEXT\`): the zone stays installed only if every check passes, otherwise the run tears it down"
+  interim=""; [[ $TD == *.trust.invalid ]] && interim=" The trust domain \`$TD\` is **interim**: the zone is re-installed with its final name under the delegated trust-framework zone once that name is confirmed, and a zone on an interim name is not acceptance evidence."
+  say "Cluster kind: **participant cluster** \`$CONTEXT\` (zone \`$ZONE_NAME\`), Cilium installed and managed by the provider, confirmed with \`ZTD_CONFIRM_CLUSTER=$CONTEXT\`. Keep opt-in: $keep_text.$interim" ''
+fi
 say "Cluster context \`$CONTEXT\`, zone file \`${ZONE_VALUES#"$REPO"/}\` (trust domain \`$TD\`), installed with \`scripts/install-zone/install.sh\`: the seven releases \`ztd\`, \`spire-crds\`, \`spire\`, \`istio-base\`, \`istiod\`, \`istio-cni\`, \`zone-policy\`. Commit \`$commit\`, tree dirty: $dirty. Versions in \`environment.json\`." ''
 say 'Probe results: an HTTP code with the first line of the body when the call went through its proxies; `denied(28)` when a raw TCP connection timed out because the policy dropped the packets; `denied(56)` when the peer reset the connection; `error(<exit>)`, which fails a negative check, for any other failure (a name that does not resolve, an exec that failed).' ''
 
@@ -139,18 +216,49 @@ say 'Probe results: an HTTP code with the first line of the body when the call w
 section "0. Preconditions"
 server=$(k version -o json | jq -r .serverVersion.gitVersion)
 recorded=$(yaml_get "$ZONE_VALUES" zone kubernetesVersion)
-[ "$server" = "$recorded" ]; check $? "the zone file records the server version the cluster runs" "server $server, recorded $recorded"
-python3 - "$server" <<'PY'; check $? "native-sidecar-version: the server is Kubernetes 1.33 or later (native sidecar containers)" "server $server"
+# majmin_patch <version>: major.minor.patch of a Kubernetes version (v1.34.7-gke.1 -> 1.34.7)
+majmin_patch() { sed -n 's/^v\{0,1\}\([0-9]*\.[0-9]*\.[0-9]*\).*/\1/p' <<<"$1"; }
+[ -n "$(majmin_patch "$server")" ] && [ "$(majmin_patch "$server")" = "$(majmin_patch "$recorded")" ]
+check $? "native-sidecar-version: the zone file's zone.kubernetesVersion equals the server version the cluster runs (major.minor.patch)" "server $server, zone file $recorded"
+python3 - "$server" <<'PY2'; check $? "native-sidecar-version: the server is Kubernetes 1.33 or later (native sidecar containers)" "server $server"
 import re, sys
 major, minor = map(int, re.match(r"v(\d+)\.(\d+)", sys.argv[1]).groups())
 sys.exit(0 if (major, minor) >= (1, 33) else 1)
-PY
+PY2
 cni=$(k -n kube-system get ds cilium -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null)
 [ -n "$cni" ]; check $? "Cilium is the CNI" "$cni"
 excl=$(k -n kube-system get cm cilium-config -o jsonpath='{.data.cni-exclusive}' 2>/dev/null)
 [ "$excl" = "false" ]; check $? "cni-exclusive=false (the Istio CNI plugin can chain)" "cni-exclusive=$excl"
-inotify=$(cat /proc/sys/fs/inotify/max_user_instances 2>/dev/null || echo 0)
-[ "$inotify" -ge 512 ]; check $? "the host allows 512 inotify instances (kind runs every node's agents on one kernel; the Istio CNI agent fails below)" "fs.inotify.max_user_instances=$inotify"
+# The cluster's CNI as found, read again at the end: the run reads it and never writes it.
+cni_state() { printf 'image=%s generation=%s cilium-config.resourceVersion=%s' \
+  "$(k -n kube-system get ds cilium -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null)" \
+  "$(k -n kube-system get ds cilium -o jsonpath='{.metadata.generation}' 2>/dev/null)" \
+  "$(k -n kube-system get cm cilium-config -o jsonpath='{.metadata.resourceVersion}' 2>/dev/null)"; }
+cni_before=$(cni_state)
+say "  the Cilium DaemonSet and its ConfigMap as found: \`$cni_before\`"
+# The inotify instance limit of every node, read through the node's own Cilium agent (one per node,
+# host /proc): the Istio CNI agent fails below 512. On kind every node shares this machine's kernel.
+inotify_detail=""; inotify_read=0; inotify_ok=1
+nodes_all=$(k get nodes -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}')
+for NODE in $nodes_all; do
+  C=$(k -n kube-system get pod -l k8s-app=cilium --field-selector "spec.nodeName=$NODE" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+  v=""
+  [ -n "$C" ] && v=$(k -n kube-system exec "$C" -c cilium-agent -- cat /proc/sys/fs/inotify/max_user_instances 2>/dev/null | tr -d '[:space:]')
+  if [[ $v =~ ^[0-9]+$ ]]; then
+    inotify_read=$((inotify_read+1)); [ "$v" -ge 512 ] || inotify_ok=0
+    inotify_detail="$inotify_detail $NODE=$v"
+  else
+    inotify_ok=0
+    if [ -n "$C" ]; then inotify_detail="$inotify_detail $NODE=unreadable (through $C)"
+    else inotify_detail="$inotify_detail $NODE=unreadable (no Cilium pod on the node)"; fi
+  fi
+done
+nodes_n=$(grep -c . <<<"$nodes_all")
+[ "$nodes_n" -gt 0 ] && [ "$inotify_read" -eq "$nodes_n" ] && [ "$inotify_ok" = 1 ]
+check $? "every node allows 512 inotify instances, read on the node through its Cilium agent (the Istio CNI agent fails below)" "fs.inotify.max_user_instances, $inotify_read of $nodes_n nodes read:$inotify_detail"
+# The nodes as found, for environment.json
+provider=$(k get nodes -o jsonpath='{.items[0].spec.providerID}' | sed -n 's#^\([a-z0-9-]*\)://.*#\1#p')
+nodes_json=$(k get nodes -o json | jq -c '[.items[] | {name: .metadata.name, osImage: .status.nodeInfo.osImage, kubelet: .status.nodeInfo.kubeletVersion, containerRuntime: .status.nodeInfo.containerRuntimeVersion}]')
 code "$(k get nodes -o wide | sed 's/  */ /g')"
 
 # --------------------------------------------------------------------------------------------
@@ -624,10 +732,10 @@ done
 
 # --------------------------------------------------------------------------------------------
 section "13. A declared registration without its entry fails the release"
-say 'The registrations-reconciled check counts the running labelled pods of every plane namespace and compares them with what the controller-manager reconciled. To make one registration go unreconciled, the kind namespace `local-path-storage`, which the controller-manager is configured to ignore, is labelled as a plane for the duration of the step and gets a labelled pod; then zone-policy is upgraded through the lifecycle step with a 20 s check timeout. Afterwards the label and the pod are removed and the rollback restores the release.' ''
-k label ns local-path-storage ztd.facis.io/plane=data --overwrite >/dev/null
-k -n local-path-storage run declared-not-reconciled --image=docker.io/curlimages/curl:8.10.1@sha256:d9b4541e214bcd85196d6e92e2753ac6d0ea699f0af5741f8c6cccbfcf00ef4b --labels=spiffe.io/spire-managed-identity=true --command -- sleep 3600 >/dev/null
-k -n local-path-storage wait --for=condition=Ready pod/declared-not-reconciled --timeout=120s >/dev/null 2>&1
+say 'The registrations-reconciled check counts the running labelled pods of every plane namespace and compares them with what the controller-manager reconciled. To make one registration go unreconciled, the namespace `kube-public`, which the controller-manager is configured to ignore on every cluster (the default `ignoreNamespaces` of the SPIRE chart) and which holds no pod, is labelled as a plane for the duration of the step and gets a labelled pod; then zone-policy is upgraded through the lifecycle step with a 20 s check timeout. Afterwards the label and the pod are removed and the rollback restores the release.' ''
+k label ns kube-public ztd.facis.io/plane=data --overwrite >/dev/null
+k -n kube-public run declared-not-reconciled --image=docker.io/curlimages/curl:8.10.1@sha256:d9b4541e214bcd85196d6e92e2753ac6d0ea699f0af5741f8c6cccbfcf00ef4b --labels=spiffe.io/spire-managed-identity=true --command -- sleep 3600 >/dev/null
+k -n kube-public wait --for=condition=Ready pod/declared-not-reconciled --timeout=120s >/dev/null 2>&1
 printf 'trustDomain: %s\nchecks:\n  timeoutSeconds: 20\n' "$TD" >"$work/zp-values.yaml"
 k config view --minify --flatten --context "$CONTEXT" >"$work/kubeconfig"
 res=$(KUBECONFIG=$work/kubeconfig LIFECYCLE_RELEASE=zone-policy LIFECYCLE_NAMESPACE=$ISTIO_NS LIFECYCLE_CHART=$REPO/deployment/helm/zone-policy \
@@ -636,8 +744,8 @@ res=$(KUBECONFIG=$work/kubeconfig LIFECYCLE_RELEASE=zone-policy LIFECYCLE_NAMESP
 jl=$(k -n "$ISTIO_NS" logs job/zone-policy-registrations-reconciled 2>/dev/null | grep -E '^(FAIL|ok)' | tail -2 | tr '\n' ' ')
 grep -q 'FAIL every registration' <<<"$jl"; check $? "the registrations-reconciled job exits non-zero naming the gap" "$jl"
 k -n "$ISTIO_NS" delete job -l ztd.facis.io/identity-check --ignore-not-found >/dev/null
-k -n local-path-storage delete pod declared-not-reconciled --wait=true >/dev/null 2>&1
-k label ns local-path-storage ztd.facis.io/plane- >/dev/null
+k -n kube-public delete pod declared-not-reconciled --wait=true >/dev/null 2>&1
+k label ns kube-public ztd.facis.io/plane- >/dev/null
 st=$(h status zone-policy -n "$ISTIO_NS" -o json | jq -r .info.status)
 [ "$st" = deployed ]; check $? "after the step the release is deployed again (rollback)" "$(h history zone-policy -n "$ISTIO_NS" --max 3 -o json | jq -r '[.[] | "\(.revision) \(.status)"] | join(", ")')"
 
@@ -661,54 +769,117 @@ out=$(helm template ztd "$CHART" -f "$ZONE_VALUES" --set cni.cilium.enabled=fals
 [ $rc -ne 0 ] && grep -q 'derogation' <<<"$out"; check $? "the umbrella refuses a meshed zone without Cilium, naming the openings and the derogation" "$(grep -o 'mesh.mode sidecar needs Cilium[^:]*' <<<"$out")"
 
 # --------------------------------------------------------------------------------------------
-section "15. Teardown: uninstall in reverse order"
-kept=$(k get crd -o json | jq -r '[.items[] | select(.spec.group == "spire.spiffe.io") | "\(.metadata.name)=\(.metadata.annotations["helm.sh/resource-policy"] // "none")"] | join(" ")')
-[ "$(wc -w <<<"$kept")" = 3 ] && ! grep -q '=keep' <<<"$kept"
-check $? "the three SPIRE CRDs carry no helm.sh/resource-policy keep, so the uninstall of spire-crds removes them through Helm alone (the installer deletes CRDs itself only for istio-base)" "$kept"
-sed -e "s/__DATA__/$DATA/g" -e "s/__MGMT__/$MGMT/g" fixtures/stand-ins.yaml | k delete -f - --wait=true >/dev/null 2>&1
-"$INSTALL" uninstall >"$work/uninstall.log" 2>&1; rc=$?
-check $rc "the installer uninstalls the seven releases in reverse order" "$(grep -c 'done$' "$work/uninstall.log") releases removed"
-code "$(cat "$work/uninstall.log")"
-for _ in $(seq 1 60); do k get ns "$MGMT" "$DATA" "$SPIRE_NS" "$ISTIO_NS" >/dev/null 2>&1 || break; sleep 3; done
-left=$(k get ns "$MGMT" "$DATA" "$SPIRE_NS" "$ISTIO_NS" --ignore-not-found -o name 2>/dev/null)
-[ -z "$left" ]; check $? "no plane namespace and no control-plane namespace remains" "${left:-none}"
-left=$(k get crd -o name | grep -E 'spiffe\.io|istio\.io' || true)
-[ -z "$left" ]; check $? "no SPIRE or Istio custom resource definition remains" "${left:-none}"
-left=$(k get validatingwebhookconfiguration,mutatingwebhookconfiguration -o name | grep -E 'istio|spire' || true)
-[ -z "$left" ]; check $? "no admission webhook of either control plane remains" "${left:-none}"
-say "  the umbrella's release namespace \`ztd-system\` remains, as expected: the installer creates it and no release owns it" ''
+# The stand-ins are removed in every case: they are fixtures of the proof, never part of a kept zone.
+sed -e "s/__DATA__/$DATA/g" -e "s/__MGMT__/$MGMT/g" fixtures/stand-ins.yaml | k delete -f - --wait=true --ignore-not-found >/dev/null 2>&1
+not_kept=""
+if [ "$KEEP" != 1 ]; then
+  if [ "$CLUSTER_KIND" = kind ]; then not_kept="no opt-in (kind)"; else not_kept="no opt-in (ZTD_KEEP_ZONE unset)"; fi
+elif [ "$failures" -ne 0 ]; then
+  not_kept="$failures check(s) failed"
+else
+  section "15. What remains installed"
+  say "The keep opt-in is set and every check above passed, so the teardown is replaced by this record, read from the cluster. Each item is a check: if one fails, the zone is torn down after all." ''
+  before=$failures
+  nodes_n=$(k get nodes -o name | grep -c .)
+  rel=$(h list -A -o json | jq -r '.[] | "\(.name):\(.namespace) \(.status)"')
+  n=0; for r in $RELEASES; do grep -qx "$r deployed" <<<"$rel" && n=$((n+1)); done
+  [ "$n" -eq 7 ]; check $? "the seven releases are installed with status deployed" "$n of 7 deployed"
+  code "$(h list -A -o json | jq -r '(["RELEASE","NAMESPACE","REVISION","STATUS","CHART"] | join(" ")), (.[] | [.name, .namespace, .revision, .status, .chart] | join(" "))')"
+  sts=$(k -n "$SPIRE_NS" get sts spire-server -o jsonpath='{.status.readyReplicas}/{.spec.replicas}')
+  [ "${sts%/*}" = "${sts#*/}" ] && [ "${sts%/*}" -ge 1 ] 2>/dev/null; check $? "the SPIRE server StatefulSet is ready" "spire-server ready $sts"
+  cm=$(k -n "$SPIRE_NS" get pod spire-server-0 -o jsonpath='{.status.containerStatuses[?(@.name=="spire-controller-manager")].ready}')
+  [ "$cm" = true ]; check $? "the SPIRE controller-manager (container spire-controller-manager of spire-server-0) is ready" "ready=$cm"
+  for ds in spire-agent spire-spiffe-csi-driver; do
+    nr=$(k -n "$SPIRE_NS" get ds "$ds" -o jsonpath='{.status.numberReady}')
+    [ "$nr" = "$nodes_n" ]; check $? "the DaemonSet $ds has one ready pod on every node" "numberReady $nr, nodes $nodes_n"
+  done
+  attested=$(spire_server agent list -output json 2>/dev/null | jq '.agents | length')
+  [ "$attested" = "$nodes_n" ]; check $? "the SPIRE server lists one attested agent per node" "attested $attested, nodes $nodes_n"
+  code "$(k -n "$SPIRE_NS" get pods -o wide | sed 's/  */ /g')"
+  server_td=$(k -n "$SPIRE_NS" get cm spire-server -o jsonpath='{.data.server\.conf}' | jq -r .server.trust_domain)
+  td_note="final"; [[ $server_td == *.trust.invalid ]] && td_note="interim"
+  [ "$server_td" = "$TD" ]; check $? "the SPIRE server runs with the zone file's trust domain" "$server_td ($td_note)"
+  if [ "$failures" -eq "$before" ]; then
+    kept=1
+    say '' "The zone stays installed on \`$CONTEXT\` with the trust domain \`$server_td\` ($td_note). An interim trust domain is fixed in the SPIRE root CA, so the zone is re-installed with its final name under the delegated trust-framework zone once that name is confirmed; until then this kept zone is not acceptance evidence. A later run of this proof starts from the clean slate (section 1) and uninstalls it first."
+  else
+    not_kept="$((failures - before)) check(s) of the record of what remains failed"
+  fi
+fi
+CRDS_KEEP=$(k get crd -o json | jq -r '[.items[] | select(.spec.group == "spire.spiffe.io") | "\(.metadata.name)=\(.metadata.annotations["helm.sh/resource-policy"] // "none")"] | join(" ")')
+if [ "$kept" != 1 ]; then
+  section "$([ "$KEEP" = 1 ] && [ "$failures" -gt 0 ] && [ -n "${before:-}" ] && echo 16 || echo 15). Teardown: uninstall in reverse order"
+  say "Not kept: $not_kept." ''
+  [ "$(wc -w <<<"$CRDS_KEEP")" = 3 ] && ! grep -q '=keep' <<<"$CRDS_KEEP"
+  check $? "the three SPIRE CRDs carry no helm.sh/resource-policy keep, so the uninstall of spire-crds removes them through Helm alone (the installer deletes CRDs itself only for istio-base)" "$CRDS_KEEP"
+  "$INSTALL" uninstall >"$work/uninstall.log" 2>&1; rc=$?
+  check $rc "the installer uninstalls the seven releases in reverse order" "$(grep -c 'done$' "$work/uninstall.log") releases removed"
+  code "$(cat "$work/uninstall.log")"
+  # The umbrella's release namespace holds nothing once the umbrella is uninstalled; it goes last.
+  k delete namespace ztd-system --ignore-not-found --wait=true >/dev/null 2>&1
+  cleaned=1
+  for _ in $(seq 1 60); do k get ns "$MGMT" "$DATA" "$SPIRE_NS" "$ISTIO_NS" ztd-system >/dev/null 2>&1 || break; sleep 3; done
+  left=$(k get ns "$MGMT" "$DATA" "$SPIRE_NS" "$ISTIO_NS" ztd-system --ignore-not-found -o name 2>/dev/null)
+  [ -z "$left" ]; check $? "no plane, control-plane or release namespace (ztd-system) remains" "${left:-none}"
+  left=$(k get crd -o name | grep -E 'spiffe\.io|istio\.io' || true)
+  [ -z "$left" ]; check $? "no SPIRE or Istio custom resource definition remains" "${left:-none}"
+  left=$(k get validatingwebhookconfiguration,mutatingwebhookconfiguration -o name | grep -E 'istio|spire' || true)
+  [ -z "$left" ]; check $? "no admission webhook of either control plane remains" "${left:-none}"
+fi
+
+# --------------------------------------------------------------------------------------------
+section "The cluster's CNI as found"
+cni_after=$(cni_state)
+[ "$cni_after" = "$cni_before" ]; check $? "the Cilium DaemonSet (image, generation) and cilium-config (resource version) are unchanged by the run" "before \`$cni_before\`; after \`$cni_after\`"
 
 # --------------------------------------------------------------------------------------------
 say '' '## Result' ''
 if [ "$failures" -eq 0 ]; then say 'All checks passed.'; else say "**$failures check(s) failed.**"; fi
+if [ "$kept" = 1 ]; then say '' "Zone kept: yes, installed on \`$CONTEXT\` (trust domain \`$TD\`)."
+else say '' "Zone kept: no (not kept: $not_kept)."; fi
 
-# environment.json: what the run was made on.
+# environment.json: what the run was made on, and the cluster as found.
 ver() { "$@" 2>/dev/null | head -1; }
-node_image=$(sed -n 's/^NODE_IMAGE=\${KIND_NODE_IMAGE:-\(.*\)}$/\1/p' "$REPO/scripts/dev/kind-cilium-up.sh")
 host_kind="$(uname -s) $(uname -r)"
 grep -qi microsoft /proc/version 2>/dev/null && host_kind="$host_kind (WSL)"
 [ -r /etc/os-release ] && host_kind="$host_kind, $(. /etc/os-release && echo "$PRETTY_NAME")"
-jq -n --arg commit "$commit" --argjson dirty "$dirty" --arg date "$started" --arg finished "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-  --arg host "$host_kind" --arg context "$CONTEXT" --arg zone "${ZONE_VALUES#"$REPO"/}" --arg td "$TD" \
-  --arg kind "$(ver kind version)" --arg kubectl "$(kubectl version --client -o json 2>/dev/null | jq -r .clientVersion.gitVersion)" \
-  --arg helm "$(ver helm version --short)" --arg istioctl "$(istioctl version --remote=false 2>/dev/null | sed 's/^client version: //' | head -1)" \
-  --arg cilium "$(cilium version --client 2>/dev/null | head -1)" --arg server "$server" --arg cni "$cni" --arg nodeImage "$node_image" \
-  --arg spire "$(sed -n 's/^SPIRE_VERSION=\([^ ]*\).*/\1/p' "$INSTALL")" --arg spireCrds "$(sed -n 's/^SPIRE_CRDS_VERSION=\(.*\)/\1/p' "$INSTALL")" \
-  --arg istio "$(sed -n 's/^ISTIO_VERSION=\(.*\)/\1/p' "$INSTALL")" \
-  --arg imgSpire "$images_spire" --arg imgIstio "$images_istio" --arg imgProxy "$images_proxy" \
-  --argjson failures "$failures" '{
-    commit: $commit, dirty: $dirty, date: $date, finished: $finished,
-    host: { kind: $host },
-    cluster: { context: $context, kubernetes: $server, kindNodeImage: $nodeImage, cni: $cni },
-    zone: { file: $zone, trustDomain: $td },
-    tools: { kind: $kind, kubectl: $kubectl, helm: $helm, istioctl: $istioctl, cilium: $cilium },
-    charts: { "spire-crds": $spireCrds, spire: $spire, "istio-base": $istio, istiod: $istio, "istio-cni": $istio },
-    images: { "spire-system": ($imgSpire | split(",")), "istio-system": ($imgIstio | split(",")), proxy: $imgProxy, cilium: $cni },
-    result: { failures: $failures }
-  }' >"$work/environment.json"
+# write_environment <file>: environment.json from the run's variables; the kind fields (the node image
+# and the kind version) only on kind
+write_environment() {
+  local node_image="" kind_version=""
+  if [ "$CLUSTER_KIND" = kind ]; then
+    node_image=$(sed -n 's/^NODE_IMAGE=\${KIND_NODE_IMAGE:-\(.*\)}$/\1/p' "$REPO/scripts/dev/kind-cilium-up.sh")
+    kind_version=$(ver kind version)
+  fi
+  local interim=false; [[ $TD == *.trust.invalid ]] && interim=true
+  local keptj=false; [ "$kept" = 1 ] && keptj=true
+  jq -n --arg commit "$commit" --argjson dirty "$dirty" --arg date "$started" --arg finished "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    --arg host "$host_kind" --arg context "$CONTEXT" --arg clusterKind "$CLUSTER_KIND" --arg provider "$provider" \
+    --argjson nodes "${nodes_json:-[]}" --arg zone "${ZONE_VALUES#"$REPO"/}" --arg zoneName "$ZONE_NAME" --arg td "$TD" \
+    --argjson interim "$interim" --argjson kept "$keptj" --arg notKept "$not_kept" \
+    --arg kind "$kind_version" --arg kubectl "$(kubectl version --client -o json 2>/dev/null | jq -r .clientVersion.gitVersion)" \
+    --arg helm "$(ver helm version --short)" --arg istioctl "$(istioctl version --remote=false 2>/dev/null | sed 's/^client version: //' | head -1)" \
+    --arg cilium "$(cilium version --client 2>/dev/null | head -1)" --arg server "$server" --arg cni "$cni" --arg nodeImage "$node_image" \
+    --arg spire "$(sed -n 's/^SPIRE_VERSION=\([^ ]*\).*/\1/p' "$INSTALL")" --arg spireCrds "$(sed -n 's/^SPIRE_CRDS_VERSION=\(.*\)/\1/p' "$INSTALL")" \
+    --arg istio "$(sed -n 's/^ISTIO_VERSION=\(.*\)/\1/p' "$INSTALL")" \
+    --arg imgSpire "$images_spire" --arg imgIstio "$images_istio" --arg imgProxy "$images_proxy" \
+    --argjson failures "$failures" '{
+      commit: $commit, dirty: $dirty, date: $date, finished: $finished,
+      host: { kind: $host },
+      cluster: ({ context: $context, kind: $clusterKind, provider: $provider, kubernetes: $server, nodes: $nodes, cni: $cni }
+        + (if $clusterKind == "kind" then { kindNodeImage: $nodeImage } else {} end)),
+      zone: ({ file: $zone, name: $zoneName, trustDomain: $td, trustDomainInterim: $interim, kept: $kept }
+        + (if $kept then {} else { notKept: $notKept } end)),
+      tools: ((if $clusterKind == "kind" then { kind: $kind } else {} end) + { kubectl: $kubectl, helm: $helm, istioctl: $istioctl, cilium: $cilium }),
+      charts: { "spire-crds": $spireCrds, spire: $spire, "istio-base": $istio, istiod: $istio, "istio-cni": $istio },
+      images: { "spire-system": ($imgSpire | split(",")), "istio-system": ($imgIstio | split(",")), proxy: $imgProxy, cilium: $cni },
+      result: { failures: $failures }
+    }' >"$1"
+}
+write_environment "$work/environment.json"
 
 mkdir -p "$EVID"
 cp "$OUT" "$EVID/evidence.md"
 cp "$work/environment.json" "$EVID/environment.json"
-echo "evidence written to ${EVID#"$REPO"/} ($failures failure(s))"
-exit $(( failures > 0 ))
+echo "evidence written to ${EVID#"$REPO"/} ($failures failure(s); zone kept: $([ "$kept" = 1 ] && echo yes || echo "no, $not_kept"))"
+exit $(( failures > 125 ? 125 : failures ))
