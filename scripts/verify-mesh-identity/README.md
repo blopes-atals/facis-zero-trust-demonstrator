@@ -1,11 +1,21 @@
 # verify-mesh-identity
 
 Evidence that the mesh identities of a zone are SPIRE's, on the local kind cluster from
-`scripts/dev/kind-cilium-up.sh` (Kubernetes v1.35.5, Cilium 1.20.2 with `cni.exclusive=false`).
-`verify.sh` installs the zone from an empty cluster with `scripts/install-zone/install.sh`, twice,
-runs the stand-in pods of `fixtures/stand-ins.yaml`, proves each check below, and tears the zone
-down again. It writes `docs/evidences/mesh-identity/evidence.md` and `environment.json`; the files
-in the repository are the output of the last run, on the commit and host `environment.json` names.
+`scripts/dev/kind-cilium-up.sh` (Kubernetes v1.35.5, Cilium 1.20.2 with `cni.exclusive=false`) or on
+one of the two participant clusters of zone A and zone B (Kubernetes v1.34.7, Cilium 1.18.8 installed
+by the provider with `cni-exclusive=false`). `verify.sh` installs the zone from an empty cluster with
+`scripts/install-zone/install.sh`, twice, runs the stand-in pods of `fixtures/stand-ins.yaml`,
+proves each check below, and tears the zone down again (or, on a participant cluster with the keep
+opt-in, records what it leaves installed). The files in the repository are the output of the last
+run, on the commit and host `environment.json` names; each cluster kind has its own folder, and a run
+never writes the other's:
+
+| Cluster | Evidence folder |
+|---|---|
+| kind | `docs/evidences/mesh-identity/` |
+| participant cluster of zone A or zone B | `docs/evidences/mesh-identity-provider-cni/<zone name>/` (`zone-a`, `zone-b`, from `zone.name` of the zone file) |
+
+On kind:
 
 ```bash
 sudo sysctl -w fs.inotify.max_user_instances=512   # kind hosts: the Istio CNI agent needs it
@@ -14,8 +24,63 @@ scripts/verify-mesh-identity/verify.sh             # destructive: uninstalls the
 scripts/verify-mesh-identity/verify.sh --help      # usage; touches nothing
 ```
 
-The run uninstalls and reinstalls the zone, so it refuses any context that is not a kind cluster
-(the context must be named `kind-<name>` and every node's provider ID must start with `kind://`).
+On a participant cluster (zone B: `zerotrust-b` and `zone-b.yaml`):
+
+```bash
+# torn down at the end, as on kind
+KUBE_CONTEXT=zerotrust-a ZTD_CONFIRM_CLUSTER=zerotrust-a \
+  ZONE_VALUES=deployment/helm/ztd/zones/zone-a.yaml scripts/verify-mesh-identity/verify.sh
+# left installed when every check passed
+KUBE_CONTEXT=zerotrust-a ZTD_CONFIRM_CLUSTER=zerotrust-a ZTD_KEEP_ZONE=zerotrust-a \
+  ZONE_VALUES=deployment/helm/ztd/zones/zone-a.yaml scripts/verify-mesh-identity/verify.sh
+```
+
+The run uninstalls and reinstalls the zone, so before it reads or writes anything it refuses every
+context except:
+
+- a kind cluster: the context is named `kind-<name>` and every node's provider ID starts with
+  `kind://`;
+- a confirmed participant cluster: the context is `zerotrust-a` or `zerotrust-b` and four facts
+  hold: `ZTD_CONFIRM_CLUSTER` equals the context name (typed for this run); the context's API
+  server host begins with `api.<context>.`; every node's provider ID begins with `onmetal://`; and
+  every node name contains `--<context>-`. The last three bind the local context name to the
+  cluster it points at, so a renamed context is caught without any address or domain in the
+  repository. The zone file's `zone.name` must also be the context's zone (`zone-a` for
+  `zerotrust-a`).
+
+Every refusal names what was expected and exits 2; the IONOS cluster and the shared
+namespace-only cluster are refused like any other name, whatever `ZTD_CONFIRM_CLUSTER` holds.
+
+**The keep opt-in.** `ZTD_KEEP_ZONE` set to the context name leaves the zone installed on a
+participant cluster, and only when every check passed: the teardown section is replaced by
+"What remains installed", which records the seven releases `deployed`, the SPIRE server and the
+controller-manager ready, the agent and CSI driver DaemonSets ready on every node, one attested
+agent per node and the trust domain in use (marked interim when it ends in `.trust.invalid`). Each
+of those is a check too; if one fails, the run tears the zone down after all. Without the opt-in,
+when any check failed, or when the run ends early (an error, INT or TERM), the run leaves the
+cluster as it found it: on a participant cluster the exit trap uninstalls the releases and deletes
+`ztd-system`. The keep opt-in is refused on kind (exit 2), and any value other than the context
+name is refused. The evidence and `environment.json` (`zone.kept`, `zone.notKept`) say whether the
+zone was kept and, if not, why. A zone kept on an interim trust domain is re-installed with the
+final name once it is confirmed, and is not acceptance evidence until then.
+
+A kept zone is removed by hand with:
+
+```bash
+KUBE_CONTEXT=zerotrust-a ZONE_VALUES=deployment/helm/ztd/zones/zone-a.yaml scripts/install-zone/install.sh uninstall
+kubectl --context zerotrust-a delete namespace ztd-system
+```
+
+A re-run of the proof on a cluster that holds a kept zone needs neither: its clean-slate section
+uninstalls the zone first and proceeds as from an empty cluster.
+
+The script reads the cluster's CNI and never writes it: the Cilium DaemonSet (image, generation)
+and `cilium-config` (resource version) are read before the clean slate and checked unchanged at
+the end, kept or torn down. The inotify instance limit is read on every node, through the node's
+own Cilium agent (`kubectl -n kube-system exec <cilium pod> -c cilium-agent -- cat
+/proc/sys/fs/inotify/max_user_instances`), and must be 512 or more everywhere; on kind every node
+shares this machine's kernel, hence the `sysctl` above.
+
 It takes no arguments: `--help` or `-h` prints the usage, any other argument prints it and exits 2,
 in both cases before the cluster is touched.
 
@@ -32,14 +97,16 @@ in both cases before the cluster is touched.
 
 It also shows the identity-band checks of `zone-policy` passing on the install and failing the
 release when a declared registration has no entry, the render guards (no trust domain, Kubernetes
-below 1.33, no Cilium), and a teardown in reverse order that leaves no plane or control-plane
-namespace, no SPIRE or Istio CRD and no admission webhook behind.
+below 1.33, no Cilium), and a teardown in reverse order that deletes `ztd-system` last and leaves
+no plane, control-plane or release namespace, no SPIRE or Istio CRD and no admission webhook
+behind. The registration-failure step labels `kube-public` (ignored by the controller-manager on
+every cluster) as a plane for its duration, and unlabels and empties it again.
 
-Needs `kind`, `kubectl`, `helm` (v4.3.0), the `cilium` CLI, `istioctl` 1.31.1, `jq`, `openssl`,
+Needs `kind` (on kind), `kubectl`, `helm` (v4.3.0), the `cilium` CLI, `istioctl` 1.31.1, `jq`, `openssl`,
 `python3` with PyYAML and `git`; the versions are recorded in `environment.json`. Run it on a clean
 tree after the commit it should cite, and commit the two files it rewrites. It refuses to run under
 CI (`CI` set): the evidence is the record of a run on a cluster, never written by a pipeline. The
-exit status is non-zero when a check failed.
+exit status is the number of failed checks (capped at 125), 0 when every check passed.
 
 The stand-in pods run the images the umbrella's own verification uses (agnhost, curl) and SPIRE's
 agent image as the Workload API client; nothing about them is consumed by a zone.
