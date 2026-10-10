@@ -48,7 +48,7 @@ declared derogation of the preferred stack first (`docs/workload-identity.md`).
 | `zone.kubernetesVersion` | none, required | Server version recorded at stand-up; `scripts/verify-umbrella` asserts it |
 | `zone.storageClass` | none, required | Storage class the zone provides to persistent components |
 | `zone.loadBalancer.type` | none, required | `cloud`, `metallb` or `none` |
-| `zone.trustDomain` | none; required where `mesh.mode` is not `none` | The zone's SPIFFE trust domain: the DNS zone delegated to the trust zone (`kind.facis-ztd.local` on kind). Read by the installer for SPIRE and the mesh; fixed at the first SPIRE install |
+| `zone.trustDomain` | none; required where `mesh.mode` is not `none` | The zone's SPIFFE trust domain: a name under the DNS zone delegated to the trust framework, one per zone (`kind.facis-ztd.local` on kind; `zone-a.trust.invalid` and `zone-b.trust.invalid`, interim, on the participant clusters). Read by the installer for SPIRE and the mesh; fixed at the first SPIRE install |
 | `planes.management.namespace` | `ztd-mgmt` | Management-plane namespace |
 | `planes.data.namespace` | `ztd-data` | Data-plane namespace |
 | `planes.extra` | `[]` | Further `{name, plane, mesh}` namespaces: the control planes `spire-system` and `istio-system` (management, `mesh: false`) and any a component task adds. `mesh: false` leaves out the mesh label |

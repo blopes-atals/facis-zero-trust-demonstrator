@@ -91,7 +91,7 @@ ambient) against copies of the kind zone file.
 ## The facts a zone file must carry
 
 The umbrella reads the whole file (`deployment/helm/ztd/zones/README.md`). Where the mesh runs, it
-must also state `zone.trustDomain` (the DNS zone delegated to the trust zone), the API lane
+must also state `zone.trustDomain` (a name under the DNS zone delegated to the trust framework, one per zone), the API lane
 (`networkPolicy.kubeApi.enabled: true` with its port), `cni.cilium.enabled: true`, a
 `zone.kubernetesVersion` of 1.33 or later, the control-plane namespaces in `planes.extra` and the
 openings. The other releases read these zone facts from it:

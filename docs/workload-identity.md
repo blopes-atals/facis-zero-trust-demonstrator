@@ -51,24 +51,27 @@ there by convention.
 
 ## The trust domain
 
-Each zone is its own SPIFFE trust domain; zones never federate. The **trust domain of a zone is
-the DNS zone delegated to that trust zone**: the zone the trust framework already requires as a
+Each zone is its own SPIFFE trust domain; zones never federate. The **trust domain of a zone is a
+name under the DNS zone delegated to the trust framework, one per zone** (`zone-a.<zone>`,
+`zone-b.<zone>`): the delegated zone is the one the trust framework already requires as a
 precondition, in which the trust-list pointers and the connector's `did:web` identifier are
-published. One name, one owner, no second namespace of names. The trust domain itself is never
-resolved; only the trust framework's records are.
+published. One delegation, one owner, no second delegation requested for the trust domains. The
+trust domain itself is never resolved; only the trust framework's records are.
 
 | Zone | `zone.trustDomain` |
 |---|---|
 | kind (local proof) | `kind.facis-ztd.local`, the local fixture zone the trust-list verification uses; a `.local` name is acceptable here and nowhere else |
-| zone A, zone B | the delegated DNS name, recorded in the zone file when the delegation exists and confirmed by the Technical Design Authority; until then the field is empty and the umbrella does not render |
+| zone A, zone B (final) | `zone-a.<zone>` and `zone-b.<zone>`, where `<zone>` is the delegated trust-framework zone; recorded in the zone files once the zone is named and the Technical Design Authority confirms the names |
+| zone A, zone B (interim) | `zone-a.trust.invalid` and `zone-b.trust.invalid`, in `zones/zone-a.yaml` and `zones/zone-b.yaml` until then, so that SPIRE and the mesh can be installed and proven on the participant clusters before the delegation lands. `.invalid` is reserved and can never resolve or be delegated, so an interim name is never taken for a real one. A zone installed on an interim name is re-installed with the final one, and is not acceptance evidence until then |
 | IONOS | none: `mesh.mode: none`, no identity path |
 
 `zone.trustDomain` is a zone fact with no default; the umbrella's schema requires it wherever
 `mesh.mode` is not `none`. The zone installer passes the same value to SPIRE
 (`global.spire.trustDomain`) and to the mesh (`meshConfig.trustDomain`), so the three cannot
 disagree; a mismatch would otherwise fail only at the first mTLS handshake. **The name is fixed at
-the first install:** it is baked into the SPIRE server's root CA, so changing it means
-reinstalling SPIRE and reissuing every identity. The `spiffe://zone-a…` examples in the attested
+install:** it is baked into the SPIRE server's root CA, so changing it means reinstalling SPIRE and
+reissuing every identity. That is why a zone installed on an interim name is re-installed (a new
+SPIRE CA, new SVIDs) when the final name is confirmed. The `spiffe://zone-a…` examples in the attested
 channel documentation and in test fixtures are illustrative.
 
 ## Registration

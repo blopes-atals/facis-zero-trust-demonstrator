@@ -11,8 +11,8 @@ zone:
   storageClass: ""       # storage class the zone provides to persistent components
   loadBalancer:
     type: ""             # how the zone exposes services: cloud | metallb | none
-  # The zone's SPIFFE trust domain: the DNS zone delegated to this trust zone, the one in which the
-  # trust framework publishes its records (kind: kind.facis-ztd.local). Shared by SPIRE
+  # The zone's SPIFFE trust domain: a name under the DNS zone delegated to the trust framework, one
+  # per zone, never resolved (kind: kind.facis-ztd.local). Shared by SPIRE
   # (global.spire.trustDomain) and the mesh (meshConfig.trustDomain), both read from this key by
   # scripts/install-zone. Required whenever mesh.mode is not none. It is baked into the SPIRE
   # server's root CA at first start: changing it later means reinstalling SPIRE and reissuing every

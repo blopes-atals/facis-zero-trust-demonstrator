@@ -14,7 +14,7 @@
         "storageClass": { "type": "string", "minLength": 1 },
         "trustDomain": {
           "type": "string",
-          "description": "The zone's SPIFFE trust domain, the DNS zone delegated to the trust zone; required (non-empty) whenever mesh.mode is not none.",
+          "description": "The zone's SPIFFE trust domain, a name under the DNS zone delegated to the trust framework, one per zone; required (non-empty) whenever mesh.mode is not none.",
           "maxLength": 255,
           "pattern": "^$|^[a-z0-9]([-a-z0-9_]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9_]*[a-z0-9])?)*$"
         },
