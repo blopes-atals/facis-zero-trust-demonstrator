@@ -1,0 +1,58 @@
+# Zone B, the participant cluster of zone B on the T-Systems Open Sovereign Cloud (Gardener, three
+# worker nodes, Cilium installed and upgraded by the provider). Recorded 2026-10-10 from the live
+# cluster with the kubeconfig the client provided (context zerotrust-b), each fact with the command
+# that reads it. Facts, not choices: change them only when the cluster changes. The API server's
+# address and the provider's project domain stay out of the repository.
+#
+# The trust domain is the one value here that is not read off the cluster, and it is INTERIM.
+# Convention: one name per zone under the DNS zone delegated to the trust framework, never a
+# delegated zone of its own; the final name is zone-b.<zone>, where <zone> is the delegated
+# trust-framework zone, confirmed by the Technical Design Authority. Until then the zone runs on
+# zone-b.trust.invalid: the .invalid top-level domain is reserved and can never resolve or be
+# delegated, so the interim name cannot be mistaken for a real one. The name is fixed in the SPIRE
+# root CA at install, so a zone installed with the interim value is re-installed with the final one
+# (a new SPIRE CA, new SVIDs) once the delegation lands.
+zone:
+  name: zone-b
+  kubernetesVersion: v1.34.7      # kubectl version -o json | jq -r .serverVersion.gitVersion; 1.33 or later for native sidecars (ADR-0009)
+  storageClass: default           # kubectl get storageclass: default (csi.onmetal.de), the cluster's default class
+  loadBalancer:
+    type: cloud                   # the provider provisions Services of type LoadBalancer; not yet exercised here
+  trustDomain: zone-b.trust.invalid   # INTERIM, see the header; re-installed with zone-b.<zone> when it is named
+
+# Istio in sidecar mode, the mesh decision of ADR-0009.
+mesh:
+  mode: sidecar
+
+# kubectl -n kube-system get ds cilium: Cilium 1.18.8, installed and upgraded by the provider, with
+# cni-exclusive=false already set (kubectl -n kube-system get cm cilium-config). Verified, never
+# installed or reconfigured by the zone.
+cni:
+  cilium:
+    enabled: true
+
+# The control planes of the identity path and of the mesh: management-plane namespaces under the
+# default deny, without the mesh label (no sidecar for SPIRE or istiod).
+planes:
+  extra:
+    - { name: spire-system, plane: management, mesh: false }
+    - { name: istio-system, plane: management, mesh: false }
+
+networkPolicy:
+  # DNS at the chart default: CoreDNS in kube-system carries k8s-app=kube-dns on these clusters
+  # (kubectl -n kube-system get pods -l k8s-app=kube-dns).
+  #
+  # The API lane: the endpoint slice of the kubernetes Service lists port 443 (kubectl get
+  # endpointslices -n default -l kubernetes.io/service-name=kubernetes). Under Cilium the lane and the
+  # openings below are Cilium entity policies; no IP-based rule is written (the security baseline
+  # forbids IP-based policies), so no address is recorded here.
+  kubeApi:
+    enabled: true
+    cidrs: []
+    ports: [443]
+  meshControlPlane:
+    enabled: true
+  controlPlaneWebhooks:
+    enabled: true
+  identityServer:
+    enabled: true
