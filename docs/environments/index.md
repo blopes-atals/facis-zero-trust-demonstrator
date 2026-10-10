@@ -7,7 +7,7 @@ visualization environment. The reasoning for three rather than two is recorded i
 
 | Environment | Clusters | Role | Guide |
 |---|---|---|---|
-| T-Systems Open Sovereign Cloud | 2 | Zone A and zone B — the two demonstration zones and their trust boundary | [OSC setup](osc.md) — clusters not yet provided |
+| T-Systems Open Sovereign Cloud | 2 | Zone A and zone B — the two demonstration zones and their trust boundary | [OSC setup](osc.md) — provided (contexts `zerotrust-a`, `zerotrust-b`); SPIRE, Istio and the zone layout installed on interim trust domains, evidence for [zone A](../evidences/mesh-identity-provider-cni/zone-a/evidence.md) and [zone B](../evidences/mesh-identity-provider-cni/zone-b/evidence.md) |
 | IONOS Cloud | 1 | CI/CD and the visualization environment | [IONOS setup](ionos.md) — provided; ORCE and the BDD pool installed |
 
 Each guide is written to be followed start to finish by someone who has not seen the cluster before.
@@ -34,8 +34,8 @@ A zone is installed by one command from one zone file: `scripts/install-zone/ins
 which runs seven Helm releases in order — the umbrella `ztd`, `spire-crds`, `spire`, `istio-base`,
 `istiod`, `istio-cni`, `zone-policy` — each through the deployment lifecycle step, and exits 0 only
 when every pod of the zone is Ready. The zone file records the cluster's facts (Kubernetes version,
-storage class, load balancer) and, where the mesh runs, the zone's trust domain (the DNS zone
-delegated to the trust zone) and the API server endpoint. The [OSC guide](osc.md#2-the-zone-layout)
+storage class, load balancer) and, where the mesh runs, the zone's trust domain (a name under the DNS
+zone delegated to the trust framework, one per zone) and the API server's port. The [OSC guide](osc.md#2-the-zone-layout)
 walks through it step by step with each step's verification; the identity path is described in
 [Workload identity](../workload-identity.md).
 
