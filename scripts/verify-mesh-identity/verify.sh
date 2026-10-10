@@ -136,10 +136,18 @@ kept=0; cleaned=0
 # down, removes everything the run put there (the fixture of section 13, the scratch namespace of
 # section 8, the seven releases, the release namespace), so that an error, INT or TERM leaves the
 # cluster as it was found; idempotent, every step ignores what is already gone.
+# delete_stand_ins: removes the stand-in pods of section 5 while the SPIFFE CSI driver still runs, so
+# that their csi.spiffe.io volumes unmount (once the spire release is gone they would hang in
+# Terminating and hold their namespace); a no-op when there are none.
+delete_stand_ins() {
+  sed -e "s/__DATA__/$DATA/g" -e "s/__MGMT__/$MGMT/g" fixtures/stand-ins.yaml \
+    | kubectl --context "$CONTEXT" delete -f - --ignore-not-found --wait=true >/dev/null 2>&1
+}
 # shellcheck disable=SC2317  # called from the EXIT trap only
 provider_cleanup() {
   [ "$CLUSTER_KIND" = provider ] && [ "$kept" != 1 ] && [ "$cleaned" != 1 ] || return 0
   echo "verify-mesh-identity: the run did not end with the zone kept; tearing it down on $CONTEXT" >&2
+  delete_stand_ins
   kubectl --context "$CONTEXT" -n kube-public delete pod declared-not-reconciled --ignore-not-found --wait=true >/dev/null 2>&1
   kubectl --context "$CONTEXT" label ns kube-public ztd.facis.io/plane- >/dev/null 2>&1
   kubectl --context "$CONTEXT" delete namespace mesh-identity-outside --ignore-not-found --wait=true >/dev/null 2>&1
@@ -263,6 +271,7 @@ code "$(k get nodes -o wide | sed 's/  */ /g')"
 
 # --------------------------------------------------------------------------------------------
 section "1. Clean slate"
+delete_stand_ins
 "$INSTALL" uninstall >"$work/clean.log" 2>&1
 k get ns "$MGMT" "$DATA" "$SPIRE_NS" "$ISTIO_NS" >/dev/null 2>&1; [ $? -ne 0 ]; check $? "no plane namespace and no control-plane namespace exists before the install"
 left=$(k get crd -o name | grep -E 'spiffe\.io|istio\.io' || true)
@@ -770,7 +779,7 @@ out=$(helm template ztd "$CHART" -f "$ZONE_VALUES" --set cni.cilium.enabled=fals
 
 # --------------------------------------------------------------------------------------------
 # The stand-ins are removed in every case: they are fixtures of the proof, never part of a kept zone.
-sed -e "s/__DATA__/$DATA/g" -e "s/__MGMT__/$MGMT/g" fixtures/stand-ins.yaml | k delete -f - --wait=true --ignore-not-found >/dev/null 2>&1
+delete_stand_ins
 not_kept=""
 if [ "$KEEP" != 1 ]; then
   if [ "$CLUSTER_KIND" = kind ]; then not_kept="no opt-in (kind)"; else not_kept="no opt-in (ZTD_KEEP_ZONE unset)"; fi
