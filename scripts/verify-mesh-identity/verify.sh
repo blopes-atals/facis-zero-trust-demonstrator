@@ -10,6 +10,10 @@
 # chained CNI and both control planes inside it, the native-sidecar version rule, the identity-band
 # checks, the cluster's CNI left as found, and a teardown that leaves nothing behind (or, on a
 # participant cluster with the keep opt-in and every check passed, the record of what stays).
+# On a participant cluster every pod the proof creates (the stand-ins, their -capture-check copies,
+# the kube-public pod of section 13) is pinned to the node istiod runs on, with a required node
+# affinity on kubernetes.io/hostname: the provider's pod network masquerades pod traffic between
+# nodes, so the mesh is proven node-locally there until the provider changes it. Kind is not pinned.
 # Writes evidence.md and environment.json to docs/evidences/mesh-identity/ (kind) or
 # docs/evidences/mesh-identity-provider-cni/<zone name>/ (participant cluster); the exit status is
 # the number of failed checks (capped at 125). Never run by CI: the evidence is the record of a run
@@ -37,6 +41,10 @@
 #   ZONE_VALUES           zone file (default: deployment/helm/ztd/ci/values.yaml on kind,
 #                         deployment/helm/ztd/zones/zone-<a|b>.yaml on zerotrust-<a|b>); on a
 #                         participant cluster its zone.name must be zone-<a|b> of that context
+#
+# On zerotrust-a and zerotrust-b the proof's pods are pinned to istiod's node (read after the install);
+# the evidence header, section 5 and the record of what remains state the pin and its reason. On kind
+# the scheduler places them as before.
 #
 # Every check is "<test>; check $? <title>": the status of the test is what the check records.
 # shellcheck disable=SC2319,SC2016,SC2181,SC1091
@@ -206,6 +214,27 @@ metric() {
   k -n "$1" exec "$2" -c istio-proxy -- pilot-agent request GET stats/prometheus 2>/dev/null \
     | awk -v r="reporter=\"$3\"" '/^istio_requests_total/ && index($0, r) { s += $NF } END { print s + 0 }'
 }
+# The pin of a participant cluster (see the header): PIN_NODE is istiod's node once section 5 read it;
+# PIN_NONE, a node name that matches nothing, stands in when istiod has no node, so no pod runs unpinned.
+PIN_NODE=""; PIN_NONE=istiod-node-not-found
+# pin_affinity <node>: the pod spec fragment, as JSON, that requires the node <node>
+pin_affinity() {
+  jq -cn --arg n "$1" '{affinity: {nodeAffinity: {requiredDuringSchedulingIgnoredDuringExecution: {nodeSelectorTerms: [{matchExpressions: [{key: "kubernetes.io/hostname", operator: "In", values: [$n]}]}]}}}}'
+}
+# pin_pods <node> <file>...: adds that affinity to every Pod of each manifest file, in place
+pin_pods() {
+  local node=$1; shift
+  python3 - "$(pin_affinity "$node")" "$@" <<'PY'
+import json, sys, yaml
+aff = json.loads(sys.argv[1])["affinity"]
+for f in sys.argv[2:]:
+    docs = [d for d in yaml.safe_load_all(open(f)) if d]
+    for d in docs:
+        if d.get("kind") == "Pod":
+            d["spec"]["affinity"] = aff
+    yaml.safe_dump_all(docs, open(f, "w"), sort_keys=False)
+PY
+}
 
 : > "$OUT"
 say "# Mesh identity evidence ($started)" ''
@@ -216,6 +245,7 @@ else
   [ "$KEEP" = 1 ] && keep_text="set (\`ZTD_KEEP_ZONE=$CONTEXT\`): the zone stays installed only if every check passes, otherwise the run tears it down"
   interim=""; [[ $TD == *.trust.invalid ]] && interim=" The trust domain \`$TD\` is **interim**: the zone is re-installed with its final name under the delegated trust-framework zone once that name is confirmed, and a zone on an interim name is not acceptance evidence."
   say "Cluster kind: **participant cluster** \`$CONTEXT\` (zone \`$ZONE_NAME\`), Cilium installed and managed by the provider, confirmed with \`ZTD_CONFIRM_CLUSTER=$CONTEXT\`. Keep opt-in: $keep_text.$interim Every IPv4 address of the cluster is replaced by \`<address>\` in this record." ''
+  say "Proof pods pinned to __PIN_NODE__: every pod this run creates (the stand-ins of section 5, their \`-capture-check\` copies, the \`kube-public\` pod of section 13) carries a required node affinity on \`kubernetes.io/hostname\` to the node istiod runs on, because the provider's pod network masquerades pod traffic between nodes (see the preconditions); the mesh is proven node-locally on this cluster, and cross-node meshed traffic is not proven here until the provider changes its pod network." ''
 fi
 say "Cluster context \`$CONTEXT\`, zone file \`${ZONE_VALUES#"$REPO"/}\` (trust domain \`$TD\`), installed with \`scripts/install-zone/install.sh\`: the seven releases \`ztd\`, \`spire-crds\`, \`spire\`, \`istio-base\`, \`istiod\`, \`istio-cni\`, \`zone-policy\`. Commit \`$commit\`, tree dirty: $dirty. Versions in \`environment.json\`." ''
 say 'Probe results: an HTTP code with the first line of the body when the call went through its proxies; `denied(28)` when a raw TCP connection timed out because the policy dropped the packets; `denied(56)` when the peer reset the connection; `error(<exit>)`, which fails a negative check, for any other failure (a name that does not resolve, an exec that failed).' ''
@@ -364,6 +394,16 @@ mesh_td=$(k -n "$ISTIO_NS" get cm istio -o jsonpath='{.data.mesh}' | awk '/^trus
 section "5. Stand-in pods"
 say 'From `scripts/verify-mesh-identity/fixtures/stand-ins.yaml`: in the data plane a meshed peer, a labelled caller with a Workload API client on the CSI socket, an unlabelled meshed pod, an unlabelled pod without proxy with a Workload API client, the matrix pair `pdp-adapter` and the cross-plane caller `data-plain`; in the management plane `tsa-policy-engine`, `openbao` and `mgmt-caller`; in both a proxy-less `probe` for raw TCP probes. All in the service account `stand-in` unless noted.' ''
 sed -e "s/__DATA__/$DATA/g" -e "s/__MGMT__/$MGMT/g" fixtures/stand-ins.yaml >"$work/stand-ins.yaml"
+# The pin (participant cluster only): every pod the proof creates runs on istiod's node. The provider's
+# pod network masquerades pod traffic between nodes to the node address (see the preconditions), so a
+# proxy on another node reaches istiod as remote-node, which no opening admits, and never starts.
+if [ "$CLUSTER_KIND" = provider ]; then
+  PIN_NODE=$(k -n "$ISTIO_NS" get pod -l app=istiod -o jsonpath='{.items[0].spec.nodeName}' 2>/dev/null)
+  pin_detail=$PIN_NODE; [ -n "$PIN_NODE" ] || pin_detail="no istiod pod with a node in $ISTIO_NS: the proof's pods are pinned to the unmatched name $PIN_NONE and stay Pending"
+  [ -n "$PIN_NODE" ]; check $? "istiod's node is read, to pin the proof's pods to it" "$pin_detail"
+  PIN_NODE=${PIN_NODE:-$PIN_NONE}
+  say '' "The proof's pods are pinned to the node \`$PIN_NODE\`, the node istiod runs on (a required node affinity on \`kubernetes.io/hostname\`): the provider's pod network masquerades pod traffic between nodes to the node's address, so a meshed pod on another node reaches istiod on 15012 as \`remote-node\`, which no namespace- or label-keyed opening admits, and never starts. The mesh is proven node-locally on this cluster until the provider changes its pod network; nothing of the pin is in the chart, the policies or the zone file." ''
+fi
 # The stand-ins that opt out of injection go apart: the capture rule refuses them (below).
 # Their refusal is asked with a server dry-run create of a copy under other names (suffix
 # -capture-check): a create of a name that exists would still reach admission, but kubectl apply of
@@ -379,6 +419,7 @@ check = [copy.deepcopy(d) for d in docs if off(d)]
 for d in check: d["metadata"]["name"] += "-capture-check"
 yaml.safe_dump_all(check, open(sys.argv[4], "w"), sort_keys=False)
 PY
+[ "$CLUSTER_KIND" = provider ] && pin_pods "$PIN_NODE" "$work/stand-ins-meshed.yaml" "$work/stand-ins-proxyless.yaml" "$work/stand-ins-proxyless-check.yaml"
 k apply -f "$work/stand-ins-meshed.yaml" >/dev/null
 proxyless=$(python3 -c 'import sys,yaml
 print(", ".join("`" + d["metadata"]["name"] + "` in " + d["metadata"]["namespace"] for d in yaml.safe_load_all(open(sys.argv[1])) if d))' "$work/stand-ins-proxyless.yaml")
@@ -761,7 +802,8 @@ done
 section "13. A declared registration without its entry fails the release"
 say 'The registrations-reconciled check counts the running labelled pods of every plane namespace and compares them with what the controller-manager reconciled. To make one registration go unreconciled, the namespace `kube-public`, which the controller-manager is configured to ignore on every cluster (the default `ignoreNamespaces` of the SPIRE chart) and which holds no pod, is labelled as a plane for the duration of the step and gets a labelled pod; then zone-policy is upgraded through the lifecycle step with a 20 s check timeout. Afterwards the label and the pod are removed and the rollback restores the release.' ''
 k label ns kube-public ztd.facis.io/plane=data --overwrite >/dev/null
-k -n kube-public run declared-not-reconciled --image=docker.io/curlimages/curl:8.10.1@sha256:d9b4541e214bcd85196d6e92e2753ac6d0ea699f0af5741f8c6cccbfcf00ef4b --labels=spiffe.io/spire-managed-identity=true --command -- sleep 3600 >/dev/null
+pin_overrides=(); [ "$CLUSTER_KIND" = provider ] && pin_overrides=(--overrides "{\"apiVersion\":\"v1\",\"spec\":$(pin_affinity "$PIN_NODE")}")
+k -n kube-public run declared-not-reconciled --image=docker.io/curlimages/curl:8.10.1@sha256:d9b4541e214bcd85196d6e92e2753ac6d0ea699f0af5741f8c6cccbfcf00ef4b --labels=spiffe.io/spire-managed-identity=true "${pin_overrides[@]}" --command -- sleep 3600 >/dev/null
 k -n kube-public wait --for=condition=Ready pod/declared-not-reconciled --timeout=120s >/dev/null 2>&1
 printf 'trustDomain: %s\nchecks:\n  timeoutSeconds: 20\n' "$TD" >"$work/zp-values.yaml"
 k config view --minify --flatten --context "$CONTEXT" >"$work/kubeconfig"
@@ -831,6 +873,7 @@ else
   if [ "$failures" -eq "$before" ]; then
     kept=1
     say '' "The zone stays installed on \`$CONTEXT\` with the trust domain \`$server_td\` ($td_note). An interim trust domain is fixed in the SPIRE root CA, so the zone is re-installed with its final name under the delegated trust-framework zone once that name is confirmed; until then this kept zone is not acceptance evidence. A later run of this proof starts from the clean slate (section 1) and uninstalls it first."
+    [ "$CLUSTER_KIND" = provider ] && say '' "The mesh of this zone was proven node-locally, with the proof's pods pinned to istiod's node \`$PIN_NODE\`: cross-node meshed traffic is not proven and does not work on this cluster until the provider changes its pod network to keep a pod's address between nodes."
   else
     not_kept="$((failures - before)) check(s) of the record of what remains failed"
   fi
@@ -906,6 +949,10 @@ write_environment() {
     }' >"$1"
 }
 write_environment "$work/environment.json"
+# The node of the pin is known from section 5 on; the header written before the install names it now.
+if [ -n "$PIN_NODE" ]; then pin_text="\`$PIN_NODE\`, the node istiod runs on"
+else pin_text="istiod's node (never read: the run did not reach section 5)"; fi
+sed -i "s|__PIN_NODE__|$pin_text|" "$OUT"
 
 mkdir -p "$EVID"
 if [ "$CLUSTER_KIND" = kind ]; then
