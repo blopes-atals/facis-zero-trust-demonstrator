@@ -48,6 +48,17 @@ context except:
   repository. The zone file's `zone.name` must also be the context's zone (`zone-a` for
   `zerotrust-a`).
 
+**The pin, on a participant cluster.** After the install the proof reads the node istiod runs on
+and gives every pod it creates (the stand-ins, their `-capture-check` copies, the `kube-public` pod
+of the registration step) a required node affinity on `kubernetes.io/hostname` to that node. The
+provider's pod network masquerades pod traffic between nodes to the node's address, so a meshed
+pod on another node would reach istiod as `remote-node`, which no opening admits, and never start.
+The records say so in their header, the stand-ins section and the record of what remains: the mesh
+is proven node-locally there, and cross-node meshed traffic is not proven until the provider
+changes its pod network, after which the pin is removed. The pin lives in `verify.sh` alone (the
+chart, the policies and the zone files carry none of it), and on kind the scheduler places the pods
+as before.
+
 Every refusal names what was expected and exits 2; the IONOS cluster and the shared
 namespace-only cluster are refused like any other name, whatever `ZTD_CONFIRM_CLUSTER` holds.
 

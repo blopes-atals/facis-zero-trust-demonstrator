@@ -6,10 +6,10 @@ admission control and policy enforcement, and the interesting part of the demons
 happens between them.
 
 The two clusters were provided on 9 October 2026 and the facts on this page were read off them on
-10 October 2026. Steps 1 to 4 have been run on both by the mesh-identity proof: the install passes,
-but the mesh does not work across nodes on the provider's pod network as configured today, so
-neither zone is left installed (see [What has been run](#what-has-been-run)). Steps 5 to 7 have
-not been run.
+10 October 2026. Steps 1 to 4 have been run on both by the mesh-identity proof, with the proof's
+pods on istiod's node, and both zones are left installed on their interim trust domains; the mesh
+does not work across nodes on the provider's pod network as configured today (see
+[What has been run](#what-has-been-run)). Steps 5 to 7 have not been run.
 
 ## Before you start
 
@@ -254,18 +254,24 @@ The evidence of each run is written to `docs/evidences/mesh-identity-provider-cn
 The proof was run with the keep opt-in on both clusters, zone A then zone B, from one commit on a
 clean tree: [zone A](../evidences/mesh-identity-provider-cni/zone-a/evidence.md) and
 [zone B](../evidences/mesh-identity-provider-cni/zone-b/evidence.md)
-([about these records](../evidences/mesh-identity-provider-cni/README.md)). On both:
+([about these records](../evidences/mesh-identity-provider-cni/README.md)). Every check passed on
+both, and both zones are **left installed** on their interim trust domains:
 
 - the zone installs from the empty cluster, twice, with every release deployed and every pod of
   the control planes Ready: the SPIRE server, an attested agent and a CSI driver pod on each of the
   three nodes, istiod, the Istio CNI agent on each node, `zone-policy` with its identity checks;
-  the API server reaches both admission webhooks; the SPIRE server and the mesh run on the interim
-  trust domain; the agents' metrics are bound to each node's loopback; the provider's Cilium is
-  unchanged by the run;
-- **the meshed stand-in pods on a node other than istiod's never start**: their proxies cannot
-  reach istiod on 15012, so they receive no configuration, and every check that needs a running
-  meshed pod fails with them (the SVID over the socket, the proxy's SPIRE certificate, the traffic
-  and default-deny checks).
+  the API server reaches both admission webhooks; the agents' metrics are bound to each node's
+  loopback; the provider's Cilium is unchanged by the run;
+- a labelled pod receives its SVID over the CSI socket; the proxies hold SPIRE's certificate and
+  root bundle; the SPIRE server, the SVID and the mesh agree on the interim trust domain; an
+  unregistered pod is cut off; traffic goes through the proxies over mutual TLS; the default deny
+  holds with the Istio plugin chained behind the provider's Cilium, with both control planes
+  inside it.
+
+**The proof's pods were pinned to istiod's node.** On these clusters every pod the proof creates
+(its stand-ins and the pod of its registration step) carries a required node affinity to the node
+istiod runs on, and the records say so in their header and in their stand-ins section. The pin is
+in the proof alone: the chart, the policies and the zone files carry none of it.
 
 The cause is the provider's pod network, not the zone. Cilium runs in native routing with
 `ipv4-native-routing-cidr` covering the node network only, while the pods' ranges lie outside it,
@@ -277,13 +283,16 @@ while the same lanes work between pods on the same node. `cilium-dbg monitor --t
 istiod's node shows the SYNs to 15012 arriving from node addresses. The records state it in their
 preconditions (`0 of 3 node pod ranges inside ipv4-native-routing-cidr`).
 
+So the mesh is proven node-locally on these clusters. **Cross-node meshed traffic is not proven
+and does not work there**: a meshed workload scheduled on a node other than istiod's never starts,
+because its proxy cannot reach istiod on 15012, until the provider changes its pod network.
 Widening the lanes to admit node addresses would admit every pod on every node and is not done.
 The fix is on the provider's side: pod-to-pod traffic must keep the pod's address between nodes
 (the pod network inside Cilium's native-routing range, or the overlay), a change to the provider's
-networking configuration that this project does not make. Until then each run tears the zone down
-and leaves the cluster as it was found; both clusters are empty. Once the provider has changed it,
-the same two commands are re-run, and with every check passed each zone stays installed on its
-interim trust domain.
+networking configuration that this project does not make; it has been requested from the
+provider. Once it is made, the pin is removed from the proof and both zones are re-run without it;
+that unpinned re-run is the exit from this limitation, and it coincides with the re-install on the
+final trust-domain names.
 
 ## 5. Admission control
 

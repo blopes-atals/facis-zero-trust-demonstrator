@@ -7,7 +7,7 @@ visualization environment. The reasoning for three rather than two is recorded i
 
 | Environment | Clusters | Role | Guide |
 |---|---|---|---|
-| T-Systems Open Sovereign Cloud | 2 | Zone A and zone B — the two demonstration zones and their trust boundary | [OSC setup](osc.md) — provided (contexts `zerotrust-a`, `zerotrust-b`); the zone installs on interim trust domains, but the mesh fails across nodes on the provider's pod masquerading, so neither zone is kept: evidence for [zone A](../evidences/mesh-identity-provider-cni/zone-a/evidence.md) and [zone B](../evidences/mesh-identity-provider-cni/zone-b/evidence.md) |
+| T-Systems Open Sovereign Cloud | 2 | Zone A and zone B — the two demonstration zones and their trust boundary | [OSC setup](osc.md) — provided (contexts `zerotrust-a`, `zerotrust-b`); both zones installed and kept on interim trust domains, the mesh proven node-locally (it fails across nodes on the provider's pod masquerading until the provider changes it): evidence for [zone A](../evidences/mesh-identity-provider-cni/zone-a/evidence.md) and [zone B](../evidences/mesh-identity-provider-cni/zone-b/evidence.md) |
 | IONOS Cloud | 1 | CI/CD and the visualization environment | [IONOS setup](ionos.md) — provided; ORCE and the BDD pool installed |
 
 Each guide is written to be followed start to finish by someone who has not seen the cluster before.
