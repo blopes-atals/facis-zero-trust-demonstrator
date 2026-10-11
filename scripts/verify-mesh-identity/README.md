@@ -66,8 +66,8 @@ namespace-only cluster are refused like any other name, whatever `ZTD_CONFIRM_CL
 participant cluster, and only when every check passed: the teardown section is replaced by
 "What remains installed", which records the seven releases `deployed`, the SPIRE server and the
 controller-manager ready, the agent and CSI driver DaemonSets ready on every node, one attested
-agent per node, the trust domain in use (marked interim when it ends in `.trust.invalid`) and the
-cluster's CNI as found. Each of those is a check too; if one fails, the run tears the zone down
+agent per node and the trust domain in use (marked interim when it ends in `.trust.invalid`), after
+the cluster's CNI as found is read again. Each of those is a check too; if one fails, the run tears the zone down
 after all. The zone counts as kept only once its record is written to the evidence folder: an
 interrupt before then, or a failed write, tears it down too. Without the opt-in,
 when any check failed, or when the run ends early (an error, INT or TERM), the run leaves the

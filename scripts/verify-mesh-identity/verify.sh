@@ -925,9 +925,14 @@ if [ "$KEEP" != 1 ]; then
 elif [ "$failures" -ne 0 ]; then
   not_kept="$failures check(s) failed"
 else
-  section "15. What remains installed"
-  say "The keep opt-in is set and every check above passed, so the teardown is replaced by this record, read from the cluster. Each item is a check: if one fails, the zone is torn down after all." ''
+  # The CNI read-back comes first on the keep path: a check of the decision to keep, like the record
+  # below, so a changed CNI tears the zone down (on the teardown path it runs after the uninstall).
   before=$failures
+  section "The cluster's CNI as found"
+  say "Read again before the zone is declared kept: if it changed, the zone is torn down." ''
+  cni_check
+  section "15. What remains installed"
+  say "The keep opt-in is set and every check above passed, so the teardown is replaced by this record, read from the cluster. Each item is a check, as is the CNI read-back above: if one fails, the zone is torn down after all." ''
   nodes_n=$(k get nodes -o name | grep -c .)
   rel=$(h list -A -o json | jq -r '.[] | "\(.name):\(.namespace) \(.status)"')
   n=0; for r in $RELEASES; do grep -qx "$r deployed" <<<"$rel" && n=$((n+1)); done
@@ -947,14 +952,12 @@ else
   server_td=$(k -n "$SPIRE_NS" get cm spire-server -o jsonpath='{.data.server\.conf}' | jq -r .server.trust_domain)
   td_note="final"; [[ $server_td == *.trust.invalid ]] && td_note="interim"
   [ "$server_td" = "$TD" ]; check $? "the SPIRE server runs with the zone file's trust domain" "$server_td ($td_note)"
-  say '' "The cluster's CNI as found, read again before the zone is declared kept:" ''
-  cni_check
   if [ "$failures" -eq "$before" ]; then
     keep_zone=1
     say '' "The zone stays installed on \`$CONTEXT\` with the trust domain \`$server_td\` ($td_note). An interim trust domain is fixed in the SPIRE root CA, so the zone is re-installed with its final name under the delegated trust-framework zone once that name is confirmed; until then this kept zone is not acceptance evidence. A later run of this proof starts from the clean slate (section 1) and uninstalls it first."
     [ "$CLUSTER_KIND" = provider ] && say '' "The mesh of this zone was proven node-locally, with the proof's pods pinned to istiod's node \`$PIN_NODE\`: cross-node meshed traffic is not proven and does not work on this cluster until the provider changes its pod network to keep a pod's address between nodes."
   else
-    not_kept="$((failures - before)) check(s) of the record of what remains failed"
+    not_kept="$((failures - before)) check(s) of the CNI read-back and the record of what remains failed"
   fi
 fi
 CRDS_KEEP=$(k get crd -o json | jq -r '[.items[] | select(.spec.group == "spire.spiffe.io") | "\(.metadata.name)=\(.metadata.annotations["helm.sh/resource-policy"] // "none")"] | join(" ")')
