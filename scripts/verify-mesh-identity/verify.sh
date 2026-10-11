@@ -11,9 +11,10 @@
 # checks, the cluster's CNI left as found, and a teardown that leaves nothing behind (or, on a
 # participant cluster with the keep opt-in and every check passed, the record of what stays).
 # On a participant cluster every pod the proof creates (the stand-ins, their -capture-check copies,
-# the kube-public pod of section 13) is pinned to the node istiod runs on, with a required node
-# affinity on kubernetes.io/hostname: the provider's pod network masquerades pod traffic between
-# nodes, so the mesh is proven node-locally there until the provider changes it. Kind is not pinned.
+# the probe of section 8's scratch namespace, the kube-public pod of section 13) is pinned to the
+# node istiod runs on, with a required node affinity on kubernetes.io/hostname: the provider's pod
+# network masquerades pod traffic between nodes, so the mesh is proven node-locally there until the
+# provider changes it. Kind is not pinned.
 # Writes evidence.md and environment.json to docs/evidences/mesh-identity/ (kind) or
 # docs/evidences/mesh-identity-provider-cni/<zone name>/ (participant cluster); the exit status is
 # the number of failed checks (capped at 125). Never run by CI: the evidence is the record of a run
@@ -245,7 +246,7 @@ else
   [ "$KEEP" = 1 ] && keep_text="set (\`ZTD_KEEP_ZONE=$CONTEXT\`): the zone stays installed only if every check passes, otherwise the run tears it down"
   interim=""; [[ $TD == *.trust.invalid ]] && interim=" The trust domain \`$TD\` is **interim**: the zone is re-installed with its final name under the delegated trust-framework zone once that name is confirmed, and a zone on an interim name is not acceptance evidence."
   say "Cluster kind: **participant cluster** \`$CONTEXT\` (zone \`$ZONE_NAME\`), Cilium installed and managed by the provider, confirmed with \`ZTD_CONFIRM_CLUSTER=$CONTEXT\`. Keep opt-in: $keep_text.$interim Every IPv4 address of the cluster is replaced by \`<address>\` in this record." ''
-  say "Proof pods pinned to __PIN_NODE__: every pod this run creates (the stand-ins of section 5, their \`-capture-check\` copies, the \`kube-public\` pod of section 13) carries a required node affinity on \`kubernetes.io/hostname\` to the node istiod runs on, because the provider's pod network masquerades pod traffic between nodes (see the preconditions); the mesh is proven node-locally on this cluster, and cross-node meshed traffic is not proven here until the provider changes its pod network." ''
+  say "Proof pods pinned to __PIN_NODE__: every pod this run creates (the stand-ins of section 5, their \`-capture-check\` copies, the \`probe\` of section 8's scratch namespace, the \`kube-public\` pod of section 13) carries a required node affinity on \`kubernetes.io/hostname\` to the node istiod runs on, because the provider's pod network masquerades pod traffic between nodes (see the preconditions); the mesh is proven node-locally on this cluster, and cross-node meshed traffic is not proven here until the provider changes its pod network." ''
 fi
 say "Cluster context \`$CONTEXT\`, zone file \`${ZONE_VALUES#"$REPO"/}\` (trust domain \`$TD\`), installed with \`scripts/install-zone/install.sh\`: the seven releases \`ztd\`, \`spire-crds\`, \`spire\`, \`istio-base\`, \`istiod\`, \`istio-cni\`, \`zone-policy\`. Commit \`$commit\`, tree dirty: $dirty. Versions in \`environment.json\`." ''
 say 'Probe results: an HTTP code with the first line of the body when the call went through its proxies; `denied(28)` when a raw TCP connection timed out because the policy dropped the packets; `denied(56)` when the peer reset the connection; `error(<exit>)`, which fails a negative check, for any other failure (a name that does not resolve, an exec that failed).' ''
@@ -667,7 +668,9 @@ jq -e '[(.spec.initContainers // [])[].name] | index("istio-proxy")' <<<"$out" >
 check $? "there it is admitted with a proxy and no SPIRE socket: that proxy would ask istiod's CA" "containers: $(jq -r '[(.spec.initContainers // [])[].name, .spec.containers[].name] | join(",")' <<<"$out" 2>/dev/null)"
 printf '%s\n' 'apiVersion: v1' 'kind: Pod' 'metadata: { name: probe }' \
   'spec: { terminationGracePeriodSeconds: 2, containers: [ { name: app, image: "docker.io/curlimages/curl:8.10.1@sha256:d9b4541e214bcd85196d6e92e2753ac6d0ea699f0af5741f8c6cccbfcf00ef4b", command: [sleep, "3600"] } ] }' \
-  | k -n "$OUTSIDE" create -f - >/dev/null
+  >"$work/outside-probe.yaml"
+[ "$CLUSTER_KIND" = provider ] && pin_pods "$PIN_NODE" "$work/outside-probe.yaml"
+k -n "$OUTSIDE" create -f "$work/outside-probe.yaml" >/dev/null
 k -n "$OUTSIDE" wait --for=condition=Ready pod/probe --timeout=120s >/dev/null 2>&1
 ISTIOD_IP=$(k -n "$ISTIO_NS" get pod -l app=istiod -o jsonpath='{.items[0].status.podIP}')
 r=$(tcp "$OUTSIDE" probe "$ISTIOD_IP" 15012)
