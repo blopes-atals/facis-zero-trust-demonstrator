@@ -269,9 +269,10 @@ both, and both zones are **left installed** on their interim trust domains:
   inside it.
 
 **The proof's pods were pinned to istiod's node.** On these clusters every pod the proof creates
-(its stand-ins and the pod of its registration step) carries a required node affinity to the node
-istiod runs on, and the records say so in their header and in their stand-ins section. The pin is
-in the proof alone: the chart, the policies and the zone files carry none of it.
+(its stand-ins, the probe of its scratch namespace and the pod of its registration step) carries a
+required node affinity to the node istiod runs on, and the records say so in their header and in
+their stand-ins section. The pin is in the proof alone: the chart, the policies and the zone files
+carry none of it.
 
 The cause is the provider's pod network, not the zone. Cilium runs in native routing with
 `ipv4-native-routing-cidr` covering the node network only, while the pods' ranges lie outside it,
