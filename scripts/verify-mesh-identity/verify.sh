@@ -215,7 +215,7 @@ else
   keep_text="not set: the run tears the zone down"
   [ "$KEEP" = 1 ] && keep_text="set (\`ZTD_KEEP_ZONE=$CONTEXT\`): the zone stays installed only if every check passes, otherwise the run tears it down"
   interim=""; [[ $TD == *.trust.invalid ]] && interim=" The trust domain \`$TD\` is **interim**: the zone is re-installed with its final name under the delegated trust-framework zone once that name is confirmed, and a zone on an interim name is not acceptance evidence."
-  say "Cluster kind: **participant cluster** \`$CONTEXT\` (zone \`$ZONE_NAME\`), Cilium installed and managed by the provider, confirmed with \`ZTD_CONFIRM_CLUSTER=$CONTEXT\`. Keep opt-in: $keep_text.$interim" ''
+  say "Cluster kind: **participant cluster** \`$CONTEXT\` (zone \`$ZONE_NAME\`), Cilium installed and managed by the provider, confirmed with \`ZTD_CONFIRM_CLUSTER=$CONTEXT\`. Keep opt-in: $keep_text.$interim Every IPv4 address of the cluster is replaced by \`<address>\` in this record." ''
 fi
 say "Cluster context \`$CONTEXT\`, zone file \`${ZONE_VALUES#"$REPO"/}\` (trust domain \`$TD\`), installed with \`scripts/install-zone/install.sh\`: the seven releases \`ztd\`, \`spire-crds\`, \`spire\`, \`istio-base\`, \`istiod\`, \`istio-cni\`, \`zone-policy\`. Commit \`$commit\`, tree dirty: $dirty. Versions in \`environment.json\`." ''
 say 'Probe results: an HTTP code with the first line of the body when the call went through its proxies; `denied(28)` when a raw TCP connection timed out because the policy dropped the packets; `denied(56)` when the peer reset the connection; `error(<exit>)`, which fails a negative check, for any other failure (a name that does not resolve, an exec that failed).' ''
@@ -908,7 +908,15 @@ write_environment() {
 write_environment "$work/environment.json"
 
 mkdir -p "$EVID"
-cp "$OUT" "$EVID/evidence.md"
-cp "$work/environment.json" "$EVID/environment.json"
+if [ "$CLUSTER_KIND" = kind ]; then
+  cp "$OUT" "$EVID/evidence.md"
+  cp "$work/environment.json" "$EVID/environment.json"
+else
+  # No address of a client cluster enters the repository: every IPv4 address (nodes, pods, the
+  # probed servers) is replaced in the record of a participant cluster.
+  mask() { sed -E 's/(^|[^0-9.])([0-9]{1,3}\.){3}[0-9]{1,3}([^0-9.]|$)/\1<address>\3/g; s/(^|[^0-9.])([0-9]{1,3}\.){3}[0-9]{1,3}([^0-9.]|$)/\1<address>\3/g' "$1"; }
+  mask "$OUT" >"$EVID/evidence.md"
+  mask "$work/environment.json" >"$EVID/environment.json"
+fi
 echo "evidence written to ${EVID#"$REPO"/} ($failures failure(s); zone kept: $([ "$kept" = 1 ] && echo yes || echo "no, $not_kept"))"
 exit $(( failures > 125 ? 125 : failures ))

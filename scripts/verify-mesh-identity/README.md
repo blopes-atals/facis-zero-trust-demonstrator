@@ -13,7 +13,7 @@ never writes the other's:
 | Cluster | Evidence folder |
 |---|---|
 | kind | `docs/evidences/mesh-identity/` |
-| participant cluster of zone A or zone B | `docs/evidences/mesh-identity-provider-cni/<zone name>/` (`zone-a`, `zone-b`, from `zone.name` of the zone file) |
+| participant cluster of zone A or zone B | `docs/evidences/mesh-identity-provider-cni/<zone name>/` (`zone-a`, `zone-b`, from `zone.name` of the zone file); every IPv4 address in it is written as `<address>` |
 
 On kind:
 
