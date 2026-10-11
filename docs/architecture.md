@@ -25,7 +25,7 @@ not a pod, `CiliumNetworkPolicy` objects. These are the only permitted paths:
 | PDP adapter → TSA policy engine | ALLOW (mTLS, named pair) | mesh policy |
 | aTLS gateway → cmcd / TCR resolve | ALLOW (named pair) | mesh policy |
 | workloads → OTel collector (export only) | ALLOW (declared bypass, ZT-26) | mesh policy, egress-restricted |
-| workloads → DNS | ALLOW (declared bypass) | network policy layer, port 53 |
+| workloads → DNS | ALLOW (declared bypass) | network policy layer, the resolver's port (53; 8053 on the Gardener clusters) |
 | backend → Keycloak token endpoint / verification service | ALLOW (named pairs) | mesh policy |
 | anything else data → management (SPIRE server, ArgoCD, OpenBao, TSPA, Harbor, estserver, admin APIs) | **DENY** | both layers; ZT-55 matrix test |
 

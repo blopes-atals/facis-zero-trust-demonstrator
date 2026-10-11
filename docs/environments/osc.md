@@ -62,7 +62,8 @@ Facts read off both clusters on 10 October 2026:
 | Nodes | three workers, Garden Linux 2150.7.0, containerd 2.2.6, provider IDs `onmetal://` | `kubectl get nodes -o wide` |
 | Cilium | 1.18.8, the provider's DaemonSet, `cni-exclusive=false`, `bpf-lb-sock-hostns-only=true`, kube-proxy replacement, native routing, `policy-cidr-match-mode=nodes` | `kubectl -n kube-system get ds cilium`, `get cm cilium-config` |
 | StorageClass | `default` (the default class, `csi.onmetal.de`) | `kubectl get storageclass` |
-| CoreDNS | in `kube-system`, labelled `k8s-app=kube-dns` (the chart default) | `kubectl -n kube-system get pods -l k8s-app=kube-dns` |
+| CoreDNS | in `kube-system`, labelled `k8s-app=kube-dns` (the chart default), listening on 8053 behind the Service's port 53 | `kubectl -n kube-system get svc kube-dns` |
+| Pod mutation by the provider | `kubernetes-service-host.resources.gardener.cloud` sets `KUBERNETES_SERVICE_HOST` to the API server's public name in every new pod, except in namespaces labelled `apiserver-proxy.networking.gardener.cloud/inject: disable` | `kubectl get mutatingwebhookconfiguration gardener-resource-manager-shoot` |
 | API server | outside the cluster, reached through the provider's `apiserver-proxy` pods; the `kubernetes` Service's endpoint port is 443 | `kubectl get endpointslices -n default -l kubernetes.io/service-name=kubernetes` |
 | inotify instances | 8192 on every node | through each node's Cilium agent (below) |
 | Before the first install | empty: no namespace beyond `default`, `kube-system`, `kube-public`, `kube-node-lease` | `kubectl get ns` |
@@ -107,7 +108,14 @@ The zone files record each cluster: `deployment/helm/ztd/zones/zone-a.yaml` and 
   `controlPlaneWebhooks` and `identityServer` enabled;
 - `networkPolicy.kubeApi` enabled with port 443 and no address: under Cilium the API lane and the
   openings are entity policies, and no IP-based rule is written;
-- DNS at the chart default (`k8s-app=kube-dns`).
+- the DNS bypass to CoreDNS (`k8s-app=kube-dns`, the chart default) on port **8053**, the port its
+  pods listen on behind the `kube-dns` Service's port 53 (a network policy matches the pod's port);
+- `planes.namespaceLabels` with `apiserver-proxy.networking.gardener.cloud/inject: disable` on every
+  namespace the umbrella creates. Without it the provider's webhook
+  `kubernetes-service-host.resources.gardener.cloud` sets `KUBERNETES_SERVICE_HOST` in every new pod
+  to the API server's public name, which Cilium sees as `world`: SPIRE and istiod could not reach
+  the API through the `kubeApi` lane, which admits the `kube-apiserver` entity only. With the label
+  the pods use the `kubernetes` Service, as on any other cluster.
 
 Then plan, and install:
 

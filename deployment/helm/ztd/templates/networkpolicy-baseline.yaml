@@ -61,10 +61,12 @@ spec:
             matchLabels:
               {{- toYaml $.Values.networkPolicy.dns.podSelector | nindent 14 }}
       ports:
-        - port: 53
+        {{- range ($.Values.networkPolicy.dns.ports | default (list 53)) }}
+        - port: {{ . }}
           protocol: UDP
-        - port: 53
+        - port: {{ . }}
           protocol: TCP
+        {{- end }}
 {{- end }}
 {{- if $.Values.networkPolicy.intraPlane }}
 ---

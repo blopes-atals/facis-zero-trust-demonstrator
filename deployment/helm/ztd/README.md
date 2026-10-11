@@ -52,11 +52,12 @@ declared derogation of the preferred stack first (`docs/workload-identity.md`).
 | `planes.management.namespace` | `ztd-mgmt` | Management-plane namespace |
 | `planes.data.namespace` | `ztd-data` | Data-plane namespace |
 | `planes.extra` | `[]` | Further `{name, plane, mesh}` namespaces: the control planes `spire-system` and `istio-system` (management, `mesh: false`) and any a component task adds. `mesh: false` leaves out the mesh label |
+| `planes.namespaceLabels` | `{}` | Labels the cluster's provider asks of the namespaces it should leave alone, set on every namespace the umbrella creates (never the plane or mesh label). On the Gardener clusters of zone A and zone B: `apiserver-proxy.networking.gardener.cloud/inject: disable`, so that the provider's webhook does not point the pods at the API server's public name, which the `kubeApi` lane (the `kube-apiserver` entity) does not admit |
 | `mesh.mode` | `sidecar` | `sidecar` (the ADR-0009 baseline), `ambient` (parked) or `none`; sets the namespace label. Sidecar mode refuses a `zone.kubernetesVersion` below 1.33 (native sidecars) |
 | `mesh.revision` | `""` | Sidecar mode: pin an Istio revision (`istio.io/rev`) instead of the default injector |
 | `cni.cilium.enabled` | `true` | Render the Cilium-specific pieces: the entity openings and the API lane, and the host-probe exception of the parked ambient mode. Required with a mesh |
 | `networkPolicy.defaultDeny` | `true` | Default deny, ingress and egress, in every plane namespace |
-| `networkPolicy.dns.*` | kube-dns in `kube-system` | The declared DNS bypass, port 53 only |
+| `networkPolicy.dns.*` | kube-dns in `kube-system`, port 53 | The declared DNS bypass, the resolver pods' port only (`ports`: the kube-dns Service's targetPort, 8053 on the Gardener clusters of zone A and zone B) |
 | `networkPolicy.intraPlane` | `true` | Pods within one plane namespace may reach each other at L3/L4 |
 | `networkPolicy.kubeApi.*` | off | Management-plane egress to the API server on `ports`; required where `mesh.mode` is not `none`. With Cilium a policy to the `kube-apiserver` entity; without, an `ipBlock` to `cidrs`, a per-zone fact |
 | `networkPolicy.meshControlPlane.*` | off; istiod (`app: istiod`) in `istio-system`, 15012 | Declared opening: every meshed plane namespace → istiod's xDS port (egress there, ingress in `istio-system`) |

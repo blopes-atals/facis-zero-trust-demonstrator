@@ -44,7 +44,12 @@ trust domain.
 (contexts `zerotrust-a` and `zerotrust-b`): Kubernetes `v1.34.7`, StorageClass `default`,
 `loadBalancer.type: cloud` (not yet exercised), Cilium 1.18.8 installed by the provider with
 `cni-exclusive=false`, the mesh in sidecar mode, the two control-plane namespaces and the three
-openings, and the API lane on port 443 by entity, with no address in the file.
+openings, and the API lane on port 443 by entity, with no address in the file. Two facts of the
+provider's platform are recorded with them: CoreDNS listens on 8053 (`networkPolicy.dns.ports`),
+and the zone's namespaces carry Gardener's opt-out label
+`apiserver-proxy.networking.gardener.cloud/inject: disable` (`planes.namespaceLabels`), so that the
+provider's webhook leaves the pods on the `kubernetes` Service and they reach the API through the
+`kubeApi` lane.
 
 | Zone file | `zone.trustDomain` | Status |
 |---|---|---|

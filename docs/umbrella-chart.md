@@ -28,7 +28,7 @@ the DNS bypass, and each rendered only when the zone enables it:
 
 | Lane | Rendered as | Why it exists |
 |---|---|---|
-| workloads → DNS | `allow-dns-egress`, port 53 to the cluster resolver only | the declared DNS bypass |
+| workloads → DNS | `allow-dns-egress`, the resolver pods' port (`networkPolicy.dns.ports`: 53, 8053 on the Gardener clusters) to the cluster resolver only | the declared DNS bypass |
 | pods within one plane namespace | `allow-intra-plane` | who may talk is decided on identity by the mesh layer, not on IP |
 | management → Kubernetes API (`kubeApi`) | `allow-kube-api-egress`: with Cilium a `CiliumNetworkPolicy` to the `kube-apiserver` entity on the API port; without Cilium an `ipBlock` egress to the zone's endpoint | the SPIRE server, its controller-manager and istiod call the API; required wherever the mesh runs |
 | meshed plane namespaces → istiod (`meshControlPlane`) | `allow-mesh-control-plane-egress` in each namespace with the mesh label, `allow-mesh-control-plane-ingress` in `istio-system`, port 15012 | the sidecars fetch their configuration over xDS |

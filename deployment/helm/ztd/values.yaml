@@ -41,6 +41,12 @@ planes:
   # - name: istio-system
   #   plane: management
   #   mesh: false
+  # Labels the cluster's provider asks of the namespaces it should leave alone, set on every
+  # namespace the umbrella creates (plane and control-plane namespaces), a zone fact. On the Gardener
+  # clusters of zone A and zone B: apiserver-proxy.networking.gardener.cloud/inject: disable, which
+  # keeps the provider's webhook from pointing the pods at the API server's public name, so that they
+  # reach it through the kubernetes Service and the kubeApi lane. Never the plane or the mesh label.
+  namespaceLabels: {}
 
 # --------------------------------------------------------------------------------------------
 # Mesh mode. ADR-0009 baselines Istio sidecar mode with Cilium as the CNI, superseding the ambient
@@ -77,12 +83,15 @@ cni:
 # --------------------------------------------------------------------------------------------
 networkPolicy:
   defaultDeny: true
-  # Declared bypass, workloads -> DNS (docs/architecture.md, section 6): port 53 to the resolver only.
+  # Declared bypass, workloads -> DNS (docs/architecture.md, section 6): the resolver's port only.
   dns:
     enabled: true
     namespace: kube-system
     podSelector:
       k8s-app: kube-dns
+    # The port the resolver pods listen on (the targetPort of the kube-dns Service; a network policy
+    # matches the pod's port, not the Service's), UDP and TCP. 53 on kind; 8053 on Gardener.
+    ports: [53]
   # Pods inside one plane namespace may reach each other at the network layer; whether they may
   # actually talk is decided on identity by the mesh layer, not on IP.
   intraPlane: true
