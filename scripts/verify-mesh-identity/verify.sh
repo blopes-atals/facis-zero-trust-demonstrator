@@ -244,6 +244,24 @@ cni_state() { printf 'image=%s generation=%s cilium-config.resourceVersion=%s' \
   "$(k -n kube-system get cm cilium-config -o jsonpath='{.metadata.resourceVersion}' 2>/dev/null)"; }
 cni_before=$(cni_state)
 say "  the Cilium DaemonSet and its ConfigMap as found: \`$cni_before\`"
+# Whether pod-to-pod traffic between nodes keeps the source pod's address (and so its identity at the
+# destination): Cilium masquerades traffic to destinations outside ipv4-native-routing-cidr. Only the
+# yes/no outcome is recorded, never an address.
+routing=$(k -n kube-system get cm cilium-config -o json 2>/dev/null | jq -r '.data | "routing-mode=\(.["routing-mode"] // "-") enable-ipv4-masquerade=\(.["enable-ipv4-masquerade"] // "-") enable-bpf-masquerade=\(.["enable-bpf-masquerade"] // "-")"')
+native=$(k -n kube-system get cm cilium-config -o jsonpath='{.data.ipv4-native-routing-cidr}' 2>/dev/null)
+pod_cidrs=$(k get nodes -o jsonpath='{.items[*].spec.podCIDR}')
+# shellcheck disable=SC2086  # one argument per pod range
+inside=$(python3 -c 'import ipaddress, sys
+n, cidrs = sys.argv[1], sys.argv[2:]
+if not n or not cidrs: print("unknown"); sys.exit()
+net = ipaddress.ip_network(n, strict=False)
+inn = sum(1 for c in cidrs if ipaddress.ip_network(c, strict=False).subnet_of(net))
+print(f"{inn} of {len(cidrs)} node pod ranges inside ipv4-native-routing-cidr")' "$native" $pod_cidrs)
+if [ -n "$native" ]; then
+  say "  pod-to-pod routing as found: \`$routing\`, ${inside:-unknown}. In native routing a pod range outside ipv4-native-routing-cidr is masqueraded to the node address when masquerading is on, so a pod on another node then reaches a pod as remote-node, not as itself."
+else
+  say "  pod-to-pod routing as found: \`$routing\`; no ipv4-native-routing-cidr (tunnel): pod addresses are kept between nodes."
+fi
 # The inotify instance limit of every node, read through the node's own Cilium agent (one per node,
 # host /proc): the Istio CNI agent fails below 512. On kind every node shares this machine's kernel.
 inotify_detail=""; inotify_read=0; inotify_ok=1
@@ -747,9 +765,11 @@ k -n kube-public run declared-not-reconciled --image=docker.io/curlimages/curl:8
 k -n kube-public wait --for=condition=Ready pod/declared-not-reconciled --timeout=120s >/dev/null 2>&1
 printf 'trustDomain: %s\nchecks:\n  timeoutSeconds: 20\n' "$TD" >"$work/zp-values.yaml"
 k config view --minify --flatten --context "$CONTEXT" >"$work/kubeconfig"
-res=$(KUBECONFIG=$work/kubeconfig LIFECYCLE_RELEASE=zone-policy LIFECYCLE_NAMESPACE=$ISTIO_NS LIFECYCLE_CHART=$REPO/deployment/helm/zone-policy \
-  LIFECYCLE_VALUES_FILE=$work/zp-values.yaml LIFECYCLE_TIMEOUT=3m "$REPO/scripts/lifecycle.sh" deploy 2>/dev/null | grep '^RESULT_JSON=' | cut -d= -f2-)
-[ "$(jq -r .ok <<<"$res")" = false ]; check $? "the upgrade fails and is rolled back" "$(jq -r '.error.message' <<<"$res")"
+KUBECONFIG=$work/kubeconfig LIFECYCLE_RELEASE=zone-policy LIFECYCLE_NAMESPACE=$ISTIO_NS LIFECYCLE_CHART=$REPO/deployment/helm/zone-policy \
+  LIFECYCLE_VALUES_FILE=$work/zp-values.yaml LIFECYCLE_TIMEOUT=3m "$REPO/scripts/lifecycle.sh" deploy >"$work/lifecycle.log" 2>&1
+res=$(grep '^RESULT_JSON=' "$work/lifecycle.log" | cut -d= -f2-)
+[ "$(jq -r .ok <<<"$res")" = false ]
+check $? "the upgrade fails and is rolled back" "$(if [ -n "$res" ]; then jq -r '.error.message' <<<"$res"; else echo "no result from the lifecycle step: $(grep -v '^$' "$work/lifecycle.log" | tail -1 | cut -c1-200)"; fi)"
 jl=$(k -n "$ISTIO_NS" logs job/zone-policy-registrations-reconciled 2>/dev/null | grep -E '^(FAIL|ok)' | tail -2 | tr '\n' ' ')
 grep -q 'FAIL every registration' <<<"$jl"; check $? "the registrations-reconciled job exits non-zero naming the gap" "$jl"
 k -n "$ISTIO_NS" delete job -l ztd.facis.io/identity-check --ignore-not-found >/dev/null
