@@ -61,7 +61,8 @@ declared derogation of the preferred stack first (`docs/workload-identity.md`).
 | `networkPolicy.intraPlane` | `true` | Pods within one plane namespace may reach each other at L3/L4 |
 | `networkPolicy.kubeApi.*` | off | Management-plane egress to the API server on `ports`; required where `mesh.mode` is not `none`. With Cilium a policy to the `kube-apiserver` entity; without, an `ipBlock` to `cidrs`, a per-zone fact |
 | `networkPolicy.meshControlPlane.*` | off; istiod (`app: istiod`) in `istio-system`, 15012 | Declared opening: every meshed plane namespace → istiod's xDS port (egress there, ingress in `istio-system`) |
-| `networkPolicy.controlPlaneWebhooks.*` | off; entities `kube-apiserver`, `host`, `remote-node`; istiod 15017, controller-manager 9443 | Declared opening: the API server → the admission webhooks of both control planes (Cilium, by entity) |
+| `networkPolicy.controlPlaneWebhooks.*` | off; entities `kube-apiserver`, `host`, `remote-node`; no `fromEndpoints`; istiod 15017, controller-manager 9443 | Declared opening: the API server → the admission webhooks of both control planes (Cilium, by entity) |
+| `networkPolicy.controlPlaneWebhooks.fromEndpoints` | `[]` | Cilium endpoint selectors of the provider's pod that relays the API server's calls to in-cluster webhooks (Gardener: `vpn-shoot` in `kube-system`), admitted on the same webhook ports; a zone fact, never an address |
 | `networkPolicy.identityServer.*` | off; SPIRE server (`app.kubernetes.io/name: server`) in `spire-system`, 8081, entities `host`, `remote-node` | Declared opening: the host-networked SPIRE agents → the SPIRE server (Cilium, by entity) |
 | `allowMatrix` | the lanes of architecture §6 | Data-plane → management-plane lanes, as data (see below) |
 | `verification.enabled` | `true` | Post-install job that reads the layout back and fails the release if it is wrong |

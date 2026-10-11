@@ -63,7 +63,15 @@ networkPolicy:
     ports: [443]
   meshControlPlane:
     enabled: true
+  # The API server runs outside the cluster and reaches in-cluster webhooks through the provider's
+  # vpn-shoot pod (kubectl -n kube-system get deploy vpn-shoot; not on the host network). When that
+  # pod runs on the webhook pod's node, Cilium sees the call as coming from it, not from an entity,
+  # so the opening names it by its namespace and labels (no address).
   controlPlaneWebhooks:
     enabled: true
+    fromEndpoints:
+      - k8s:io.kubernetes.pod.namespace: kube-system
+        app: vpn-shoot
+        type: tunnel
   identityServer:
     enabled: true

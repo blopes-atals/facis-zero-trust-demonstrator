@@ -131,6 +131,12 @@ networkPolicy:
   controlPlaneWebhooks:
     enabled: false
     fromEntities: [kube-apiserver, host, remote-node]
+    # A provider whose API server runs outside the cluster may reach the webhooks through a pod of
+    # its own (Gardener: the vpn-shoot pod in kube-system), which Cilium sees as that pod, not as an
+    # entity, when it runs on the webhook pod's node. Its Cilium endpoint selectors go here, a zone
+    # fact (k8s:io.kubernetes.pod.namespace and at least one pod label); the lane stays on the
+    # webhook port of the webhook pod. Empty by default; never an address.
+    fromEndpoints: []
     targets:
       - name: istiod
         namespace: istio-system

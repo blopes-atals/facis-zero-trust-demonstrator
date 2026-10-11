@@ -127,7 +127,7 @@ allow matrix.
 | Opening | Source | Destination | Port | Rendered as |
 |---|---|---|---|---|
 | `meshControlPlane` | every pod of a plane namespace with the mesh label | istiod | 15012 (xDS) | `NetworkPolicy` egress in each meshed namespace, ingress in `istio-system` |
-| `controlPlaneWebhooks` | the API server: entities `kube-apiserver`, `host`, `remote-node` | istiod's webhook; the controller-manager's webhook (in the SPIRE server pod) | 15017; 9443 | `CiliumNetworkPolicy` ingress in `istio-system` and `spire-system` |
+| `controlPlaneWebhooks` | the API server: entities `kube-apiserver`, `host`, `remote-node`; where the zone names it, the provider's pod that relays the API server's calls (`fromEndpoints`; Gardener's `vpn-shoot` on zone A and zone B) | istiod's webhook; the controller-manager's webhook (in the SPIRE server pod) | 15017; 9443 | `CiliumNetworkPolicy` ingress in `istio-system` and `spire-system` |
 | `identityServer` | the SPIRE agents on the host network: entities `host`, `remote-node` | the SPIRE server | 8081 | `CiliumNetworkPolicy` ingress in `spire-system` |
 | `kubeApi` | every pod of a management-plane namespace | the API server: entity `kube-apiserver` | the API server's port (6443 on kind) | `CiliumNetworkPolicy` egress; required wherever `mesh.mode` is not `none` |
 
@@ -141,7 +141,14 @@ on another node arrive with that node's identity (`remote-node`; `host` on its o
 names the three entities, on the webhook port of the webhook pod only. The price is that any
 host-networked endpoint of any node may open a connection to those two ports; every other port of
 both control planes stays closed. A zone whose API server is managed outside its nodes can narrow
-`networkPolicy.controlPlaneWebhooks.fromEntities` to `[kube-apiserver]` in its zone file. Every Cilium rule sets
+`networkPolicy.controlPlaneWebhooks.fromEntities` to `[kube-apiserver]` in its zone file. The
+participant clusters of zone A and zone B (Gardener) showed the other case: the API server runs
+outside the cluster and reaches in-cluster webhooks through the provider's `vpn-shoot` pod in
+`kube-system`, which is not on the host network. From another node its call arrives as that node;
+from the webhook pod's own node it arrives as the `vpn-shoot` pod, which no entity names, and the
+webhook times out. Their zone files therefore add `networkPolicy.controlPlaneWebhooks.fromEndpoints`
+with that pod's namespace and labels (`app: vpn-shoot`, `type: tunnel`): the same two webhook
+ports, opened to that one pod by identity, never by address. Every Cilium rule sets
 `enableDefaultDeny` false: it adds its lane and leaves the deny to the baseline's `default-deny`.
 
 **Nothing else.** The sidecar reaches its agent over the mounted socket and the agent reaches the
