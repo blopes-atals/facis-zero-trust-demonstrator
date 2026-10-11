@@ -16,15 +16,20 @@
 # network masquerades pod traffic between nodes, so the mesh is proven node-locally there until the
 # provider changes it. Kind is not pinned.
 # Writes evidence.md and environment.json to docs/evidences/mesh-identity/ (kind) or
-# docs/evidences/mesh-identity-provider-cni/<zone name>/ (participant cluster); the exit status is
-# the number of failed checks (capped at 125). Never run by CI: the evidence is the record of a run
-# on a cluster.
+# docs/evidences/mesh-identity-provider-cni/<zone name>/ (participant cluster). Never run by CI: the
+# evidence is the record of a run on a cluster.
 #
 # Usage:
 #   scripts/verify-mesh-identity/verify.sh           run the proof: DESTRUCTIVE, it uninstalls the zone
 #                                                    from the cluster first and again at the end
 #   scripts/verify-mesh-identity/verify.sh --help    this text; touches nothing
-# Any other argument prints this text and exits 2 without touching the cluster.
+# Any other argument prints this text and exits 125 without touching the cluster.
+#
+# Exit status:
+#   0        every check passed
+#   1-124    the number of failed checks (capped at 124); the evidence is written
+#   125      refused or not run (an argument, CI, the context guard): nothing read, nothing written
+#   130/143  interrupted (INT/TERM); on a participant cluster the zone is torn down, no evidence
 #
 # Environment:
 #   KUBE_CONTEXT          kubectl context (default: kind-ztd). Accepted: a kind cluster (named
@@ -32,7 +37,7 @@
 #                         cluster zerotrust-a or zerotrust-b when all of these hold: ZTD_CONFIRM_CLUSTER
 #                         equals the context name, the context's API server host begins with
 #                         api.<context>., every node's provider ID begins with onmetal:// and every
-#                         node name contains --<context>-. Anything else is refused (exit 2) before
+#                         node name contains --<context>-. Anything else is refused (exit 125) before
 #                         the cluster is read or written.
 #   ZTD_CONFIRM_CLUSTER   on a participant cluster: the context name, typed for this run
 #   ZTD_KEEP_ZONE         on a participant cluster: the context name to leave the zone installed when
@@ -53,16 +58,16 @@ set -uo pipefail
 usage() { sed -n '2,/^# Every check/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; }
 case $# in
   0) ;;
-  1) case $1 in -h|--help) usage; exit 0;; esac; usage >&2; echo "verify-mesh-identity: unknown argument: $1" >&2; exit 2;;
-  *) usage >&2; echo "verify-mesh-identity: takes no arguments" >&2; exit 2;;
+  1) case $1 in -h|--help) usage; exit 0;; esac; usage >&2; echo "verify-mesh-identity: unknown argument: $1" >&2; exit 125;;
+  *) usage >&2; echo "verify-mesh-identity: takes no arguments" >&2; exit 125;;
 esac
 if [ -n "${CI:-}" ]; then
   echo "verify-mesh-identity: refusing to run under CI; the evidence is written from a run on a cluster" >&2
-  exit 2
+  exit 125
 fi
 # A relative zone file is the caller's, read before the script moves into its own directory.
 [ -n "${ZONE_VALUES:-}" ] && ZONE_VALUES=$(realpath -m -- "$ZONE_VALUES")
-cd "$(dirname "$0")" || exit 1
+cd "$(dirname "$0")" || exit 125
 REPO=$(git rev-parse --show-toplevel)
 CHART=$REPO/deployment/helm/ztd
 CONTEXT=${KUBE_CONTEXT:-kind-ztd}
@@ -71,7 +76,8 @@ yaml_get() { python3 -c 'import sys,yaml
 v=yaml.safe_load(open(sys.argv[1]))
 for k in sys.argv[2:]: v=v[k]
 print(v)' "$@"; }
-refuse() { echo "verify-mesh-identity: refusing context '$CONTEXT': $*" >&2; exit 2; }
+# A refusal exits 125, outside the range of the failure count (1-124), so a caller tells them apart.
+refuse() { echo "verify-mesh-identity: refusing context '$CONTEXT': $*" >&2; exit 125; }
 # The run uninstalls and reinstalls the zone: refuse any cluster that is neither a local kind cluster
 # nor a confirmed participant cluster, before anything is read from it or written to it.
 KEEP=0
@@ -139,8 +145,12 @@ restore_capture() {
     | jq -e '[.spec.validations[].expression | contains("variables.captureDefaults")] | index(true) == null' >/dev/null || return 0
   kubectl --context "$CONTEXT" patch validatingadmissionpolicy "$POLICY" --type=json --patch-file "$work/restore.json" >/dev/null
 }
-# kept: 1 only once the record of what remains passed (section 15); cleaned: 1 once the teardown ran.
-kept=0; cleaned=0
+# keep_zone: 1 once the record of what remains passed (section 15), the CNI check included; kept: 1
+# only once that record is written to the evidence folder, so an interrupt or a failed write before
+# then still tears the zone down; written: 1 once both files of the evidence are written (an
+# interrupt between that write and kept=1 keeps the zone the record names); cleaned: 1 once the
+# teardown ran.
+keep_zone=0; kept=0; written=0; cleaned=0
 # provider_cleanup: on a participant cluster, unless the run ended with the zone kept or already torn
 # down, removes everything the run put there (the fixture of section 13, the scratch namespace of
 # section 8, the seven releases, the release namespace), so that an error, INT or TERM leaves the
@@ -155,7 +165,12 @@ delete_stand_ins() {
 # shellcheck disable=SC2317  # called from the EXIT trap only
 provider_cleanup() {
   [ "$CLUSTER_KIND" = provider ] && [ "$kept" != 1 ] && [ "$cleaned" != 1 ] || return 0
-  echo "verify-mesh-identity: the run did not end with the zone kept; tearing it down on $CONTEXT" >&2
+  [ "$keep_zone" = 1 ] && [ "$written" = 1 ] && return 0
+  if [ "$keep_zone" = 1 ]; then
+    echo "verify-mesh-identity: every check passed but the record of the kept zone was not written; no evidence of it exists, tearing it down on $CONTEXT" >&2
+  else
+    echo "verify-mesh-identity: the run did not end with the zone kept; tearing it down on $CONTEXT" >&2
+  fi
   delete_stand_ins
   kubectl --context "$CONTEXT" -n kube-public delete pod declared-not-reconciled --ignore-not-found --wait=true >/dev/null 2>&1
   kubectl --context "$CONTEXT" label ns kube-public ztd.facis.io/plane- >/dev/null 2>&1
@@ -274,6 +289,13 @@ cni_state() { printf 'image=%s generation=%s cilium-config.resourceVersion=%s' \
   "$(k -n kube-system get ds cilium -o jsonpath='{.metadata.generation}' 2>/dev/null)" \
   "$(k -n kube-system get cm cilium-config -o jsonpath='{.metadata.resourceVersion}' 2>/dev/null)"; }
 cni_before=$(cni_state)
+# cni_check: the CNI read again and compared with cni_before, as a check. On the keep path it is one of
+# the checks of the record of what remains (section 15), before the zone is declared kept; on the
+# teardown path it runs after the uninstall.
+cni_check() {
+  local cni_after; cni_after=$(cni_state)
+  [ "$cni_after" = "$cni_before" ]; check $? "the Cilium DaemonSet (image, generation) and cilium-config (resource version) are unchanged by the run" "before \`$cni_before\`; after \`$cni_after\`"
+}
 say "  the Cilium DaemonSet and its ConfigMap as found: \`$cni_before\`"
 # Whether pod-to-pod traffic between nodes keeps the source pod's address (and so its identity at the
 # destination): Cilium masquerades traffic to destinations outside ipv4-native-routing-cidr. Only the
@@ -841,6 +863,58 @@ out=$(helm template ztd "$CHART" -f "$ZONE_VALUES" --set zone.kubernetesVersion=
 [ $rc -ne 0 ] && grep -q 'native sidecar' <<<"$out"; check $? "the umbrella refuses sidecar mode below Kubernetes 1.33" "$(grep -o 'mesh.mode sidecar needs.*' <<<"$out")"
 out=$(helm template ztd "$CHART" -f "$ZONE_VALUES" --set cni.cilium.enabled=false 2>&1); rc=$?
 [ $rc -ne 0 ] && grep -q 'derogation' <<<"$out"; check $? "the umbrella refuses a meshed zone without Cilium, naming the openings and the derogation" "$(grep -o 'mesh.mode sidecar needs Cilium[^:]*' <<<"$out")"
+# The provider facts of the zone values (planes.namespaceLabels, networkPolicy.dns.ports,
+# controlPlaneWebhooks.fromEndpoints): a label the umbrella sets itself is refused, and each shipped
+# zone file (the kind file and every zones/*.yaml but the example) renders its facts and nothing else.
+for key in ztd.facis.io/plane istio-injection; do
+  out=$(helm template ztd "$CHART" -f "$ZONE_VALUES" --set-string "planes.namespaceLabels.${key//./\\.}=x" 2>&1); rc=$?
+  [ $rc -ne 0 ] && grep -q "planes.namespaceLabels may not set $key" <<<"$out"
+  check $? "the umbrella refuses planes.namespaceLabels setting $key, a label it sets itself" "$(grep -o 'planes.namespaceLabels may not set[^"]*' <<<"$out" | head -1)"
+done
+facts_ok=(0 0 0); facts_detail=("" "" "")
+for zf in "$CHART/ci/values.yaml" "$CHART"/zones/*.yaml; do
+  case $zf in *.example.yaml) continue;; esac
+  helm template ztd "$CHART" -f "$zf" >"$work/facts.yaml" 2>"$work/facts.err" || { for i in 0 1 2; do facts_ok[i]=1; facts_detail[i]="${facts_detail[i]} ${zf#"$CHART"/}: no render ($(tail -1 "$work/facts.err"));"; done; continue; }
+  # zone_facts <chart values> <zone file> <rendered>: one line per fact, "<0|1> <detail>" (0: as the zone states)
+  mapfile -t res < <(python3 - "$CHART/values.yaml" "$zf" "$work/facts.yaml" <<'PY'
+import json, sys, yaml
+def merge(a, b):
+    if isinstance(a, dict) and isinstance(b, dict):
+        return {k: merge(a.get(k), b[k]) if k in b else a[k] for k in {**a, **b}}
+    return b
+v = merge(yaml.safe_load(open(sys.argv[1])), yaml.safe_load(open(sys.argv[2])) or {})
+docs = [d for d in yaml.safe_load_all(open(sys.argv[3])) if d]
+np = v["networkPolicy"]
+# DNS bypass: every allow-dns-egress policy admits the zone's resolver ports, UDP and TCP, and no other
+want = sorted((p, t) for p in (np["dns"].get("ports") or [53]) for t in ("UDP", "TCP"))
+dns = [d for d in docs if d["kind"] == "NetworkPolicy" and d["metadata"]["name"] == "allow-dns-egress"]
+got = {json.dumps(sorted((p["port"], p["protocol"]) for e in d["spec"]["egress"] for p in e["ports"])) for d in dns}
+ok = bool(dns) and got == {json.dumps(want)} if np["dns"].get("enabled", True) else not dns
+print(0 if ok else 1, f"dns ports {sorted({p for p, _ in want})} in {len(dns)} policies" + ("" if ok else f", found {sorted(got)}"))
+# fromEndpoints: one rule per webhook target, on its port, with the zone's selectors; none without them
+w = np["controlPlaneWebhooks"]
+eps = w.get("fromEndpoints") or []
+want = sorted((t["namespace"], str(t["port"]), json.dumps(eps, sort_keys=True)) for t in w["targets"]) if w.get("enabled") and eps else []
+got = sorted((d["metadata"]["namespace"], p["port"], json.dumps([m["matchLabels"] for m in r["fromEndpoints"]], sort_keys=True))
+             for d in docs if d["kind"] == "CiliumNetworkPolicy"
+             for r in d["spec"].get("ingress") or [] if "fromEndpoints" in r
+             for tp in r["toPorts"] for p in tp["ports"])
+print(0 if got == want else 1, f"fromEndpoints rules {[(n, p) for n, p, _ in got] or 'none'}" + ("" if got == want else f", expected {[(n, p) for n, p, _ in want] or 'none'}"))
+# namespace labels: every Namespace the umbrella renders carries them
+labels = v["planes"].get("namespaceLabels") or {}
+ns = [d for d in docs if d["kind"] == "Namespace"]
+bad = [d["metadata"]["name"] for d in ns if any(d["metadata"]["labels"].get(k) != str(x) for k, x in labels.items())]
+print(0 if ns and not bad else 1, f"namespace labels {sorted(labels) or 'none'} on {len(ns) - len(bad)} of {len(ns)} namespaces")
+PY
+)
+  for i in 0 1 2; do
+    [ "${res[i]%% *}" = 0 ] || facts_ok[i]=1
+    facts_detail[i]="${facts_detail[i]} ${zf#"$CHART"/}: ${res[i]#* };"
+  done
+done
+[ "${facts_ok[0]}" = 0 ]; check $? "each shipped zone file renders the DNS bypass on its own resolver port (networkPolicy.dns.ports), UDP and TCP" "${facts_detail[0]}"
+[ "${facts_ok[1]}" = 0 ]; check $? "the webhook relay (controlPlaneWebhooks.fromEndpoints) renders only where the zone file names it, on the webhook ports" "${facts_detail[1]}"
+[ "${facts_ok[2]}" = 0 ]; check $? "the zone file's planes.namespaceLabels reach every namespace the umbrella creates" "${facts_detail[2]}"
 
 # --------------------------------------------------------------------------------------------
 # The stand-ins are removed in every case: they are fixtures of the proof, never part of a kept zone.
@@ -873,8 +947,10 @@ else
   server_td=$(k -n "$SPIRE_NS" get cm spire-server -o jsonpath='{.data.server\.conf}' | jq -r .server.trust_domain)
   td_note="final"; [[ $server_td == *.trust.invalid ]] && td_note="interim"
   [ "$server_td" = "$TD" ]; check $? "the SPIRE server runs with the zone file's trust domain" "$server_td ($td_note)"
+  say '' "The cluster's CNI as found, read again before the zone is declared kept:" ''
+  cni_check
   if [ "$failures" -eq "$before" ]; then
-    kept=1
+    keep_zone=1
     say '' "The zone stays installed on \`$CONTEXT\` with the trust domain \`$server_td\` ($td_note). An interim trust domain is fixed in the SPIRE root CA, so the zone is re-installed with its final name under the delegated trust-framework zone once that name is confirmed; until then this kept zone is not acceptance evidence. A later run of this proof starts from the clean slate (section 1) and uninstalls it first."
     [ "$CLUSTER_KIND" = provider ] && say '' "The mesh of this zone was proven node-locally, with the proof's pods pinned to istiod's node \`$PIN_NODE\`: cross-node meshed traffic is not proven and does not work on this cluster until the provider changes its pod network to keep a pod's address between nodes."
   else
@@ -882,7 +958,7 @@ else
   fi
 fi
 CRDS_KEEP=$(k get crd -o json | jq -r '[.items[] | select(.spec.group == "spire.spiffe.io") | "\(.metadata.name)=\(.metadata.annotations["helm.sh/resource-policy"] // "none")"] | join(" ")')
-if [ "$kept" != 1 ]; then
+if [ "$keep_zone" != 1 ]; then
   section "$([ "$KEEP" = 1 ] && [ "$failures" -gt 0 ] && [ -n "${before:-}" ] && echo 16 || echo 15). Teardown: uninstall in reverse order"
   say "Not kept: $not_kept." ''
   [ "$(wc -w <<<"$CRDS_KEEP")" = 3 ] && ! grep -q '=keep' <<<"$CRDS_KEEP"
@@ -900,17 +976,16 @@ if [ "$kept" != 1 ]; then
   [ -z "$left" ]; check $? "no SPIRE or Istio custom resource definition remains" "${left:-none}"
   left=$(k get validatingwebhookconfiguration,mutatingwebhookconfiguration -o name | grep -E 'istio|spire' || true)
   [ -z "$left" ]; check $? "no admission webhook of either control plane remains" "${left:-none}"
-fi
 
-# --------------------------------------------------------------------------------------------
-section "The cluster's CNI as found"
-cni_after=$(cni_state)
-[ "$cni_after" = "$cni_before" ]; check $? "the Cilium DaemonSet (image, generation) and cilium-config (resource version) are unchanged by the run" "before \`$cni_before\`; after \`$cni_after\`"
+  # ------------------------------------------------------------------------------------------
+  section "The cluster's CNI as found"
+  cni_check
+fi
 
 # --------------------------------------------------------------------------------------------
 say '' '## Result' ''
 if [ "$failures" -eq 0 ]; then say 'All checks passed.'; else say "**$failures check(s) failed.**"; fi
-if [ "$kept" = 1 ]; then say '' "Zone kept: yes, installed on \`$CONTEXT\` (trust domain \`$TD\`)."
+if [ "$keep_zone" = 1 ]; then say '' "Zone kept: yes, installed on \`$CONTEXT\` (trust domain \`$TD\`)."
 else say '' "Zone kept: no (not kept: $not_kept)."; fi
 
 # environment.json: what the run was made on, and the cluster as found.
@@ -927,7 +1002,7 @@ write_environment() {
     kind_version=$(ver kind version)
   fi
   local interim=false; [[ $TD == *.trust.invalid ]] && interim=true
-  local keptj=false; [ "$kept" = 1 ] && keptj=true
+  local keptj=false; [ "$keep_zone" = 1 ] && keptj=true
   jq -n --arg commit "$commit" --argjson dirty "$dirty" --arg date "$started" --arg finished "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     --arg host "$host_kind" --arg context "$CONTEXT" --arg clusterKind "$CLUSTER_KIND" --arg provider "$provider" \
     --argjson nodes "${nodes_json:-[]}" --arg zone "${ZONE_VALUES#"$REPO"/}" --arg zoneName "$ZONE_NAME" --arg td "$TD" \
@@ -957,16 +1032,23 @@ if [ -n "$PIN_NODE" ]; then pin_text="\`$PIN_NODE\`, the node istiod runs on"
 else pin_text="istiod's node (never read: the run did not reach section 5)"; fi
 sed -i "s|__PIN_NODE__|$pin_text|" "$OUT"
 
-mkdir -p "$EVID"
-if [ "$CLUSTER_KIND" = kind ]; then
-  cp "$OUT" "$EVID/evidence.md"
-  cp "$work/environment.json" "$EVID/environment.json"
-else
-  # No address of a client cluster enters the repository: every IPv4 address (nodes, pods, the
-  # probed servers) is replaced in the record of a participant cluster.
-  mask() { sed -E 's/(^|[^0-9.])([0-9]{1,3}\.){3}[0-9]{1,3}([^0-9.]|$)/\1<address>\3/g; s/(^|[^0-9.])([0-9]{1,3}\.){3}[0-9]{1,3}([^0-9.]|$)/\1<address>\3/g' "$1"; }
-  mask "$OUT" >"$EVID/evidence.md"
-  mask "$work/environment.json" >"$EVID/environment.json"
+if mkdir -p "$EVID"; then
+  if [ "$CLUSTER_KIND" = kind ]; then
+    cp "$OUT" "$EVID/evidence.md" && cp "$work/environment.json" "$EVID/environment.json" && written=1
+  else
+    # No address of a client cluster enters the repository: every IPv4 address (nodes, pods, the
+    # probed servers) is replaced in the record of a participant cluster.
+    mask() { sed -E 's/(^|[^0-9.])([0-9]{1,3}\.){3}[0-9]{1,3}([^0-9.]|$)/\1<address>\3/g; s/(^|[^0-9.])([0-9]{1,3}\.){3}[0-9]{1,3}([^0-9.]|$)/\1<address>\3/g' "$1"; }
+    mask "$OUT" >"$EVID/evidence.md" && mask "$work/environment.json" >"$EVID/environment.json" && written=1
+  fi
 fi
+if [ "$written" != 1 ]; then
+  # No record, no kept zone: kept stays 0, so the EXIT trap tears a participant zone down.
+  echo "verify-mesh-identity: the evidence could not be written to ${EVID#"$REPO"/}" >&2
+  failures=$((failures+1))
+  exit $(( failures > 124 ? 124 : failures ))
+fi
+# The zone counts as kept only now that its record is on disk (the EXIT trap tears it down before).
+[ "$keep_zone" = 1 ] && kept=1
 echo "evidence written to ${EVID#"$REPO"/} ($failures failure(s); zone kept: $([ "$kept" = 1 ] && echo yes || echo "no, $not_kept"))"
-exit $(( failures > 125 ? 125 : failures ))
+exit $(( failures > 124 ? 124 : failures ))

@@ -59,18 +59,20 @@ is not proven until the provider changes its pod network, after which the pin is
 lives in `verify.sh` alone (the chart, the policies and the zone files carry none of it), and on
 kind the scheduler places the pods as before.
 
-Every refusal names what was expected and exits 2; the IONOS cluster and the shared
+Every refusal names what was expected and exits 125; the IONOS cluster and the shared
 namespace-only cluster are refused like any other name, whatever `ZTD_CONFIRM_CLUSTER` holds.
 
 **The keep opt-in.** `ZTD_KEEP_ZONE` set to the context name leaves the zone installed on a
 participant cluster, and only when every check passed: the teardown section is replaced by
 "What remains installed", which records the seven releases `deployed`, the SPIRE server and the
 controller-manager ready, the agent and CSI driver DaemonSets ready on every node, one attested
-agent per node and the trust domain in use (marked interim when it ends in `.trust.invalid`). Each
-of those is a check too; if one fails, the run tears the zone down after all. Without the opt-in,
+agent per node, the trust domain in use (marked interim when it ends in `.trust.invalid`) and the
+cluster's CNI as found. Each of those is a check too; if one fails, the run tears the zone down
+after all. The zone counts as kept only once its record is written to the evidence folder: an
+interrupt before then, or a failed write, tears it down too. Without the opt-in,
 when any check failed, or when the run ends early (an error, INT or TERM), the run leaves the
 cluster as it found it: on a participant cluster the exit trap uninstalls the releases and deletes
-`ztd-system`. The keep opt-in is refused on kind (exit 2), and any value other than the context
+`ztd-system`. The keep opt-in is refused on kind (exit 125), and any value other than the context
 name is refused. The evidence and `environment.json` (`zone.kept`, `zone.notKept`) say whether the
 zone was kept and, if not, why. A zone kept on an interim trust domain is re-installed with the
 final name once it is confirmed, and is not acceptance evidence until then.
@@ -86,13 +88,14 @@ A re-run of the proof on a cluster that holds a kept zone needs neither: its cle
 uninstalls the zone first and proceeds as from an empty cluster.
 
 The script reads the cluster's CNI and never writes it: the Cilium DaemonSet (image, generation)
-and `cilium-config` (resource version) are read before the clean slate and checked unchanged at
-the end, kept or torn down. The inotify instance limit is read on every node, through the node's
+and `cilium-config` (resource version) are read before the clean slate and checked unchanged:
+with the keep opt-in, as a check of the record of what remains, before the zone is declared kept;
+otherwise after the uninstall. The inotify instance limit is read on every node, through the node's
 own Cilium agent (`kubectl -n kube-system exec <cilium pod> -c cilium-agent -- cat
 /proc/sys/fs/inotify/max_user_instances`), and must be 512 or more everywhere; on kind every node
 shares this machine's kernel, hence the `sysctl` above.
 
-It takes no arguments: `--help` or `-h` prints the usage, any other argument prints it and exits 2,
+It takes no arguments: `--help` or `-h` prints the usage, any other argument prints it and exits 125,
 in both cases before the cluster is touched.
 
 | Check | What it proves |
@@ -108,7 +111,9 @@ in both cases before the cluster is touched.
 
 It also shows the identity-band checks of `zone-policy` passing on the install and failing the
 release when a declared registration has no entry, the render guards (no trust domain, Kubernetes
-below 1.33, no Cilium), and a teardown in reverse order that deletes `ztd-system` last and leaves
+below 1.33, no Cilium, a `planes.namespaceLabels` key the umbrella sets itself; and, for every
+shipped zone file, the DNS bypass on its resolver port, the webhook relay `fromEndpoints` only where
+the file names it, and its namespace labels on every namespace), and a teardown in reverse order that deletes `ztd-system` last and leaves
 no plane, control-plane or release namespace, no SPIRE or Istio CRD and no admission webhook
 behind. The registration-failure step labels `kube-public` (ignored by the controller-manager on
 every cluster) as a plane for its duration, and unlabels and empties it again.
@@ -117,7 +122,9 @@ Needs `kind` (on kind), `kubectl`, `helm` (v4.3.0), the `cilium` CLI, `istioctl`
 `python3` with PyYAML and `git`; the versions are recorded in `environment.json`. Run it on a clean
 tree after the commit it should cite, and commit the two files it rewrites. It refuses to run under
 CI (`CI` set): the evidence is the record of a run on a cluster, never written by a pipeline. The
-exit status is the number of failed checks (capped at 125), 0 when every check passed.
+exit status is 0 when every check passed, the number of failed checks (1 to 124, capped at 124)
+otherwise, 125 when the run was refused or not started (an argument, `CI`, the context guard:
+nothing read, nothing written), and 130 or 143 when it was interrupted.
 
 The stand-in pods run the images the umbrella's own verification uses (agnhost, curl) and SPIRE's
 agent image as the Workload API client; nothing about them is consumed by a zone.
