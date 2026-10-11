@@ -6,8 +6,10 @@ admission control and policy enforcement, and the interesting part of the demons
 happens between them.
 
 The two clusters were provided on 9 October 2026 and the facts on this page were read off them on
-10 October 2026. Steps 1 to 4 have been run on both, by the mesh-identity proof (see
-[What has been run](#what-has-been-run)); steps 5 to 7 have not.
+10 October 2026. Steps 1 to 4 have been run on both by the mesh-identity proof: the install passes,
+but the mesh does not work across nodes on the provider's pod network as configured today, so
+neither zone is left installed (see [What has been run](#what-has-been-run)). Steps 5 to 7 have
+not been run.
 
 ## Before you start
 
@@ -252,10 +254,36 @@ The evidence of each run is written to `docs/evidences/mesh-identity-provider-cn
 The proof was run with the keep opt-in on both clusters, zone A then zone B, from one commit on a
 clean tree: [zone A](../evidences/mesh-identity-provider-cni/zone-a/evidence.md) and
 [zone B](../evidences/mesh-identity-provider-cni/zone-b/evidence.md)
-([about these records](../evidences/mesh-identity-provider-cni/README.md)). Both zones are left
-installed on their interim trust domains, `zone-a.trust.invalid` and `zone-b.trust.invalid`, and
-are re-installed with the final names once those are confirmed. Steps 5 to 7 below have not been
-executed on these clusters.
+([about these records](../evidences/mesh-identity-provider-cni/README.md)). On both:
+
+- the zone installs from the empty cluster, twice, with every release deployed and every pod of
+  the control planes Ready: the SPIRE server, an attested agent and a CSI driver pod on each of the
+  three nodes, istiod, the Istio CNI agent on each node, `zone-policy` with its identity checks;
+  the API server reaches both admission webhooks; the SPIRE server and the mesh run on the interim
+  trust domain; the agents' metrics are bound to each node's loopback; the provider's Cilium is
+  unchanged by the run;
+- **the meshed stand-in pods on a node other than istiod's never start**: their proxies cannot
+  reach istiod on 15012, so they receive no configuration, and every check that needs a running
+  meshed pod fails with them (the SVID over the socket, the proxy's SPIRE certificate, the traffic
+  and default-deny checks).
+
+The cause is the provider's pod network, not the zone. Cilium runs in native routing with
+`ipv4-native-routing-cidr` covering the node network only, while the pods' ranges lie outside it,
+and with masquerading on: a pod's traffic to a pod on another node leaves with the node's address.
+At the destination Cilium sees the node (under `policy-cidr-match-mode=nodes`, a CIDR identity),
+not the source pod, so no network policy that admits pods by namespace or label matches across
+nodes: the `meshControlPlane` opening, the intra-plane lane and the matrix lanes all fail there,
+while the same lanes work between pods on the same node. `cilium-dbg monitor --type drop` on
+istiod's node shows the SYNs to 15012 arriving from node addresses. The records state it in their
+preconditions (`0 of 3 node pod ranges inside ipv4-native-routing-cidr`).
+
+Widening the lanes to admit node addresses would admit every pod on every node and is not done.
+The fix is on the provider's side: pod-to-pod traffic must keep the pod's address between nodes
+(the pod network inside Cilium's native-routing range, or the overlay), a change to the provider's
+networking configuration that this project does not make. Until then each run tears the zone down
+and leaves the cluster as it was found; both clusters are empty. Once the provider has changed it,
+the same two commands are re-run, and with every check passed each zone stays installed on its
+interim trust domain.
 
 ## 5. Admission control
 
