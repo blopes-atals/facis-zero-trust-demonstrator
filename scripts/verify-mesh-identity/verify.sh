@@ -4,13 +4,14 @@
 # provider's Cilium. Installs the zone from an empty cluster with scripts/install-zone/install.sh,
 # twice, then proves with stand-in pods: an SVID over the CSI socket, on every node with a SPIRE
 # agent too (one unmeshed stand-in per node in spire-system, from fixtures/svid-on-node.yaml), the
-# proxy's certificate and root bundle issued by SPIRE, no proxy without the SPIRE socket and a
-# certificate from istiod's CA refused by a meshed peer, the proxy's traffic capture held at the
-# injector's defaults (the capture rule), the TLS 1.3 minimum of mesh mTLS, an unregistered workload
-# cut off, traffic through the proxies, the default deny intact with the chained CNI and both
-# control planes inside it, the native-sidecar version rule, the identity-band checks, the cluster's
-# CNI left as found, and a teardown that leaves nothing behind (or, on a participant cluster with
-# the keep opt-in and every check passed, the record of what stays).
+# SPIRE server's and the controller-manager's metrics endpoints answering beside the agents'
+# loopback ones, the proxy's certificate and root bundle issued by SPIRE, no proxy without the SPIRE
+# socket and a certificate from istiod's CA refused by a meshed peer, the proxy's traffic capture
+# held at the injector's defaults (the capture rule), the TLS 1.3 minimum of mesh mTLS, an
+# unregistered workload cut off, traffic through the proxies, the default deny intact with the
+# chained CNI and both control planes inside it, the native-sidecar version rule, the identity-band
+# checks, the cluster's CNI left as found, and a teardown that leaves nothing behind (or, on a
+# participant cluster with the keep opt-in and every check passed, the record of what stays).
 # On a participant cluster every pod the proof creates (the stand-ins, their -capture-check copies,
 # the probe of section 8's scratch namespace, the kube-public pod of section 13) is pinned to the
 # node istiod runs on, with a required node affinity on kubernetes.io/hostname: the provider's pod
@@ -230,6 +231,36 @@ section() { say '' "## $1" ''; echo "== $1"; }
 spire_server() { k -n "$SPIRE_NS" exec spire-server-0 -c spire-server -- /opt/spire/bin/spire-server "$@"; }
 # agent_nodes: the nodes the SPIRE agent DaemonSet runs on, one per line, from its pods' spec.nodeName
 agent_nodes() { k -n "$SPIRE_NS" get pods -o json | jq -r '.items[] | select(.metadata.ownerReferences[0].name == "spire-agent") | .spec.nodeName' | sort -u; }
+# cilium_on <node>: the Cilium agent pod of that node (host network), through which the proof reads
+# the node's host; the only use of kube-system is such a read-only exec
+cilium_on() { k -n kube-system get pod -l k8s-app=cilium --field-selector "spec.nodeName=$1" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null; }
+# host_get <node> <address> <port>: GET /metrics on <address>:<port> from the host of <node>, through
+# its Cilium agent (bash and /dev/tcp of the Cilium image, nothing installed, nothing written); the
+# raw HTTP response on stdout
+host_get() {
+  local C; C=$(cilium_on "$1")
+  [ -n "$C" ] || return 1
+  k -n kube-system exec "$C" -c cilium-agent -- timeout 20 bash -c 'exec 3<>"/dev/tcp/$0/$1"; printf "GET /metrics HTTP/1.0\r\nHost: %s:%s\r\n\r\n" "$0" "$1" >&3; cat <&3' "$2" "$3" 2>/dev/null
+}
+# agent_answers <node>: the check that the SPIRE agent of <node> answers on 127.0.0.1:9988 with
+# spire_agent samples
+agent_answers() {
+  local n; n=$(host_get "$1" 127.0.0.1 9988 | grep -c '^spire_agent')
+  [ "$n" -gt 0 ]; check $? "node $1: the agent's metrics answer on 127.0.0.1:9988 (the contract with a node-local collector)" "$n spire_agent samples"
+}
+# metrics_answer <component> <family> <port>: the check that the endpoint of <component> in the SPIRE
+# server pod answers on <port> with HTTP 200 and at least one sample of <family>, read from the host
+# of the server pod's node (the kubelet's path to the pod, which its readiness probes take)
+metrics_answer() {
+  local node ip out code n
+  node=$(k -n "$SPIRE_NS" get pod spire-server-0 -o jsonpath='{.spec.nodeName}' 2>/dev/null)
+  ip=$(k -n "$SPIRE_NS" get pod spire-server-0 -o jsonpath='{.status.podIP}' 2>/dev/null)
+  out=$([ -n "$node" ] && [ -n "$ip" ] && host_get "$node" "$ip" "$3")
+  code=$(head -1 <<<"$out" | awk '{print $2}')
+  n=$(grep -c "^$2" <<<"$out")
+  [ "$code" = 200 ] && [ "$n" -gt 0 ]
+  check $? "$1: the metrics endpoint answers on the server pod's port $3 (/metrics), HTTP 200 with samples of its own family $2, read from the host of its node through that node's Cilium agent" "node ${node:-unknown}, port $3, HTTP ${code:-no answer}, $n $2 samples"
+}
 # http <ns> <pod> <container> <url>: HTTP code and the first line of the body; denied(<curl exit>)
 # only when the network refused the call (7 refused, 28 timed out, 52 empty reply, 56 reset);
 # error(<exit>) for anything else (a name that does not resolve, an exec that failed, ...), which
@@ -880,14 +911,17 @@ done
 # The agents run on the host network, outside every network policy: their metrics endpoint must be
 # bound to the node's loopback. Their listening sockets are read in the host network namespace,
 # through the host-networked Cilium agent of the same node.
-for NODE in $(k -n "$SPIRE_NS" get pods -o json | jq -r '.items[] | select(.metadata.ownerReferences[0].name == "spire-agent") | .spec.nodeName'); do
-  C=$(k -n kube-system get pod -l k8s-app=cilium --field-selector "spec.nodeName=$NODE" -o jsonpath='{.items[0].metadata.name}')
+for NODE in $(agent_nodes); do
+  C=$(cilium_on "$NODE")
   listen=$(k -n kube-system exec "$C" -c cilium-agent -- cat /proc/net/tcp /proc/net/tcp6 2>/dev/null | awk '$4 == "0A" && $2 ~ /:2704$/ {print $2}' | sort -u | tr '\n' ' ')
   [ -n "$listen" ] && ! grep -qvE '^(0100007F|00000000000000000000000001000000):2704$' <<<"$(tr ' ' '\n' <<<"$listen" | grep .)"
   check $? "node $NODE: the SPIRE agent's metrics port 9988 listens on the loopback only, not on the node's addresses" "listening (hex address:port): ${listen:-none}"
-  n=$(k -n kube-system exec "$C" -c cilium-agent -- bash -c 'exec 3<>/dev/tcp/127.0.0.1/9988; printf "GET /metrics HTTP/1.0\r\nHost: localhost\r\n\r\n" >&3; cat <&3' 2>/dev/null | grep -c '^spire_agent')
-  [ "$n" -gt 0 ]; check $? "node $NODE: the agent's metrics answer on 127.0.0.1:9988 (the contract with a node-local collector)" "$n spire_agent samples"
+  agent_answers "$NODE"
 done
+say '' '### metrics-endpoints-answer' ''
+say "The SPIRE server's metrics endpoint (pod port 9988) and the controller-manager's (pod port 8082, a container of \`spire-server-0\`) are denied to the workload planes (above); that they answer at all is read from the host of the node the server pod runs on, the kubelet's path to the pod that its readiness probes take, through that node's Cilium agent with the same read-only \`kubectl exec\` and \`/dev/tcp\` read as the agents' check: no lane, no pod, nothing written. A read answers when it returns HTTP 200 and at least one sample of the component's own family (\`spire_server_\`, \`controller_runtime_\`; the runtime's \`go_\` and \`process_\` families, which any Go binary exposes, do not count). Nothing in the zone scrapes these endpoints yet." ''
+metrics_answer "the SPIRE server" spire_server_ 9988
+metrics_answer "the SPIRE controller-manager" controller_runtime_ 8082
 
 # --------------------------------------------------------------------------------------------
 section "13. A declared registration without its entry fails the release"
@@ -1014,6 +1048,10 @@ else
   done
   attested=$(spire_server agent list -output json 2>/dev/null | jq '.agents | length')
   [ "$attested" = "$nodes_n" ]; check $? "the SPIRE server lists one attested agent per node" "attested $attested, nodes $nodes_n"
+  # The three metrics endpoints again (section 12), as checks of the decision to keep.
+  metrics_answer "the SPIRE server" spire_server_ 9988
+  metrics_answer "the SPIRE controller-manager" controller_runtime_ 8082
+  for NODE in $(agent_nodes); do agent_answers "$NODE"; done
   code "$(k -n "$SPIRE_NS" get pods -o wide | sed 's/  */ /g')"
   server_td=$(k -n "$SPIRE_NS" get cm spire-server -o jsonpath='{.data.server\.conf}' | jq -r .server.trust_domain)
   td_note="final"; [[ $server_td == *.trust.invalid ]] && td_note="interim"
