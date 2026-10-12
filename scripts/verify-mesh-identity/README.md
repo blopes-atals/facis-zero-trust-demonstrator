@@ -20,7 +20,8 @@ with `tail -n 1`:
   `${XDG_STATE_HOME:-$HOME/.local/state}/ztd/verify-mesh-identity/<context>/<UTC start>/`, the start
   written `YYYYMMDDTHHMMSSZ`; a run never reuses or changes an earlier run's directory.
 
-On a participant cluster every IPv4 address in the record is written as `<address>`.
+On a participant cluster every IPv4 address in the record is written as `<address>`, except the
+loopback `127.0.0.1`, which is no address of the cluster.
 
 **The repository holds no record of a run.** A record is proof of a state at a time: what one
 cluster looked like when one commit was run against it. It goes with the task that asked for that

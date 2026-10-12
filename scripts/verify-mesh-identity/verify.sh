@@ -1144,8 +1144,11 @@ if mkdir -p "$EVID"; then
     cp "$OUT" "$EVID/evidence.md" && cp "$work/environment.json" "$EVID/environment.json" && written=1
   else
     # No address of a client cluster is kept in a record: every IPv4 address (nodes, pods, the
-    # probed servers) is replaced in the record of a participant cluster.
-    mask() { sed -E 's/(^|[^0-9.])([0-9]{1,3}\.){3}[0-9]{1,3}([^0-9.]|$)/\1<address>\3/g; s/(^|[^0-9.])([0-9]{1,3}\.){3}[0-9]{1,3}([^0-9.]|$)/\1<address>\3/g' "$1"; }
+    # probed servers) is replaced in the record of a participant cluster. The loopback 127.0.0.1 is
+    # no address of the cluster and stays, so the record still shows where the agents answer.
+    mask() { sed -E 's/(^|[^0-9.])127\.0\.0\.1([^0-9.]|$)/\1@LOOPBACK@\2/g; s/(^|[^0-9.])127\.0\.0\.1([^0-9.]|$)/\1@LOOPBACK@\2/g
+      s/(^|[^0-9.])([0-9]{1,3}\.){3}[0-9]{1,3}([^0-9.]|$)/\1<address>\3/g; s/(^|[^0-9.])([0-9]{1,3}\.){3}[0-9]{1,3}([^0-9.]|$)/\1<address>\3/g
+      s/@LOOPBACK@/127.0.0.1/g' "$1"; }
     mask "$OUT" >"$EVID/evidence.md" && mask "$work/environment.json" >"$EVID/environment.json" && written=1
   fi
 fi
