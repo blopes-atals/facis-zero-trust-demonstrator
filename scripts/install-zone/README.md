@@ -154,4 +154,7 @@ there only behind its participant-cluster opt-in (`ZTD_CONFIRM_CLUSTER`), and le
 installed only behind its keep opt-in (`ZTD_KEEP_ZONE`) when every check passed; an interrupted or
 failed run tears down. A zone left installed is removed with `install.sh uninstall` (the command
 above, with its zone file and context) followed by `kubectl --context <context> delete namespace
-ztd-system`; a new run of the proof does that itself in its clean-slate section.
+ztd-system`; a new run of the proof does that itself in its clean-slate section. The proof writes the
+record of each run (`evidence.md`, `environment.json`) to a run directory outside the repository,
+`ZTD_EVIDENCE_DIR` or a new directory under `${XDG_STATE_HOME:-$HOME/.local/state}`, printed as its
+last line; the repository holds no record of a run (see `scripts/verify-mesh-identity/README.md`).

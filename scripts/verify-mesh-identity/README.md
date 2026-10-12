@@ -6,14 +6,79 @@ one of the two participant clusters of zone A and zone B (Kubernetes v1.34.7, Ci
 by the provider with `cni-exclusive=false`). `verify.sh` installs the zone from an empty cluster with
 `scripts/install-zone/install.sh`, twice, runs the stand-in pods of `fixtures/stand-ins.yaml`,
 proves each check below, and tears the zone down again (or, on a participant cluster with the keep
-opt-in, records what it leaves installed). The files in the repository are the output of the last
-run, on the commit and host `environment.json` names; each cluster kind has its own folder, and a run
-never writes the other's:
+opt-in, records what it leaves installed).
 
-| Cluster | Evidence folder |
-|---|---|
-| kind | `docs/evidences/mesh-identity/` |
-| participant cluster of zone A or zone B | `docs/evidences/mesh-identity-provider-cni/<zone name>/` (`zone-a`, `zone-b`, from `zone.name` of the zone file); every IPv4 address in it is written as `<address>` |
+## The run directory
+
+Each run writes its record, `evidence.md` and `environment.json`, to a run directory outside the
+repository and prints that directory as the last line of its output, alone, so a caller takes it
+with `tail -n 1`:
+
+- `ZTD_EVIDENCE_DIR` when set: created if missing and used as given (a relative path is the
+  caller's); a directory inside the repository is refused (exit 125);
+- otherwise a new directory per run,
+  `${XDG_STATE_HOME:-$HOME/.local/state}/ztd/verify-mesh-identity/<context>/<UTC start>/`, the start
+  written `YYYYMMDDTHHMMSSZ`; a run never reuses or changes an earlier run's directory.
+
+On a participant cluster every IPv4 address in the record is written as `<address>`.
+
+**The repository holds no record of a run.** A record is proof of a state at a time: what one
+cluster looked like when one commit was run against it. It goes with the task that asked for that
+state (its ticket notes), not into the repository, which keeps what lasts: this script and the
+description below of what a run shows. A run changes nothing in the repository: `git status` after
+it is what it was before.
+
+## What a run shows
+
+`evidence.md` has one section per step, each check written `PASS` or `FAIL` with what it read:
+
+- **Header**: the cluster kind (kind, or the participant cluster with its zone and the keep opt-in),
+  the context, the zone file and its trust domain, the commit and whether the tree was dirty; on a
+  participant cluster the node the proof's pods are pinned to and why, and, for a trust domain
+  ending in `.trust.invalid`, that it is interim.
+- **0. Preconditions**: the cluster's Kubernetes version against the zone file's
+  `zone.kubernetesVersion`, the cluster's Cilium (image and version, `cni-exclusive=false`, the
+  pod-to-pod routing as found) and the inotify limit on every node.
+- **1. Clean slate** and **2. `install-order-idempotent`**: the zone uninstalled, then installed
+  from the empty cluster as seven releases, twice, with identical manifests.
+- **3.** the identity-band checks of `zone-policy` on the install; **4.** the layout of the control
+  planes; **5.** the stand-in pods, with the capture rule's refusal of the three proxyless ones, and
+  on a participant cluster the pin to istiod's node.
+- **6.** to **12.** the checks of the table below: `svid-over-csi-socket` (with the SPIRE server's
+  trust domain, the SVID's SPIFFE ID and the mesh's trust domain agreeing on the zone file's name),
+  `native-sidecar-version`, `mesh-identity-issued-by-spire`, `unregistered-workload-cut-off`,
+  `traffic-through-the-proxies`, `default-deny-with-chained-cni` and
+  `control-planes-under-default-deny`.
+- **13.** a declared registration without its entry failing the release; **14.** the render guards.
+- **15. Teardown** (kind, a participant cluster without the keep opt-in, or any failed check; 16
+  when a check of the record of what remains failed):
+  nothing of the zone left behind, then the cluster's CNI read again, unchanged.
+- **15. What remains installed** (participant cluster with the keep opt-in and every check passed):
+  the CNI read back unchanged, then the seven releases `deployed`, SPIRE ready on every node, one
+  attested agent per node, the trust domain in use (marked interim when it ends in
+  `.trust.invalid`), and the pin with its limitation: the mesh is proven node-locally on these
+  clusters, cross-node meshed traffic is not, until the provider changes its pod network. A kept
+  zone on an interim trust domain is re-installed with its final name once that is confirmed, and is
+  not acceptance evidence until then.
+- **Result**: the number of failed checks and whether the zone was kept, and if not, why.
+
+## Reading `environment.json`
+
+`commit` and `dirty` describe the code that ran (the checked-out commit and whether the tree had
+uncommitted changes); a run is never refused for the state of the tree. `date` and `finished` are
+the UTC start and end. `host.kind` is the operator's machine; `tools` and `charts` the versions
+used; `images` the images found running. `cluster` is the cluster as found: the context, `kind`
+(`kind` or `provider`), the provider, the Kubernetes server version, the nodes and the CNI image; on
+kind also `kindNodeImage` and `tools.kind`. `zone` names the zone file, its name and trust domain,
+`trustDomainInterim`, `kept` and, when not kept, `notKept`. `result.failures` is the failed-check
+count, also the exit status. For example:
+
+```bash
+d=$(scripts/verify-mesh-identity/verify.sh | tail -n 1)
+jq '{commit, dirty, kept: .zone.kept, failures: .result.failures}' "$d/environment.json"
+```
+
+## Running it
 
 On kind:
 
@@ -53,7 +118,7 @@ gives every pod it creates (the stand-ins, their `-capture-check` copies, the pr
 namespace, the `kube-public` pod of the registration step) a required node affinity on
 `kubernetes.io/hostname` to that node. The provider's pod network masquerades pod traffic between
 nodes to the node's address, so a meshed pod on another node would reach istiod as `remote-node`,
-which no opening admits, and never start. The records say so in their header, the stand-ins section
+which no opening admits, and never start. A record says so in its header, the stand-ins section
 and the record of what remains: the mesh is proven node-locally there, and cross-node meshed traffic
 is not proven until the provider changes its pod network, after which the pin is removed. The pin
 lives in `verify.sh` alone (the chart, the policies and the zone files carry none of it), and on
@@ -68,7 +133,7 @@ participant cluster, and only when every check passed: the teardown section is r
 controller-manager ready, the agent and CSI driver DaemonSets ready on every node, one attested
 agent per node and the trust domain in use (marked interim when it ends in `.trust.invalid`), after
 the cluster's CNI as found is read again. Each of those is a check too; if one fails, the run tears the zone down
-after all. The zone counts as kept only once its record is written to the evidence folder: an
+after all. The zone counts as kept only once its record is written to the run directory: an
 interrupt before then, or a failed write, tears it down too. Without the opt-in,
 when any check failed, or when the run ends early (an error, INT or TERM), the run leaves the
 cluster as it found it: on a participant cluster the exit trap uninstalls the releases and deletes
@@ -119,12 +184,11 @@ behind. The registration-failure step labels `kube-public` (ignored by the contr
 every cluster) as a plane for its duration, and unlabels and empties it again.
 
 Needs `kind` (on kind), `kubectl`, `helm` (v4.3.0), the `cilium` CLI, `istioctl` 1.31.1, `jq`, `openssl`,
-`python3` with PyYAML and `git`; the versions are recorded in `environment.json`. Run it on a clean
-tree after the commit it should cite, and commit the two files it rewrites. It refuses to run under
+`python3` with PyYAML and `git`; the versions are recorded in `environment.json`. It refuses to run under
 CI (`CI` set): the evidence is the record of a run on a cluster, never written by a pipeline. The
 exit status is 0 when every check passed, the number of failed checks (1 to 124, capped at 124)
-otherwise, 125 when the run was refused or not started (an argument, `CI`, the context guard:
-nothing read, nothing written), and 130 or 143 when it was interrupted.
+otherwise, 125 when the run was refused or not started (an argument, `CI`, the context guard, a
+run directory inside the repository: nothing written), and 130 or 143 when it was interrupted.
 
 The stand-in pods run the images the umbrella's own verification uses (agnhost, curl) and SPIRE's
 agent image as the Workload API client; nothing about them is consumed by a zone.
