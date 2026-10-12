@@ -1071,6 +1071,22 @@ else
   metrics_answer "the SPIRE server" spire_server_ 9988
   metrics_answer "the SPIRE controller-manager" controller_runtime_ 8082
   for NODE in $(agent_nodes); do agent_answers "$NODE"; done
+  # The proof's fixtures are gone (delete_stand_ins ran above, its errors silenced): the stand-ins of
+  # both planes and their Services and ServiceAccounts, the per-node SVID stand-ins and the
+  # ServiceAccount stand-in of the SPIRE namespace, the kube-public pod, the scratch namespace, and
+  # any SPIRE entry for a stand-in identity (the controller-manager removes those once the pods are
+  # gone, so they are waited for). A leftover is a failed check, so the zone is torn down after all.
+  left=$( { sed -e "s/__DATA__/$DATA/g" -e "s/__MGMT__/$MGMT/g" fixtures/stand-ins.yaml | k get -f - --ignore-not-found -o name \
+    && k -n "$SPIRE_NS" get pods -l app.kubernetes.io/name=svid-on-node -o name \
+    && k -n "$SPIRE_NS" get serviceaccount stand-in --ignore-not-found -o name \
+    && k -n kube-public get pod declared-not-reconciled --ignore-not-found -o name \
+    && k get namespace mesh-identity-outside --ignore-not-found -o name; } 2>&1 || echo "a read failed")
+  for _ in $(seq 30); do
+    entries=$(spire_server entry show -output json 2>/dev/null | jq -er '[.entries[] | select(.spiffe_id.path | endswith("/sa/stand-in")) | "spiffe://\(.spiffe_id.trust_domain)\(.spiffe_id.path)"] | join(" ")') || entries="the entries could not be read"
+    [ -z "$entries" ] && break; sleep 2
+  done
+  [ -z "$left" ] && [ -z "$entries" ]
+  check $? "nothing of the proof's fixtures stays in the zone: no stand-in pod, Service or ServiceAccount in either plane, no per-node SVID stand-in and no stand-in ServiceAccount in $SPIRE_NS, no kube-public pod, no scratch namespace, and no SPIRE entry for a stand-in identity" "left: $(tr '\n' ' ' <<<"${left:-none}"); stand-in entries: ${entries:-none}"
   code "$(k -n "$SPIRE_NS" get pods -o wide | sed 's/  */ /g')"
   server_td=$(k -n "$SPIRE_NS" get cm spire-server -o jsonpath='{.data.server\.conf}' | jq -r .server.trust_domain)
   td_note="final"; [[ $server_td == *.trust.invalid ]] && td_note="interim"

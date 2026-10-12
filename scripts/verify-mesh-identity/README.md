@@ -63,11 +63,13 @@ it is what it was before.
 - **15. What remains installed** (participant cluster with the keep opt-in and every check passed):
   the CNI read back unchanged, then the seven releases `deployed`, SPIRE ready on every node, one
   attested agent per node, the three metrics endpoints answering again (server 9988,
-  controller-manager 8082, the agents on each node's loopback), the trust domain in use (marked interim when it ends in
-  `.trust.invalid`), and the pin with its limitation: the mesh is proven node-locally on these
-  clusters, cross-node meshed traffic is not, until the provider changes its pod network. A kept
-  zone on an interim trust domain is re-installed with its final name once that is confirmed, and is
-  not acceptance evidence until then.
+  controller-manager 8082, the agents on each node's loopback), nothing of the proof's fixtures left
+  (no stand-in pod, Service or ServiceAccount in either plane or in `spire-system`, no `kube-public`
+  pod, no scratch namespace, no SPIRE entry for a stand-in identity), the trust domain in use
+  (marked interim when it ends in `.trust.invalid`), and the pin with its limitation: the mesh is
+  proven node-locally on these clusters, cross-node meshed traffic is not, until the provider
+  changes its pod network. A kept zone on an interim trust domain is re-installed with its final
+  name once that is confirmed, and is not acceptance evidence until then.
 - **Result**: the number of failed checks and whether the zone was kept, and if not, why.
 
 ## Reading `environment.json`
@@ -139,20 +141,21 @@ Every refusal names what was expected and exits 125; the IONOS cluster and the s
 namespace-only cluster are refused like any other name, whatever `ZTD_CONFIRM_CLUSTER` holds.
 
 **The keep opt-in.** `ZTD_KEEP_ZONE` set to the context name leaves the zone installed on a
-participant cluster, and only when every check passed: the teardown section is replaced by
-"What remains installed", which records the seven releases `deployed`, the SPIRE server and the
+participant cluster, and only when every check passed: the teardown section is replaced by "What
+remains installed", which records the seven releases `deployed`, the SPIRE server and the
 controller-manager ready, the agent and CSI driver DaemonSets ready on every node, one attested
-agent per node, the metrics endpoints answering (server 9988, controller-manager 8082, the agents
-on each node's loopback) and the trust domain in use (marked interim when it ends in `.trust.invalid`), after
-the cluster's CNI as found is read again. Each of those is a check too; if one fails, the run tears the zone down
-after all. The zone counts as kept only once its record is written to the run directory: an
-interrupt before then, or a failed write, tears it down too. Without the opt-in,
-when any check failed, or when the run ends early (an error, INT or TERM), the run leaves the
-cluster as it found it: on a participant cluster the exit trap uninstalls the releases and deletes
-`ztd-system`. The keep opt-in is refused on kind (exit 125), and any value other than the context
-name is refused. The evidence and `environment.json` (`zone.kept`, `zone.notKept`) say whether the
-zone was kept and, if not, why. A zone kept on an interim trust domain is re-installed with the
-final name once it is confirmed, and is not acceptance evidence until then.
+agent per node, the metrics endpoints answering (server 9988, controller-manager 8082, the agents on
+each node's loopback), nothing of the proof's fixtures left in the zone, and the trust domain in use
+(marked interim when it ends in `.trust.invalid`), after the cluster's CNI as found is read again.
+Each of those is a check too; if one fails, the run tears the zone down after all. The zone counts
+as kept only once its record is written to the run directory: an interrupt before then, or a failed
+write, tears it down too. Without the opt-in, when any check failed, or when the run ends early (an
+error, INT or TERM), the run leaves the cluster as it found it: on a participant cluster the exit
+trap uninstalls the releases and deletes `ztd-system`. The keep opt-in is refused on kind (exit
+125), and any value other than the context name is refused. The evidence and `environment.json`
+(`zone.kept`, `zone.notKept`) say whether the zone was kept and, if not, why. A zone kept on an
+interim trust domain is re-installed with the final name once it is confirmed, and is not acceptance
+evidence until then.
 
 A kept zone is removed by hand with:
 
