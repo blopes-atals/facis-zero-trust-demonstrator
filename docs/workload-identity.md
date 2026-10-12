@@ -149,9 +149,9 @@ outside the cluster and reaches in-cluster webhooks through the provider's `vpn-
 from the webhook pod's own node it arrives as the `vpn-shoot` pod, which no entity names, and the
 webhook times out. Their zone files therefore add `networkPolicy.controlPlaneWebhooks.fromEndpoints`
 with that pod's namespace and labels (`app: vpn-shoot`, `type: tunnel`): the same two webhook
-ports, opened to that one pod by identity; no workload lane admits a pod by address (the one
-address the chart admits is the kubelet probe address of the parked ambient mode, rendered only in
-that mode). Every Cilium rule sets
+ports, opened to that one pod by identity; no workload lane admits a pod by address, and the lanes
+are not widened to node addresses (the one address the chart admits is the kubelet probe address
+of the parked ambient mode, rendered only in that mode). Every Cilium rule sets
 `enableDefaultDeny` false: it adds its lane and leaves the deny to the baseline's `default-deny`.
 
 **Nothing else.** The sidecar reaches its agent over the mounted socket and the agent reaches the
