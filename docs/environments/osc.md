@@ -267,11 +267,13 @@ sees the node, not the source pod, and no network policy that admits pods by nam
 matches across nodes (a run's preconditions state it: `0 of 3 node pod ranges inside
 ipv4-native-routing-cidr`). **Cross-node meshed traffic is not proven and does not work there**: a
 meshed workload on a node other than istiod's never starts, because its proxy cannot reach istiod
-on 15012. Widening the lanes to admit node addresses would admit every pod on every node and is not
-done. The fix is the provider's (pod-to-pod traffic keeping the pod's address between nodes, the
-pod network inside Cilium's native-routing range or the overlay) and has been requested; once it is
-made, the pin is removed from the proof and both zones are re-run without it, which coincides with
-the re-install on the final trust-domain names.
+on 15012. The lanes admit no workload by address and are not widened to node addresses, which would
+admit every pod on every node (the one address the chart admits is the kubelet probe address of the
+parked ambient mode, rendered only in that mode). The fix is the provider's (pod-to-pod traffic
+keeping the pod's address between nodes, the pod network inside Cilium's native-routing range or the
+overlay) and has been requested; once the provider confirms the change, the pin is removed from the
+proof and both zones are re-run without it, as a run of its own, independent of the re-install on
+the final trust-domain names.
 
 ## 5. Admission control
 

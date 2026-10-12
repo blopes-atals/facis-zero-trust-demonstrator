@@ -42,20 +42,27 @@ it is what it was before.
 - **1. Clean slate** and **2. `install-order-idempotent`**: the zone uninstalled, then installed
   from the empty cluster as seven releases, twice, with identical manifests.
 - **3.** the identity-band checks of `zone-policy` on the install; **4.** the layout of the control
-  planes; **5.** the stand-in pods, with the capture rule's refusal of the three proxyless ones, and
-  on a participant cluster the pin to istiod's node.
+  planes; **5.** the stand-in pods, with the capture rule's refusal of the three proxyless ones,
+  the per-node SVID stand-ins (`svid-on-<node>` in `spire-system`, one per node with a SPIRE agent,
+  unmeshed, placed by their own node affinity, never pinned), and on a participant cluster the pin
+  to istiod's node.
 - **6.** to **12.** the checks of the table below: `svid-over-csi-socket` (with the SPIRE server's
-  trust domain, the SVID's SPIFFE ID and the mesh's trust domain agreeing on the zone file's name),
+  trust domain, the SVID's SPIFFE ID and the mesh's trust domain agreeing on the zone file's name,
+  and, node by node, the SVID of the per-node stand-in in the zone's trust domain, chained to the
+  SPIRE CA),
   `native-sidecar-version`, `mesh-identity-issued-by-spire`, `unregistered-workload-cut-off`,
   `traffic-through-the-proxies`, `default-deny-with-chained-cni` and
-  `control-planes-under-default-deny`.
+  `control-planes-under-default-deny` (with `metrics-endpoints-answer`: the SPIRE server's 9988 and
+  the controller-manager's 8082 answering from the host of the server's node, beside the agents'
+  loopback answer on every node).
 - **13.** a declared registration without its entry failing the release; **14.** the render guards.
 - **15. Teardown** (kind, a participant cluster without the keep opt-in, or any failed check; 16
   when a check of the record of what remains failed):
   nothing of the zone left behind, then the cluster's CNI read again, unchanged.
 - **15. What remains installed** (participant cluster with the keep opt-in and every check passed):
   the CNI read back unchanged, then the seven releases `deployed`, SPIRE ready on every node, one
-  attested agent per node, the trust domain in use (marked interim when it ends in
+  attested agent per node, the three metrics endpoints answering again (server 9988,
+  controller-manager 8082, the agents on each node's loopback), the trust domain in use (marked interim when it ends in
   `.trust.invalid`), and the pin with its limitation: the mesh is proven node-locally on these
   clusters, cross-node meshed traffic is not, until the provider changes its pod network. A kept
   zone on an interim trust domain is re-installed with its final name once that is confirmed, and is
@@ -122,7 +129,10 @@ which no opening admits, and never start. A record says so in its header, the st
 and the record of what remains: the mesh is proven node-locally there, and cross-node meshed traffic
 is not proven until the provider changes its pod network, after which the pin is removed. The pin
 lives in `verify.sh` alone (the chart, the policies and the zone files carry none of it), and on
-kind the scheduler places the pods as before.
+kind the scheduler places the pods as before. The one exception is the per-node SVID stand-ins
+(`svid-on-<node>` in `spire-system`): each is placed on its own node by a required node affinity,
+one per node with a SPIRE agent, and never pinned, so the SVID is shown on every node of the
+cluster.
 
 Every refusal names what was expected and exits 125; the IONOS cluster and the shared
 namespace-only cluster are refused like any other name, whatever `ZTD_CONFIRM_CLUSTER` holds.
@@ -131,7 +141,8 @@ namespace-only cluster are refused like any other name, whatever `ZTD_CONFIRM_CL
 participant cluster, and only when every check passed: the teardown section is replaced by
 "What remains installed", which records the seven releases `deployed`, the SPIRE server and the
 controller-manager ready, the agent and CSI driver DaemonSets ready on every node, one attested
-agent per node and the trust domain in use (marked interim when it ends in `.trust.invalid`), after
+agent per node, the metrics endpoints answering (server 9988, controller-manager 8082, the agents
+on each node's loopback) and the trust domain in use (marked interim when it ends in `.trust.invalid`), after
 the cluster's CNI as found is read again. Each of those is a check too; if one fails, the run tears the zone down
 after all. The zone counts as kept only once its record is written to the run directory: an
 interrupt before then, or a failed write, tears it down too. Without the opt-in,
@@ -166,13 +177,13 @@ in both cases before the cluster is touched.
 | Check | What it proves |
 |---|---|
 | `install-order-idempotent` | the seven releases install from an empty cluster with no manual step, every pod is Ready, every SPIRE and Istio image is pinned by digest, and a second run leaves every release's manifest identical |
-| `svid-over-csi-socket` | a labelled pod mounts `csi.spiffe.io` and gets over that socket the SVID of its service account in the zone's trust domain, chained to the SPIRE CA; an unlabelled pod gets no entry and no SVID |
+| `svid-over-csi-socket` | a labelled pod mounts `csi.spiffe.io` and gets over that socket the SVID of its service account in the zone's trust domain, chained to the SPIRE CA; an unlabelled pod gets no entry and no SVID; on every node with a SPIRE agent a per-node stand-in (`svid-on-<node>`, one per node, unmeshed, in `spire-system`, placed by its own node affinity and not pinned) is Ready and gets over its node's socket `spiffe://<trust domain>/ns/spire-system/sa/stand-in`, chained to the SPIRE CA, one check per node |
 | `native-sidecar-version` | the server is 1.33 or later; the proxy is an init container with `restartPolicy: Always` |
 | `mesh-identity-issued-by-spire` | read with `istioctl proxy-config secret`: the proxy's certificate has `O = SPIRE`, the SPIRE CA as issuer, the SVID's URI SAN; its `ROOTCA` bundle is the SPIRE CA, and istiod's CA did not issue it; a pod that chooses its injection templates, brings its own proxy without the SPIRE socket, or runs Istio's agent under another container name is refused at admission; so is, under the capture rule (`capture-at-injector-defaults`), a pod that excludes an application port from the capture, switches the capture off (`NONE`), moves the status port, overrides its proxy's configuration, opts out of injection, swaps its proxy's image or brings its own `istio-proxy` container, and, under the proxy rule, an `istio-proxy` of another image on the SPIRE socket, a second proxy under another name, and an `istio-proxy` of the injector's image with its own `postStart` hook or `NET_ADMIN` (next to the same pre-set status with nothing added, admitted), and, under the socket rule, an `istio-proxy` that mounts the SPIRE socket volume with a `subPath`, while a pod annotated `prometheus.io/scrape` and `prometheus.io/port` is admitted with the injector's `ISTIO_PROMETHEUS_ANNOTATIONS`, while an ordinary pod is admitted carrying the injector's status-port exclusion and `REDIRECT`, and the istiod and `istio-cni` pods, which opt out of injection, are admitted in `istio-system` (no injection label) and refused in the data plane; a label added to a running pod is admitted (an update is checked for what it changes), an added excluded port refused, the same through the `pods/status` subresource refused, a status update that changes no annotation admitted, and the removal of `sidecar.istio.io/status` from a running injected pod refused; outside the plane namespaces istiod's 15012 is not reachable; a certificate signed with istiod's CA key for the caller's SPIFFE ID is refused by the meshed peer, the caller's SPIRE SVID accepted |
 | `unregistered-workload-cut-off` | an unlabelled pod's proxy has no certificate, its application never starts, and the peer refuses a call from its network namespace under STRICT; the labelled pod's call succeeds |
 | `traffic-through-the-proxies` | the peer sees the caller's SPIFFE ID in `X-Forwarded-Client-Cert`; both proxies count the request, as mTLS |
 | `default-deny-with-chained-cni` | the Istio plugin is chained after Cilium on the node, `cni-exclusive=false`, and the umbrella's cross-plane denial and matrix lane hold with the proxies in place |
-| `control-planes-under-default-deny` | `spire-system` and `istio-system` hold only the declared openings; no SPIRE pod has a sidecar; every agent is attested; the proxies are SYNCED; a stand-in pod's TCP probes to the SPIRE server and istiod on every port but istiod's xDS port are denied; the agents' metrics port listens on each node's loopback only |
+| `control-planes-under-default-deny` | `spire-system` and `istio-system` hold only the declared openings; no SPIRE pod has a sidecar; every agent is attested; the proxies are SYNCED; a stand-in pod's TCP probes to the SPIRE server and istiod on every port but istiod's xDS port are denied; the agents' metrics port listens on each node's loopback only and answers there with `spire_agent` samples; `metrics-endpoints-answer`: the SPIRE server's metrics (pod port 9988) answer with `spire_server_` samples and the controller-manager's (8082) with `controller_runtime_` samples, read from the host of the server pod's node through its Cilium agent (read-only `kubectl exec`, no lane, no pod), while the same ports stay denied from both planes |
 
 It also shows the identity-band checks of `zone-policy` passing on the install and failing the
 release when a declared registration has no entry, the render guards (no trust domain, Kubernetes
