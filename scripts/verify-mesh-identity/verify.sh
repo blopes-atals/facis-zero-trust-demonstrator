@@ -15,9 +15,10 @@
 # node istiod runs on, with a required node affinity on kubernetes.io/hostname: the provider's pod
 # network masquerades pod traffic between nodes, so the mesh is proven node-locally there until the
 # provider changes it. Kind is not pinned.
-# Writes evidence.md and environment.json to docs/evidences/mesh-identity/ (kind) or
-# docs/evidences/mesh-identity-provider-cni/<zone name>/ (participant cluster). Never run by CI: the
-# evidence is the record of a run on a cluster.
+# Writes evidence.md and environment.json to a run directory outside the repository (see
+# ZTD_EVIDENCE_DIR below) and prints that directory as its last line; it never writes under docs/ or
+# anywhere else in the repository, which holds no record of a run. Never run by CI: the evidence is
+# the record of a run on a cluster.
 #
 # Usage:
 #   scripts/verify-mesh-identity/verify.sh           run the proof: DESTRUCTIVE, it uninstalls the zone
@@ -28,7 +29,8 @@
 # Exit status:
 #   0        every check passed
 #   1-124    the number of failed checks (capped at 124); the evidence is written
-#   125      refused or not run (an argument, CI, the context guard): nothing read, nothing written
+#   125      refused or not run (an argument, CI, the context guard, a run directory inside the
+#            repository): nothing written
 #   130/143  interrupted (INT/TERM); on a participant cluster the zone is torn down, no evidence
 #
 # Environment:
@@ -47,6 +49,9 @@
 #   ZONE_VALUES           zone file (default: deployment/helm/ztd/ci/values.yaml on kind,
 #                         deployment/helm/ztd/zones/zone-<a|b>.yaml on zerotrust-<a|b>); on a
 #                         participant cluster its zone.name must be zone-<a|b> of that context
+#   ZTD_EVIDENCE_DIR      the run directory: created if missing, used as given, refused inside the
+#                         repository (exit 125). Default: a new directory per run,
+#                         ${XDG_STATE_HOME:-$HOME/.local/state}/ztd/verify-mesh-identity/<context>/<UTC start, YYYYMMDDTHHMMSSZ>/
 #
 # On zerotrust-a and zerotrust-b the proof's pods are pinned to istiod's node (read after the install);
 # the evidence header, section 5 and the record of what remains state the pin and its reason. On kind
@@ -65,8 +70,10 @@ if [ -n "${CI:-}" ]; then
   echo "verify-mesh-identity: refusing to run under CI; the evidence is written from a run on a cluster" >&2
   exit 125
 fi
-# A relative zone file is the caller's, read before the script moves into its own directory.
+# A relative zone file or run directory is the caller's, read before the script moves into its own
+# directory.
 [ -n "${ZONE_VALUES:-}" ] && ZONE_VALUES=$(realpath -m -- "$ZONE_VALUES")
+[ -n "${ZTD_EVIDENCE_DIR:-}" ] && ZTD_EVIDENCE_DIR=$(realpath -m -- "$ZTD_EVIDENCE_DIR")
 cd "$(dirname "$0")" || exit 125
 REPO=$(git rev-parse --show-toplevel)
 CHART=$REPO/deployment/helm/ztd
@@ -120,9 +127,14 @@ case $CONTEXT in
 esac
 INSTALL=$REPO/scripts/install-zone/install.sh
 ZONE_NAME=$(yaml_get "$ZONE_VALUES" zone name)
-# The evidence folder is the cluster kind's: a participant-cluster run never writes the kind record.
-if [ "$CLUSTER_KIND" = kind ]; then EVID=$REPO/docs/evidences/mesh-identity
-else EVID=$REPO/docs/evidences/mesh-identity-provider-cni/$ZONE_NAME; fi
+# The run directory (see the header): outside the repository, one per run unless the caller names it.
+# A run never writes into the repository, so a directory inside it is refused before the cluster is
+# touched.
+if [ -n "${ZTD_EVIDENCE_DIR:-}" ]; then EVID=$ZTD_EVIDENCE_DIR
+else EVID=$(realpath -m -- "${XDG_STATE_HOME:-$HOME/.local/state}")/ztd/verify-mesh-identity/$CONTEXT; fi
+case $EVID/ in
+  "$REPO"/*) echo "verify-mesh-identity: refusing run directory '$EVID': it is inside the repository, which holds no record of a run" >&2; exit 125;;
+esac
 export ZONE_VALUES KUBE_CONTEXT=$CONTEXT
 MGMT=$(yaml_get "$CHART/values.yaml" planes management namespace)
 DATA=$(yaml_get "$CHART/values.yaml" planes data namespace)
@@ -146,7 +158,7 @@ restore_capture() {
   kubectl --context "$CONTEXT" patch validatingadmissionpolicy "$POLICY" --type=json --patch-file "$work/restore.json" >/dev/null
 }
 # keep_zone: 1 once the record of what remains passed (section 15), the CNI check included; kept: 1
-# only once that record is written to the evidence folder, so an interrupt or a failed write before
+# only once that record is written to the run directory, so an interrupt or a failed write before
 # then still tears the zone down; written: 1 once both files of the evidence are written (an
 # interrupt between that write and kept=1 keeps the zone the record names); cleaned: 1 once the
 # teardown ran.
@@ -186,10 +198,15 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 OUT=$work/evidence.md
 failures=0
-# The commit and the dirty flag are read before anything is written into the tree.
+# The commit and the dirty flag describe the code that runs; neither refuses a run.
 commit=$(git rev-parse HEAD)
 dirty=false; [ -n "$(git status --porcelain)" ] && dirty=true
 started=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+# The default run directory is named by the run's UTC start; an existing one is never reused.
+if [ -z "${ZTD_EVIDENCE_DIR:-}" ]; then
+  base=$EVID/$(date -u -d "$started" +%Y%m%dT%H%M%SZ); EVID=$base; n=1
+  while [ -e "$EVID" ]; do EVID=$base-$n; n=$((n+1)); done
+fi
 
 k() { kubectl --context "$CONTEXT" "$@"; }
 h() { helm --kube-context "$CONTEXT" "$@"; }
@@ -1039,7 +1056,7 @@ if mkdir -p "$EVID"; then
   if [ "$CLUSTER_KIND" = kind ]; then
     cp "$OUT" "$EVID/evidence.md" && cp "$work/environment.json" "$EVID/environment.json" && written=1
   else
-    # No address of a client cluster enters the repository: every IPv4 address (nodes, pods, the
+    # No address of a client cluster is kept in a record: every IPv4 address (nodes, pods, the
     # probed servers) is replaced in the record of a participant cluster.
     mask() { sed -E 's/(^|[^0-9.])([0-9]{1,3}\.){3}[0-9]{1,3}([^0-9.]|$)/\1<address>\3/g; s/(^|[^0-9.])([0-9]{1,3}\.){3}[0-9]{1,3}([^0-9.]|$)/\1<address>\3/g' "$1"; }
     mask "$OUT" >"$EVID/evidence.md" && mask "$work/environment.json" >"$EVID/environment.json" && written=1
@@ -1047,11 +1064,13 @@ if mkdir -p "$EVID"; then
 fi
 if [ "$written" != 1 ]; then
   # No record, no kept zone: kept stays 0, so the EXIT trap tears a participant zone down.
-  echo "verify-mesh-identity: the evidence could not be written to ${EVID#"$REPO"/}" >&2
+  echo "verify-mesh-identity: the evidence could not be written to $EVID" >&2
   failures=$((failures+1))
   exit $(( failures > 124 ? 124 : failures ))
 fi
 # The zone counts as kept only now that its record is on disk (the EXIT trap tears it down before).
 [ "$keep_zone" = 1 ] && kept=1
-echo "evidence written to ${EVID#"$REPO"/} ($failures failure(s); zone kept: $([ "$kept" = 1 ] && echo yes || echo "no, $not_kept"))"
+echo "evidence written ($failures failure(s); zone kept: $([ "$kept" = 1 ] && echo yes || echo "no, $not_kept")); run directory:"
+# The last line of the output is the run directory, alone, so a caller takes it with tail -n 1.
+echo "$EVID"
 exit $(( failures > 124 ? 124 : failures ))
