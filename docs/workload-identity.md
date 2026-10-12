@@ -6,8 +6,9 @@ the repository installs it: where its parts live and why, how the zone's trust d
 a workload is registered, which network openings the two control planes need under the default
 deny, the contract between the SPIRE agent and the mesh proxy, and how to check on a live cluster
 that an identity is SPIRE's. [ADR-0009](adr/0009-service-mesh-mode-istio-sidecar-with-cilium.md)
-records why the mesh runs in sidecar mode; the [evidence](evidences/mesh-identity/README.md) is
-the executed proof on the kind cluster.
+records why the mesh runs in sidecar mode; `scripts/verify-mesh-identity/verify.sh` is the executed
+proof, on the kind cluster or a participant cluster, and `scripts/verify-mesh-identity/README.md` says what a run
+shows.
 
 ## The identity path
 
@@ -112,8 +113,8 @@ probe, not the endpoint itself; `registrations-reconciled` reads the counters th
 writes into the `ClusterSPIFFEID` status after it has set the entries on the server, not the entries
 themselves. On a zone with no running labelled pod (a fresh install, before any workload),
 `registrations-reconciled` has nothing to compare and passes on the absence of failures alone. The
-entries themselves are read on the server by the evidence run (`spire-server entry show`, in
-[the mesh identity evidence](evidences/mesh-identity/README.md)).
+entries themselves are read on the server by each run of the mesh identity proof
+(`spire-server entry show`, in the record a run writes; see `scripts/verify-mesh-identity/README.md`).
 
 ## Openings under the default deny
 
@@ -216,8 +217,8 @@ The `istiod` release configures the mesh for SPIRE:
   service-account token and obtain a certificate under istiod's root. No peer trusts that root:
   every proxy's `ROOTCA` is SPIRE's bundle only, so such a certificate opens no mesh connection.
   The proof shows it: a certificate signed with istiod's CA key for an enrolled pod's own SPIFFE
-  ID is refused by a meshed peer, while that pod's SPIRE SVID is accepted
-  ([evidence](evidences/mesh-identity/README.md)). Closing the CA itself needs istiod's serving
+  ID is refused by a meshed peer, while that pod's SPIRE SVID is accepted (check
+  `mesh-identity-issued-by-spire` of the proof, `scripts/verify-mesh-identity/README.md`). Closing the CA itself needs istiod's serving
   certificates from another issuer, left to a later change.
 - **STRICT.** The mesh-wide `PeerAuthentication` `default` in `istio-system` is `STRICT`. A workload
   without an entry gets no certificate, so its proxy never becomes ready and, being a native
@@ -226,8 +227,8 @@ The `istiod` release configures the mesh for SPIRE:
   A future plaintext exception is a namespaced `PeerAuthentication`, recorded per path. Mesh mTLS
   runs at TLS 1.3 at least (`meshConfig.meshMTLS.minProtocolVersion: TLSV1_3` in the `istiod`
   release, the security baseline of ADR 005; Istio's default is TLS 1.2): the proof shows a peer's
-  proxy accepting a TLS 1.3 handshake with a SPIRE SVID and refusing one capped at TLS 1.2
-  ([evidence](evidences/mesh-identity/README.md)).
+  proxy accepting a TLS 1.3 handshake with a SPIRE SVID and refusing one capped at TLS 1.2 (check
+  `mesh-identity-issued-by-spire` of the proof, `scripts/verify-mesh-identity/README.md`).
 - **Native sidecars.** `ENABLE_NATIVE_SIDECARS=true` in istiod injects the proxy as an init
   container with `restartPolicy: Always`: it starts before the application and stops after it, and
   Jobs end. This needs Kubernetes 1.33 or later; the umbrella refuses to render sidecar mode for a
@@ -342,7 +343,7 @@ mount with a `subPath`, the admission of a pod with
 `prometheus.io/*` annotations, the admission of the istiod and
 `istio-cni` pods in `istio-system` and their refusal in the data plane, and a label admitted on a
 running pod while an added exclusion is refused, through `pods/status` as well, and the removal of
-`sidecar.istio.io/status` from a running injected pod refused ([evidence](evidences/mesh-identity/README.md)). A workload that needs a capture exception or a
+`sidecar.istio.io/status` from a running injected pod refused (check `mesh-identity-issued-by-spire` of the proof, `scripts/verify-mesh-identity/README.md`). A workload that needs a capture exception or a
 proxy setting gets it mesh-wide through the charts (`meshConfig.defaultConfig`, or a value that
 widens the rule) in its own change, never through a pod annotation. Interception mode `TPROXY`,
 which also captures, is refused with the rest: the zone does not use it.
@@ -424,10 +425,13 @@ A SPIRE-issued certificate has `O = SPIRE` in its subject, the SPIRE server CA a
 pod's SPIFFE ID as its URI SAN, and the `ROOTCA` bundle is the SPIRE server's CA, not istiod's
 (`istio-ca-root-cert`).
 
-## What the evidence proves
+## What a run of the proof shows
 
-`scripts/verify-mesh-identity/verify.sh` installs the zone on the kind cluster from an empty
-cluster, twice, and writes [the record](evidences/mesh-identity/evidence.md):
+`scripts/verify-mesh-identity/verify.sh` installs the zone on the kind cluster (or a confirmed
+participant cluster) from an empty cluster, twice, and writes its record to a run directory outside
+the repository, printed as its last line; the repository holds no record of a run
+(`scripts/verify-mesh-identity/README.md` describes the run directory and each section of a
+record). A run shows:
 
 | Check | Proves |
 |---|---|

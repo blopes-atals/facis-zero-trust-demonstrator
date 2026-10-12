@@ -125,9 +125,9 @@ networkPolicy:
   # by entity in each namespace (a Kubernetes policy cannot name the API server). A self-hosted API
   # server runs on the host network of a control-plane node, and Cilium sees its calls to a pod on
   # another node with the identity of that node (remote-node), on its own node as host: the
-  # kube-apiserver entity matches only the API server's own address. The kind proof showed it
-  # (docs/evidences/mesh-identity), so the lane names the three entities, on the webhook port of the
-  # webhook pod only.
+  # kube-apiserver entity matches only the API server's own address. A run of the mesh identity
+  # proof shows it (scripts/verify-mesh-identity/README.md), so the lane names the three entities, on
+  # the webhook port of the webhook pod only.
   controlPlaneWebhooks:
     enabled: false
     fromEntities: [kube-apiserver, host, remote-node]

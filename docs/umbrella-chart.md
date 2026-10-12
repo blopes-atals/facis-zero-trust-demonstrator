@@ -214,7 +214,7 @@ release work adds a chart publishing job, which is where that criterion closes.
 
 The umbrella's evidence covers the layout alone; the identity path and the mesh installed into it,
 with the seven releases, are proven by `scripts/verify-mesh-identity/verify.sh`
-([the mesh identity evidence](evidences/mesh-identity/README.md)).
+(what a run shows: `scripts/verify-mesh-identity/README.md`).
 
 What waits for the client clusters is the first acceptance criterion — the layout on all three
 clusters — and the per-zone values the baseline records, including the API endpoint for the

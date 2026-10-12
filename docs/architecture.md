@@ -39,7 +39,7 @@ APIs), each listed with its reason; they are not rows of the allow matrix, which
 data-plane workloads into the management plane and whose catch-all denial still holds. In
 particular a data-plane workload reaches the SPIRE server on no port. Each opening is rendered by
 the umbrella chart only when the zone file enables it, and is proven by the named check of the
-[mesh identity evidence](evidences/mesh-identity/README.md):
+mesh identity proof, which every run records (see `scripts/verify-mesh-identity/README.md`):
 
 | Opening | Source | Destination | Port | Network policy layer | Proving check |
 |---|---|---|---|---|---|
