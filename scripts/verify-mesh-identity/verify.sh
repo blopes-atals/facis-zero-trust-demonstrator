@@ -531,11 +531,16 @@ idx=$(jq '[.spec.validations[].expression | contains("variables.captureDefaults"
 jq -c --argjson i "${idx:-null}" '[{op: "test", path: "/spec/validations/\($i)", value: .spec.validations[$i]}, {op: "remove", path: "/spec/validations/\($i)"}]' "$work/policy.json" >"$work/lift.json" 2>/dev/null
 jq -c --argjson i "${idx:-null}" '[{op: "add", path: "/spec/validations/\($i)", value: .spec.validations[$i]}]' "$work/policy.json" >"$work/restore.json" 2>/dev/null
 rc_create=1
+# Each API server replica takes up a policy change on its own (a provider's control plane runs more
+# than one), so one admitted dry run does not mean the next request is admitted: the create is
+# retried while the lift is in force, and after the restore the refusal must hold five times in a
+# row before the run goes on.
 if [ "${idx:-null}" != null ] && k patch validatingadmissionpolicy "$POLICY" --type=json --patch-file "$work/lift.json" >/dev/null 2>&1; then
   for _ in $(seq 30); do proxyless_admitted && break; sleep 1; done
-  k apply -f "$work/stand-ins-proxyless.yaml" >/dev/null; rc_create=$?
+  for _ in $(seq 30); do k apply -f "$work/stand-ins-proxyless.yaml" >/dev/null 2>"$work/proxyless-create.err"; rc_create=$?; [ $rc_create -eq 0 ] && break; sleep 2; done
+  [ $rc_create -eq 0 ] || cat "$work/proxyless-create.err" >&2
   restore_capture
-  for _ in $(seq 30); do proxyless_refused && break; sleep 1; done
+  held=0; for _ in $(seq 60); do if proxyless_refused; then held=$((held+1)); [ $held -ge 5 ] && break; else held=0; sleep 1; fi; done
 fi
 check $rc_create "with the capture validation (index ${idx:-none}) lifted, the three proxy-less stand-ins are created"
 diff <(jq -S .spec "$work/policy.json") <(k get validatingadmissionpolicy "$POLICY" -o json | jq -S .spec) >/dev/null && proxyless_refused
