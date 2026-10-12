@@ -241,14 +241,14 @@ spire_server() { k -n "$SPIRE_NS" exec spire-server-0 -c spire-server -- /opt/sp
 agent_nodes() { k -n "$SPIRE_NS" get pods -o json | jq -r '.items[] | select(.metadata.ownerReferences[0].name == "spire-agent") | .spec.nodeName' | sort -u; }
 # cilium_on <node>: the Cilium agent pod of that node (host network), through which the proof reads
 # the node's host; the only use of kube-system is such a read-only exec
-cilium_on() { k -n kube-system get pod -l k8s-app=cilium --field-selector "spec.nodeName=$1" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null; }
+cilium_on() { k --request-timeout=30s -n kube-system get pod -l k8s-app=cilium --field-selector "spec.nodeName=$1" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null; }
 # host_get <node> <address> <port>: GET /metrics on <address>:<port> from the host of <node>, through
 # its Cilium agent (bash and /dev/tcp of the Cilium image, nothing installed, nothing written); the
-# raw HTTP response on stdout
+# raw HTTP response on stdout; the API calls are bounded too, so a stalled API server cannot hang the run
 host_get() {
   local C; C=$(cilium_on "$1")
   [ -n "$C" ] || return 1
-  k -n kube-system exec "$C" -c cilium-agent -- timeout 20 bash -c 'exec 3<>"/dev/tcp/$0/$1"; printf "GET /metrics HTTP/1.0\r\nHost: %s:%s\r\n\r\n" "$0" "$1" >&3; cat <&3' "$2" "$3" 2>/dev/null
+  k --request-timeout=60s -n kube-system exec "$C" -c cilium-agent -- timeout 20 bash -c 'exec 3<>"/dev/tcp/$0/$1"; printf "GET /metrics HTTP/1.0\r\nHost: %s:%s\r\n\r\n" "$0" "$1" >&3; cat <&3' "$2" "$3" 2>/dev/null
 }
 # agent_answers <node>: the check that the SPIRE agent of <node> answers on 127.0.0.1:9988 with
 # spire_agent samples
