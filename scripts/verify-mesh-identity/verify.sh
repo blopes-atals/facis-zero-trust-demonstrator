@@ -155,12 +155,20 @@ STATUS_PORT=""
 
 work=$(mktemp -d)
 # restore_capture: puts the capture validation back into the live policy when it is missing from it
-# and section 5 saved it (restore.json); a no-op otherwise, so it is safe to call more than once.
+# and section 5 saved it (restore.json); a no-op otherwise, so it is safe to call more than once. A
+# policy it cannot read (other than one already uninstalled) or cannot patch is named on stderr, as
+# the capture validation may then still be lifted.
 restore_capture() {
+  local live
   [ -s "$work/restore.json" ] || return 0
-  kubectl --context "$CONTEXT" get validatingadmissionpolicy "$POLICY" -o json 2>/dev/null \
-    | jq -e '[.spec.validations[].expression | contains("variables.captureDefaults")] | index(true) == null' >/dev/null || return 0
-  kubectl --context "$CONTEXT" patch validatingadmissionpolicy "$POLICY" --type=json --patch-file "$work/restore.json" >/dev/null
+  if ! live=$(kubectl --context "$CONTEXT" get validatingadmissionpolicy "$POLICY" -o json 2>"$work/restore.err"); then
+    grep -q NotFound "$work/restore.err" \
+      || echo "verify-mesh-identity: cannot read the admission policy $POLICY to put its capture validation back; it may still be lifted: $(head -1 "$work/restore.err")" >&2
+    return 0
+  fi
+  jq -e '[.spec.validations[].expression | contains("variables.captureDefaults")] | index(true) == null' <<<"$live" >/dev/null || return 0
+  kubectl --context "$CONTEXT" patch validatingadmissionpolicy "$POLICY" --type=json --patch-file "$work/restore.json" >/dev/null 2>"$work/restore.err" \
+    || echo "verify-mesh-identity: the capture validation of the admission policy $POLICY could not be put back; it is still lifted: $(head -1 "$work/restore.err")" >&2
 }
 # keep_zone: 1 once the record of what remains passed (section 15), the CNI check included; kept: 1
 # only once that record is written to the run directory, so an interrupt or a failed write before
@@ -530,21 +538,27 @@ k get validatingadmissionpolicy "$POLICY" -o json >"$work/policy.json"
 idx=$(jq '[.spec.validations[].expression | contains("variables.captureDefaults")] | index(true)' "$work/policy.json")
 jq -c --argjson i "${idx:-null}" '[{op: "test", path: "/spec/validations/\($i)", value: .spec.validations[$i]}, {op: "remove", path: "/spec/validations/\($i)"}]' "$work/policy.json" >"$work/lift.json" 2>/dev/null
 jq -c --argjson i "${idx:-null}" '[{op: "add", path: "/spec/validations/\($i)", value: .spec.validations[$i]}]' "$work/policy.json" >"$work/restore.json" 2>/dev/null
-rc_create=1
+rc_create=1; held=0
 # Each API server replica takes up a policy change on its own (a provider's control plane runs more
 # than one), so one admitted dry run does not mean the next request is admitted: the create is
-# retried while the lift is in force, and after the restore the refusal must hold five times in a
-# row before the run goes on.
+# retried while the capture rule still refuses it (any other error ends the retries), and after the
+# restore the refusal must hold five times in a row, a second apart, which the check requires. The
+# lift lasts at most about 45 s: up to 20 dry runs a second apart, then up to 10 creates 2 s apart.
 if [ "${idx:-null}" != null ] && k patch validatingadmissionpolicy "$POLICY" --type=json --patch-file "$work/lift.json" >/dev/null 2>&1; then
-  for _ in $(seq 30); do proxyless_admitted && break; sleep 1; done
-  for _ in $(seq 30); do k apply -f "$work/stand-ins-proxyless.yaml" >/dev/null 2>"$work/proxyless-create.err"; rc_create=$?; [ $rc_create -eq 0 ] && break; sleep 2; done
+  for _ in $(seq 20); do proxyless_admitted && break; sleep 1; done
+  for _ in $(seq 10); do
+    k apply -f "$work/stand-ins-proxyless.yaml" >/dev/null 2>"$work/proxyless-create.err"; rc_create=$?
+    [ $rc_create -eq 0 ] && break
+    grep -q 'denied request: capture rule' "$work/proxyless-create.err" || break
+    sleep 2
+  done
   [ $rc_create -eq 0 ] || cat "$work/proxyless-create.err" >&2
   restore_capture
-  held=0; for _ in $(seq 60); do if proxyless_refused; then held=$((held+1)); [ $held -ge 5 ] && break; else held=0; sleep 1; fi; done
+  for _ in $(seq 60); do if proxyless_refused; then held=$((held+1)); [ $held -ge 5 ] && break; else held=0; fi; sleep 1; done
 fi
 check $rc_create "with the capture validation (index ${idx:-none}) lifted, the three proxy-less stand-ins are created"
-diff <(jq -S .spec "$work/policy.json") <(k get validatingadmissionpolicy "$POLICY" -o json | jq -S .spec) >/dev/null && proxyless_refused
-check $? "the policy is put back unchanged (its spec equals the one read before the lift) and refuses the three again" "$(k get validatingadmissionpolicy "$POLICY" -o json | jq '.spec.validations | length') validations in force"
+diff <(jq -S .spec "$work/policy.json") <(k get validatingadmissionpolicy "$POLICY" -o json | jq -S .spec) >/dev/null && [ "$held" -ge 5 ]
+check $? "the policy is put back unchanged (its spec equals the one read before the lift) and refuses the three again, five times in a row a second apart (each API server replica takes up the change on its own)" "$(k get validatingadmissionpolicy "$POLICY" -o json | jq '.spec.validations | length') validations in force; refusals held $held of 5 in a row"
 k -n "$DATA" wait --for=condition=Ready pod/peer pod/caller pod/unregistered-svid pod/probe pod/pdp-adapter pod/data-plain --timeout=240s >/dev/null 2>&1; check $? "the labelled data-plane stand-ins are Ready"
 k -n "$MGMT" wait --for=condition=Ready pod/tsa-policy-engine pod/openbao pod/mgmt-caller pod/probe --timeout=240s >/dev/null 2>&1; check $? "the management-plane stand-ins are Ready"
 # The per-node stand-ins are counted in section 6, node by node.
