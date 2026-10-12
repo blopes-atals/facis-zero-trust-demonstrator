@@ -1,20 +1,22 @@
 #!/usr/bin/env bash
-# Evidence that the zone's mesh identities are SPIRE's, on the local kind cluster with Cilium chained
-# (scripts/dev/kind-cilium-up.sh) or on one of the two participant clusters with the provider's
-# Cilium. Installs the zone from an empty cluster with
-# scripts/install-zone/install.sh, twice, then proves with stand-in pods: an SVID over the CSI socket,
-# the proxy's certificate and root bundle issued by SPIRE, no proxy without the SPIRE socket and a
+# Evidence that the zone's mesh identities are SPIRE's, on the local kind cluster with Cilium
+# chained (scripts/dev/kind-cilium-up.sh) or on one of the two participant clusters with the
+# provider's Cilium. Installs the zone from an empty cluster with scripts/install-zone/install.sh,
+# twice, then proves with stand-in pods: an SVID over the CSI socket, on every node with a SPIRE
+# agent too (one unmeshed stand-in per node in spire-system, from fixtures/svid-on-node.yaml), the
+# proxy's certificate and root bundle issued by SPIRE, no proxy without the SPIRE socket and a
 # certificate from istiod's CA refused by a meshed peer, the proxy's traffic capture held at the
-# injector's defaults (the capture rule), the TLS 1.3 minimum of mesh mTLS, an
-# unregistered workload cut off, traffic through the proxies, the default deny intact with the
-# chained CNI and both control planes inside it, the native-sidecar version rule, the identity-band
-# checks, the cluster's CNI left as found, and a teardown that leaves nothing behind (or, on a
-# participant cluster with the keep opt-in and every check passed, the record of what stays).
+# injector's defaults (the capture rule), the TLS 1.3 minimum of mesh mTLS, an unregistered workload
+# cut off, traffic through the proxies, the default deny intact with the chained CNI and both
+# control planes inside it, the native-sidecar version rule, the identity-band checks, the cluster's
+# CNI left as found, and a teardown that leaves nothing behind (or, on a participant cluster with
+# the keep opt-in and every check passed, the record of what stays).
 # On a participant cluster every pod the proof creates (the stand-ins, their -capture-check copies,
 # the probe of section 8's scratch namespace, the kube-public pod of section 13) is pinned to the
 # node istiod runs on, with a required node affinity on kubernetes.io/hostname: the provider's pod
 # network masquerades pod traffic between nodes, so the mesh is proven node-locally there until the
-# provider changes it. Kind is not pinned.
+# provider changes it. The one exception is the per-node SVID stand-ins, each placed on its own node.
+# Kind is not pinned.
 # Writes evidence.md and environment.json to a run directory outside the repository (see
 # ZTD_EVIDENCE_DIR below) and prints that directory as its last line; it never writes under docs/ or
 # anywhere else in the repository, which holds no record of a run. Never run by CI: the evidence is
@@ -55,7 +57,9 @@
 #
 # On zerotrust-a and zerotrust-b the proof's pods are pinned to istiod's node (read after the install);
 # the evidence header, section 5 and the record of what remains state the pin and its reason. On kind
-# the scheduler places them as before.
+# the scheduler places them as before. On every cluster the per-node SVID stand-ins (svid-on-<node> in
+# spire-system, one per node with a SPIRE agent) are placed by their own node affinity, never pinned,
+# and removed with the other stand-ins.
 #
 # Every check is "<test>; check $? <title>": the status of the test is what the check records.
 # shellcheck disable=SC2319,SC2016,SC2181,SC1091
@@ -169,10 +173,14 @@ keep_zone=0; kept=0; written=0; cleaned=0
 # cluster as it was found; idempotent, every step ignores what is already gone.
 # delete_stand_ins: removes the stand-in pods of section 5 while the SPIFFE CSI driver still runs, so
 # that their csi.spiffe.io volumes unmount (once the spire release is gone they would hang in
-# Terminating and hold their namespace); a no-op when there are none.
+# Terminating and hold their namespace); a no-op when there are none. The per-node SVID stand-ins of
+# fixtures/svid-on-node.yaml go too, by their label (whatever nodes they were rendered for, a run
+# interrupted before section 6 included), and the ServiceAccount of that fixture with them.
 delete_stand_ins() {
   sed -e "s/__DATA__/$DATA/g" -e "s/__MGMT__/$MGMT/g" fixtures/stand-ins.yaml \
     | kubectl --context "$CONTEXT" delete -f - --ignore-not-found --wait=true >/dev/null 2>&1
+  kubectl --context "$CONTEXT" -n "$SPIRE_NS" delete pod -l app.kubernetes.io/name=svid-on-node --ignore-not-found --wait=true >/dev/null 2>&1
+  kubectl --context "$CONTEXT" -n "$SPIRE_NS" delete serviceaccount stand-in --ignore-not-found >/dev/null 2>&1
 }
 # shellcheck disable=SC2317  # called from the EXIT trap only
 provider_cleanup() {
@@ -220,6 +228,8 @@ check() { # check <PASS-condition exit status> <title> <detail...>
 }
 section() { say '' "## $1" ''; echo "== $1"; }
 spire_server() { k -n "$SPIRE_NS" exec spire-server-0 -c spire-server -- /opt/spire/bin/spire-server "$@"; }
+# agent_nodes: the nodes the SPIRE agent DaemonSet runs on, one per line, from its pods' spec.nodeName
+agent_nodes() { k -n "$SPIRE_NS" get pods -o json | jq -r '.items[] | select(.metadata.ownerReferences[0].name == "spire-agent") | .spec.nodeName' | sort -u; }
 # http <ns> <pod> <container> <url>: HTTP code and the first line of the body; denied(<curl exit>)
 # only when the network refused the call (7 refused, 28 timed out, 52 empty reply, 56 reset);
 # error(<exit>) for anything else (a name that does not resolve, an exec that failed, ...), which
@@ -278,7 +288,7 @@ else
   [ "$KEEP" = 1 ] && keep_text="set (\`ZTD_KEEP_ZONE=$CONTEXT\`): the zone stays installed only if every check passes, otherwise the run tears it down"
   interim=""; [[ $TD == *.trust.invalid ]] && interim=" The trust domain \`$TD\` is **interim**: the zone is re-installed with its final name under the delegated trust-framework zone once that name is confirmed, and a zone on an interim name is not acceptance evidence."
   say "Cluster kind: **participant cluster** \`$CONTEXT\` (zone \`$ZONE_NAME\`), Cilium installed and managed by the provider, confirmed with \`ZTD_CONFIRM_CLUSTER=$CONTEXT\`. Keep opt-in: $keep_text.$interim Every IPv4 address of the cluster is replaced by \`<address>\` in this record." ''
-  say "Proof pods pinned to __PIN_NODE__: every pod this run creates (the stand-ins of section 5, their \`-capture-check\` copies, the \`probe\` of section 8's scratch namespace, the \`kube-public\` pod of section 13) carries a required node affinity on \`kubernetes.io/hostname\` to the node istiod runs on, because the provider's pod network masquerades pod traffic between nodes (see the preconditions); the mesh is proven node-locally on this cluster, and cross-node meshed traffic is not proven here until the provider changes its pod network." ''
+  say "Proof pods pinned to __PIN_NODE__: every pod this run creates but the per-node SVID stand-ins (the stand-ins of section 5, their \`-capture-check\` copies, the \`probe\` of section 8's scratch namespace, the \`kube-public\` pod of section 13) carries a required node affinity on \`kubernetes.io/hostname\` to the node istiod runs on, because the provider's pod network masquerades pod traffic between nodes (see the preconditions); the mesh is proven node-locally on this cluster, and cross-node meshed traffic is not proven here until the provider changes its pod network. The exception: the per-node SVID stand-ins of section 6 (\`svid-on-<node>\` in \`$SPIRE_NS\`, unmeshed) are placed one per node with a SPIRE agent by their own node affinity, never pinned, so the SVID is shown on every node." ''
 fi
 say "Cluster context \`$CONTEXT\`, zone file \`${ZONE_VALUES#"$REPO"/}\` (trust domain \`$TD\`), installed with \`scripts/install-zone/install.sh\`: the seven releases \`ztd\`, \`spire-crds\`, \`spire\`, \`istio-base\`, \`istiod\`, \`istio-cni\`, \`zone-policy\`. Commit \`$commit\`, tree dirty: $dirty. Versions in \`environment.json\`." ''
 say 'Probe results: an HTTP code with the first line of the body when the call went through its proxies; `denied(28)` when a raw TCP connection timed out because the policy dropped the packets; `denied(56)` when the peer reset the connection; `error(<exit>)`, which fails a negative check, for any other failure (a name that does not resolve, an exec that failed).' ''
@@ -460,7 +470,17 @@ for d in check: d["metadata"]["name"] += "-capture-check"
 yaml.safe_dump_all(check, open(sys.argv[4], "w"), sort_keys=False)
 PY
 [ "$CLUSTER_KIND" = provider ] && pin_pods "$PIN_NODE" "$work/stand-ins-meshed.yaml" "$work/stand-ins-proxyless.yaml" "$work/stand-ins-proxyless-check.yaml"
-k apply -f "$work/stand-ins-meshed.yaml" >/dev/null
+# The per-node SVID stand-ins (section 6): fixtures/svid-on-node.yaml rendered once per node the SPIRE
+# agent runs on, each with its own node affinity; never passed to pin_pods, so on a participant
+# cluster they are the one exception to the pin.
+SVID_NODES=$(agent_nodes)
+svid_files=(); svid_pods=()
+for NODE in $SVID_NODES; do
+  sed "s/__NODE__/$NODE/g" fixtures/svid-on-node.yaml >"$work/svid-on-$NODE.yaml"
+  svid_files+=(-f "$work/svid-on-$NODE.yaml"); svid_pods+=("pod/svid-on-$NODE")
+done
+say "In \`$SPIRE_NS\`, from \`scripts/verify-mesh-identity/fixtures/svid-on-node.yaml\`: one unmeshed stand-in per node with a SPIRE agent ($(paste -sd, - <<<"$SVID_NODES" | sed 's/,/, /g')), \`svid-on-<node>\`, each placed on its node by a required node affinity$([ "$CLUSTER_KIND" = provider ] && echo ', not pinned to istiod'"'"'s node') (section 6)." ''
+k apply -f "$work/stand-ins-meshed.yaml" "${svid_files[@]}" >/dev/null
 proxyless=$(python3 -c 'import sys,yaml
 print(", ".join("`" + d["metadata"]["name"] + "` in " + d["metadata"]["namespace"] for d in yaml.safe_load_all(open(sys.argv[1])) if d))' "$work/stand-ins-proxyless.yaml")
 say '' "The three proxy-less stand-ins ($proxyless) opt out of injection, which the capture rule of \`$POLICY\` refuses in a plane namespace (section 8). They stand for the program without a proxy that the later sections show the zone resisting anyway, so the proof creates them with that one validation lifted from the policy for the time of their creation, puts it back unchanged, and checks that it refuses them again; the template and socket rules stay in force throughout." ''
@@ -491,8 +511,10 @@ diff <(jq -S .spec "$work/policy.json") <(k get validatingadmissionpolicy "$POLI
 check $? "the policy is put back unchanged (its spec equals the one read before the lift) and refuses the three again" "$(k get validatingadmissionpolicy "$POLICY" -o json | jq '.spec.validations | length') validations in force"
 k -n "$DATA" wait --for=condition=Ready pod/peer pod/caller pod/unregistered-svid pod/probe pod/pdp-adapter pod/data-plain --timeout=240s >/dev/null 2>&1; check $? "the labelled data-plane stand-ins are Ready"
 k -n "$MGMT" wait --for=condition=Ready pod/tsa-policy-engine pod/openbao pod/mgmt-caller pod/probe --timeout=240s >/dev/null 2>&1; check $? "the management-plane stand-ins are Ready"
+# The per-node stand-ins are counted in section 6, node by node.
+[ ${#svid_pods[@]} -gt 0 ] && k -n "$SPIRE_NS" wait --for=condition=Ready "${svid_pods[@]}" --timeout=240s >/dev/null 2>&1
 sleep 10
-code "$(k get pods -n "$DATA" -o wide | sed 's/  */ /g'; echo; k get pods -n "$MGMT" -o wide | sed 's/  */ /g')"
+code "$(k get pods -n "$DATA" -o wide | sed 's/  */ /g'; echo; k get pods -n "$MGMT" -o wide | sed 's/  */ /g'; echo; k get pods -n "$SPIRE_NS" -l app.kubernetes.io/name=svid-on-node -o wide | sed 's/  */ /g')"
 
 # --------------------------------------------------------------------------------------------
 section "6. svid-over-csi-socket"
@@ -518,6 +540,33 @@ entry_for() { jq -r --arg u "k8s:pod-uid:$1" '.entries[] | select([.selectors[] 
 [ -z "$(entry_for "$uid_unreg")$(entry_for "$uid_unreg_svid")" ]; check $? "the SPIRE server lists no entry for the two unlabelled pods"
 out=$(k -n "$DATA" exec unregistered-svid -c svid -- /opt/spire/bin/spire-agent api fetch x509 -socketPath /run/spiffe/socket -timeout 5s 2>&1); rc=$?
 [ $rc -ne 0 ]; check $? "an unlabelled pod's fetch over the mounted socket returns no SVID" "$(grep -v 'command terminated' <<<"$out" | tail -1)"
+say '' "The \`caller\` above runs on one node$([ "$CLUSTER_KIND" = provider ] && echo ", istiod's (the pin)"). Every other node with a SPIRE agent is asked too, by the per-node stand-ins of section 5 (\`svid-on-<node>\`, the \`caller\`'s \`svid\` container alone, service account \`stand-in\`, the identity label). They are unmeshed and in \`$SPIRE_NS\` because that is the plane namespace without the injection label on every cluster the proof accepts, so they need no proxy and no opt-out$([ "$CLUSTER_KIND" = provider ] && echo ", and a meshed pod off istiod's node does not start on this cluster (the pin)"); the fetch is a node-local read over a Unix socket to the node's agent and needs no lane. They are placed one per node by their own node affinity, so the SVID is shown on every node a workload can run on:" ''
+SVID_NODE_ID="spiffe://$TD/ns/$SPIRE_NS/sa/stand-in"
+svid_n=$(wc -w <<<"$SVID_NODES"); svid_ready=0; svid_state=""
+for NODE in $SVID_NODES; do
+  s=$(k -n "$SPIRE_NS" get pod "svid-on-$NODE" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)
+  [ "$s" = True ] && svid_ready=$((svid_ready+1))
+  svid_state="$svid_state svid-on-$NODE=${s:-absent}"
+done
+[ "$svid_n" -gt 0 ] && [ "$svid_ready" -eq "$svid_n" ]
+check $? "one per-node SVID stand-in is Ready on every node with a SPIRE agent" "$svid_ready of $svid_n Ready:${svid_state:- no agent node}"
+for NODE in $SVID_NODES; do
+  pod=svid-on-$NODE; on=$(k -n "$SPIRE_NS" get pod "$pod" -o jsonpath='{.spec.nodeName}' 2>/dev/null)
+  id=""
+  for _ in 1 2 3 4 5 6; do
+    k -n "$SPIRE_NS" exec "$pod" -c svid -- /opt/spire/bin/spire-agent api fetch x509 -socketPath /run/spiffe/socket -output json >"$work/svid-node.json" 2>/dev/null
+    id=$(jq -r '.svids[0].spiffe_id // empty' "$work/svid-node.json" 2>/dev/null)
+    [ -n "$id" ] && break; sleep 5
+  done
+  # Only the certificate is kept; the JSON with the private key goes at once.
+  jq -r '.svids[0].x509_svid // empty' "$work/svid-node.json" 2>/dev/null | base64 -d 2>/dev/null \
+    | openssl x509 -inform DER -out "$work/svid-node.pem" 2>/dev/null || : >"$work/svid-node.pem"
+  rm -f "$work/svid-node.json"
+  [ "$id" = "$SVID_NODE_ID" ] && [ "$on" = "$NODE" ]
+  check $? "node $NODE: the SVID fetched over the node's mounted socket by $pod carries the SPIFFE ID of its service account in the zone's trust domain" "pod on ${on:-no node}: ${id:-no SVID}"
+  [ -s "$work/svid-node.pem" ] && openssl verify -CAfile "$work/spire-bundle.pem" "$work/svid-node.pem" >/dev/null 2>&1
+  check $? "node $NODE: that SVID chains to the SPIRE server's CA (the bundle read from the server)" "$(openssl x509 -noout -issuer -nameopt RFC2253 -in "$work/svid-node.pem" 2>/dev/null || echo 'no certificate')"
+done
 stats=$(k get clusterspiffeid plane-workloads -o jsonpath='{.status.stats}')
 say "  ClusterSPIFFEID \`plane-workloads\` status: \`$stats\`"
 
