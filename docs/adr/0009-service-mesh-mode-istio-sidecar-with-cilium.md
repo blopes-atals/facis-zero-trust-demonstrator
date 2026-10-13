@@ -123,7 +123,7 @@ Calico, holds no demonstration workload and no mesh, and its zone file keeps `me
    ready before the application container starts, so no connection leaves before mTLS can be
    enforced) and lets Jobs terminate when their main container ends. Each cluster's Kubernetes
    version is recorded against this requirement in its zone file (`zone.kubernetesVersion`): the
-   known clusters run 1.35 (the IONOS cluster v1.35.6, the local kind cluster v1.35.5); the two OSC
+   known clusters run 1.35 (the IONOS cluster v1.35.6, the local kind cluster v1.35.8); the two OSC
    clusters record theirs at stand-up. A cluster below 1.33 cannot take this baseline as is.
 4. **What is given up.** ADR-0001 credited ambient mode with keeping the participant and
    protected-resource mocks replaceable without touching the mesh configuration (WP09 Definition of

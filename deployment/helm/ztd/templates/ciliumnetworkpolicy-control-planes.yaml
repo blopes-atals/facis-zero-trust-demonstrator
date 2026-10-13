@@ -12,8 +12,12 @@ the zone names that pod in controlPlaneWebhooks.fromEndpoints, on the same webho
 
 One CiliumNetworkPolicy per control-plane namespace holds that namespace's ingress openings (one per
 pod selector, should a namespace's openings select different pods), and one per management-plane
-namespace holds the API lane. Every rule sets enableDefaultDeny false: the
-policy adds its lane and leaves the deny to the Kubernetes default-deny policy of the baseline.
+namespace holds the API lane. The API lane opens the `kubernetes` Service port, 443, and the zone's
+endpoint ports (networkPolicy.kubeApi.ports): with kube-proxy, Cilium sees the Service port before
+kube-proxy translates it, without kube-proxy the endpoint port; leaving the ports open would open
+every port of the node the API server runs on, the kubelet's among them. Every rule sets
+enableDefaultDeny false: the policy adds its lane and leaves the deny to the Kubernetes default-deny
+policy of the baseline.
 
 With a mesh and without Cilium the chart refuses to render: the control planes cannot be opened
 under the default deny, and another CNI needs a declared derogation.
@@ -115,7 +119,9 @@ spec:
         - kube-apiserver
       toPorts:
         - ports:
-            {{- range $np.kubeApi.ports }}
+            {{- $ports := list "443" }}
+            {{- range $np.kubeApi.ports }}{{ $ports = append $ports (toString .) }}{{ end }}
+            {{- range (uniq $ports) }}
             - port: {{ . | quote }}
               protocol: TCP
             {{- end }}

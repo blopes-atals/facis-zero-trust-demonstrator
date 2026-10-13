@@ -5,7 +5,7 @@
 # Everything but mesh.mode is the kind zone file's.
 zone:
   name: kind
-  kubernetesVersion: v1.35.5
+  kubernetesVersion: v1.35.8
   storageClass: standard
   loadBalancer:
     type: none

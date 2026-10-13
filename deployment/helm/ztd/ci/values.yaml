@@ -7,7 +7,7 @@
 # read the zone facts they need).
 zone:
   name: kind
-  kubernetesVersion: v1.35.5
+  kubernetesVersion: v1.35.8
   storageClass: standard
   loadBalancer:
     type: none
@@ -41,3 +41,11 @@ networkPolicy:
     enabled: true
   identityServer:
     enabled: true
+# OpenBao is on in the kind zone, so the CI render, the release gate's dry-run and the secrets
+# baseline cover it. Its bootstrap reaches the Kubernetes API from the management plane over the
+# kubeApi lane above, which a meshed zone has on in any case (docs/secrets.md).
+openbao:
+  enabled: true
+  server:
+    dataStorage:
+      storageClass: standard

@@ -101,6 +101,7 @@ The JavaScript packages above are pinned by exact version with integrity hashes 
 | OPA Gatekeeper (Helm chart) | 3.23.1 | Apache-2.0 | admission control with the first-party external-data provider |
 | PostgreSQL | 16.10 (test service) | PostgreSQL License | token-store integration tests |
 | OpenBao | 2.7.0 (test service) | MPL-2.0 | token-store integration tests only; its use in the demonstrator is the declared licence exception |
+| OpenBao (Helm chart `openbao`) | chart 0.28.3, server v2.5.4 | MPL-2.0 | the umbrella's X.509 key-value store when a zone turns it on ([Secrets](secrets.md)); covered by the declared licence exception |
 | Docker Distribution registry | 2.8.3 (test service) | Apache-2.0 | a local registry for signing and verification tests in CI |
 
 ## Go dependencies being added
@@ -145,7 +146,7 @@ archive is the release Istio publishes, and its charts are the same charts.
 **Upgrades.** An upgrade changes the pinned version and digest in the installer and re-reads the
 digest of every image tag in the values files (`docker buildx imagetools inspect <image>:<tag>`
 prints the index digest), then reruns `scripts/verify-mesh-identity/verify.sh`, whose record goes
-to the run directory outside the repository. The local proof runs on kind node v1.35.5 with Cilium
+to the run directory outside the repository. The local proof runs on kind node v1.35.8 with Cilium
 1.20.2; the participant clusters run Kubernetes v1.34.7 with the provider's
 Cilium 1.18.8, and the same proof is re-run there with the keep opt-in. At every Istio minor upgrade the
 [ADR-0009](adr/0009-service-mesh-mode-istio-sidecar-with-cilium.md) reopen check

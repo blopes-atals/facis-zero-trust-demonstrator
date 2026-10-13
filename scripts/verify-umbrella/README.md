@@ -4,8 +4,9 @@ Evidence for the umbrella chart (`deployment/helm/ztd`) on the local kind cluste
 `scripts/dev/kind-cilium-up.sh`. `verify.sh` installs the chart from an empty cluster, installs it again to
 show nothing changes, reads the layout back, proves with stand-in pods that a data-plane workload
 reaches nothing in the management plane except through an allow-matrix lane, switches the mesh
-mode from the sidecar baseline to the parked ambient mode and back, checks the lint and render
-guards of the CI chart gate, and tears down without leaving a plane namespace behind. It writes `evidence.md` next to itself; `evidence.md` in the repository is the
+mode from the sidecar baseline to the parked ambient mode and back, probes the management plane's
+API lane under Cilium (open from the management plane, shut from the data plane), checks the lint
+and render guards of the CI chart gate, and tears down without leaving a plane namespace behind. It writes `evidence.md` next to itself; `evidence.md` in the repository is the
 output of the last run.
 
 ```bash
