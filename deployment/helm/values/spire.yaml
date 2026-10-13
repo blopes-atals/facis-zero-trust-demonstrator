@@ -39,7 +39,8 @@ spire-server:
       image:
         # The server's install, upgrade and delete hooks. The chart's default tag follows the
         # cluster's version, so the image would change with the cluster; the pin is the kind
-        # node's version (v1.35.5), within kubectl's one-minor skew of every zone at 1.34 to 1.36.
+        # node's version when it was pinned (v1.35.5; the node runs v1.35.8 now), within kubectl's
+        # one-minor skew of every zone at 1.34 to 1.36.
         tag: "v1.35.5@sha256:ecc1c77b6d799dce39328a8622fc8ff9d089e8a85c982f264d17a7cbb85deed5"
   telemetry:
     prometheus:

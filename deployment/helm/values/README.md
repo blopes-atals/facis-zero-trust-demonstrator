@@ -23,7 +23,7 @@ plane namespace. An upgrade of a chart re-reads every digest.
 | `spire` | `spire-server.image.tag` | `ghcr.io/spiffe/spire-server:1.15.3` |
 | `spire` | `spire-server.controllerManager.image.tag` | `ghcr.io/spiffe/spire-controller-manager:0.7.0` |
 | `spire` | `spire-server.chown.image.tag` | `busybox:1.37.0-uclibc` (the datastore volume's ownership, init container) |
-| `spire` | `spire-server.tools.kubectl.image.tag` | `registry.k8s.io/kubectl:v1.35.5` (install, upgrade and delete hooks); the chart's default follows the cluster's version, so the image would change with the cluster; the pin is the kind node's version, within kubectl's one-minor skew of zones at 1.34 to 1.36 |
+| `spire` | `spire-server.tools.kubectl.image.tag` | `registry.k8s.io/kubectl:v1.35.5` (install, upgrade and delete hooks); the chart's default follows the cluster's version, so the image would change with the cluster; the pin is the kind node's version when it was pinned (the node runs v1.35.8 now), within kubectl's one-minor skew of zones at 1.34 to 1.36 |
 | `spire` | `spire-agent.image.tag` | `ghcr.io/spiffe/spire-agent:1.15.3` |
 | `spire` | `spiffe-csi-driver.image.tag` | `ghcr.io/spiffe/spiffe-csi-driver:0.2.7` |
 | `spire` | `spiffe-csi-driver.nodeDriverRegistrar.image.tag` | `registry.k8s.io/sig-storage/csi-node-driver-registrar:v2.15.0` |

@@ -147,7 +147,7 @@ archive is the release Istio publishes, and its charts are the same charts.
 digest of every image tag in the values files (`docker buildx imagetools inspect <image>:<tag>`
 prints the index digest), then reruns
 `scripts/verify-mesh-identity/verify.sh` and commits its evidence. The local proof runs on kind node
-v1.35.5 with Cilium 1.20.2. At every Istio minor upgrade the
+v1.35.8 with Cilium 1.20.2. At every Istio minor upgrade the
 [ADR-0009](adr/0009-service-mesh-mode-istio-sidecar-with-cilium.md) reopen check
 (`scripts/mesh-mode/check-upstream-state.sh`) runs alongside the proof. The SPIRE charts are
 upgraded as a pair (`spire-crds` first), because the controller-manager in `spire` is built
