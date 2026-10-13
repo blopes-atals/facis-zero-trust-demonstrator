@@ -3,7 +3,7 @@ Network-layer baseline per plane namespace: default deny in both directions, the
 intra-plane lane, (management plane only, when configured) egress to the Kubernetes API, and the
 declared opening from the meshed plane namespaces to istiod on the xDS port. With Cilium the API
 lane is a CiliumNetworkPolicy by entity (ciliumnetworkpolicy-control-planes.yaml), not the ipBlock
-form below.
+form below: Cilium does not select an API server that runs on a cluster node by its address.
 */ -}}
 {{- $cilium := .Values.cni.cilium.enabled }}
 {{- if and .Values.networkPolicy.kubeApi.enabled (not $cilium) (not .Values.networkPolicy.kubeApi.cidrs) }}

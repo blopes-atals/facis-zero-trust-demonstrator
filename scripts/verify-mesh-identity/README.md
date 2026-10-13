@@ -1,7 +1,7 @@
 # verify-mesh-identity
 
 Evidence that the mesh identities of a zone are SPIRE's, on the local kind cluster from
-`scripts/dev/kind-cilium-up.sh` (Kubernetes v1.35.5, Cilium 1.20.2 with `cni.exclusive=false`).
+`scripts/dev/kind-cilium-up.sh` (Kubernetes v1.35.8, Cilium 1.20.2 with `cni.exclusive=false`).
 `verify.sh` installs the zone from an empty cluster with `scripts/install-zone/install.sh`, twice,
 runs the stand-in pods of `fixtures/stand-ins.yaml`, proves each check below, and tears the zone
 down again. It writes `docs/evidences/mesh-identity/evidence.md` and `environment.json`; the files

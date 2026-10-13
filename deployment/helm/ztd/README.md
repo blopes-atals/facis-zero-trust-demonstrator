@@ -30,7 +30,9 @@ policies, removed with the job by its hook policy) and, only in the parked ambie
 no CRD; its Cilium policies are instances of Cilium's own CRDs and are rendered only where Cilium is
 enabled. In the sidecar baseline nothing cluster-wide beyond the namespaces and the verification
 job's role is created. Everything else is namespaced and lives in the plane namespaces, the
-control-plane namespaces included.
+control-plane namespaces included; with OpenBao on, that includes the bootstrap Job's Role (it may
+create Secrets in the management namespace and read and patch only its own) and, under Cilium, its
+CiliumNetworkPolicy to the API server.
 
 ## Cilium requirement
 
@@ -58,13 +60,24 @@ declared derogation of the preferred stack first (`docs/workload-identity.md`).
 | `networkPolicy.defaultDeny` | `true` | Default deny, ingress and egress, in every plane namespace |
 | `networkPolicy.dns.*` | kube-dns in `kube-system` | The declared DNS bypass, port 53 only |
 | `networkPolicy.intraPlane` | `true` | Pods within one plane namespace may reach each other at L3/L4 |
-| `networkPolicy.kubeApi.*` | off | Management-plane egress to the API server on `ports`; required where `mesh.mode` is not `none`. With Cilium a policy to the `kube-apiserver` entity; without, an `ipBlock` to `cidrs`, a per-zone fact |
+| `networkPolicy.kubeApi.*` | off | Management-plane egress to the API server; required where `mesh.mode` is not `none`. With Cilium a policy to the `kube-apiserver` entity on the `kubernetes` Service port 443 and on `ports` (`cidrs` recorded only); without, an `ipBlock` to `cidrs` (required) on `ports`, a per-zone fact |
 | `networkPolicy.meshControlPlane.*` | off; istiod (`app: istiod`) in `istio-system`, 15012 | Declared opening: every meshed plane namespace → istiod's xDS port (egress there, ingress in `istio-system`) |
 | `networkPolicy.controlPlaneWebhooks.*` | off; entities `kube-apiserver`, `host`, `remote-node`; istiod 15017, controller-manager 9443 | Declared opening: the API server → the admission webhooks of both control planes (Cilium, by entity) |
 | `networkPolicy.identityServer.*` | off; SPIRE server (`app.kubernetes.io/name: server`) in `spire-system`, 8081, entities `host`, `remote-node` | Declared opening: the host-networked SPIRE agents → the SPIRE server (Cilium, by entity) |
 | `allowMatrix` | the lanes of architecture §6 | Data-plane → management-plane lanes, as data (see below) |
 | `verification.enabled` | `true` | Post-install job that reads the layout back and fails the release if it is wrong |
 | `verification.image` | `curlimages/curl` by digest | Image of the verification job |
+| `openbao.enabled` | `false` | Install OpenBao (chart 0.28.3, server v2.5.4) in the management plane; on in `ci/values.yaml` |
+| `openbao.global.namespace` | `ztd-mgmt` | Must equal `planes.management.namespace`; the chart refuses to render otherwise |
+| `openbao.server.dataStorage.storageClass` | `null` | Must equal `zone.storageClass` when OpenBao is on |
+| `openbao.*` | see `values.yaml` | Passed to the upstream chart: standalone, file storage, no injector, no auth-delegator |
+| `openbaoBootstrap.image` | `curlimages/curl` by digest | Image of the bootstrap Job and the OpenBao verification hook |
+| `openbaoExternal.address` | `""` | An OpenBao the umbrella does not own; exclusive with `openbao.enabled` |
+| `openbaoExternal.verifyTokenSecret` | `""` | Secret in the management namespace with its `verify-token` |
+
+OpenBao, its bootstrap, the manual unseal after a restart and the secrets baseline are described in
+[docs/secrets.md](../../../docs/secrets.md). Install with `--wait --wait-for-jobs`: the bootstrap is a
+regular Job, and the OpenBao verification hook needs its result.
 
 The zone record has no defaults on purpose and `values.schema.json` enforces it: the chart does
 not render until a zone file states what the cluster is. `zones/` holds the zone files;
