@@ -199,7 +199,10 @@ func InitializeScenario(ctx *godog.ScenarioContext) {
 	ctx.Step(`^the plane-separation section of the architecture document$`, planes.thePlaneSeparationSectionOfTheArchitectureDocument)
 	ctx.Step(`^the plane-separation conformance check runs$`, planes.thePlaneSeparationConformanceCheckRuns)
 	ctx.Step(`^it reports no row that breaks an invariant the section states$`, planes.itReportsNoRowThatBreaksAnInvariantTheSectionStates)
-	registerAdmissionProof(ctx, os.Getenv("BDD_MODE") == "cluster-dryrun")
+	dryRun := os.Getenv("BDD_MODE") == "cluster-dryrun"
+	registerAdmissionProof(ctx, dryRun)
+	registerChartGate(ctx, dryRun)
+	registerSecretsBaseline(ctx, dryRun)
 	registerPending(ctx)
 }
 
