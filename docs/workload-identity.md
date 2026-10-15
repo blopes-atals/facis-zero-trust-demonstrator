@@ -108,16 +108,20 @@ directions. It reads the entries once (`spire-server entry show`), then the pods
 a plane namespace, and every pod of any other namespace that has an `istio-proxy` container or a
 `csi.spiffe.io` volume, so that a certificate outside a plane cannot hide. The certificate in use is
 read from a meshed pod's proxy (`istioctl proxy-config secret`, its `default` secret) and from an
-unmeshed pod's Workload API client over the mounted socket (`spire-agent api fetch x509`). Each
+unmeshed pod's Workload API client over the mounted socket (`spire-agent api fetch x509`). A reader
+that ran and failed (the read errors or times out) is a failed check of its own, never taken for a
+pod without a certificate; a reader whose container is not running reads nothing, as nothing is in
+use. There is no floor on how many entries are matched: a zone whose entries nothing holds, or that
+has none, passes. Each
 entry is set next to the pod its `k8s:pod-uid` selector names and the certificate read from that
 pod, with one outcome:
 
 | Outcome | Condition | Fails the run |
 |---|---|---|
 | matched | the pod runs in a plane namespace with the identity label, and its certificate in use carries the entry's SPIFFE ID and chains to the SPIRE CA | no |
-| entry without a certificate in use | the pod is gone, or runs without a certificate the proof can read (no proxy and no Workload API client: not observable from outside) | no; the record names the reason |
+| entry without a certificate in use | the pod is gone, or runs without a certificate the proof can read (its proxy or client answers that it holds none or is not running, or it has neither: not observable from outside) | no; the record names the reason (a read that failed is its own failed check) |
 | entry outside a plane namespace | the entry's namespace carries no plane label | yes |
-| entry not created by the registration rule | no `k8s:pod-uid` selector or a selector the rule does not write, a pod without the identity label, a parent other than the SPIRE agent of the pod's node, or a SPIFFE ID other than `/ns/<namespace>/sa/<service account>` of that pod | yes |
+| entry not created by the registration rule | no `k8s:pod-uid` selector or a selector the rule does not write, a field the rule leaves unset (admin, downstream, DNS names, federation, hint, store, TTLs, expiry), a pod without the identity label, a parent other than the SPIRE agent of the pod's node, a SPIFFE ID other than `/ns/<namespace>/sa/<service account>` of that pod, or a namespace that cannot be told (no pod, no `k8s:ns` selector, an ID not of the template's shape) | yes |
 
 Then, the other way round, every certificate read from the pods: a **certificate without an
 entry** (no entry of its own pod lists its SPIFFE ID), a **certificate outside a plane namespace**,
@@ -137,7 +141,12 @@ SPIRE agent of the node that pod runs on (`/spire/agent/k8s_psat/<cluster>/<node
 SPIFFE ID is the rule's template for that pod's namespace and service account. The
 controller-manager writes exactly that shape: one `k8s:pod-uid` selector per entry, no `k8s:ns` or
 `k8s:sa` (a `k8s:ns` or `k8s:sa` selector that names another namespace or service account than the
-pod's is reported). A `spire-server entry create` by hand that matched it
+pod's is reported), and none of the fields the `ClusterSPIFFEID` of `zone-policy` leaves unset:
+`admin`, `downstream`, `dns_names`, `federates_with`, `hint`, `store_svid`, the X.509 and JWT TTLs
+and `expires_at`. An entry that sets one of them, a downstream or admin entry above all, is
+reported whatever its selectors and ID; a change to the `ClusterSPIFFEID` that sets one changes
+this rule with it. An entry whose pod is gone is still checked for the template's shape of its
+ID and for a parent that is the SPIRE agent of a node of the cluster. A `spire-server entry create` by hand that matched it
 would be indistinguishable and harmless; any other hand-made entry is reported and fails the run.
 Entries are never created by hand: a missing one is a missing label.
 

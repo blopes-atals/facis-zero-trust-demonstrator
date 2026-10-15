@@ -300,24 +300,40 @@ metric() {
 # proxy_cert <ns> <pod> <out.pem>: the leaf of the certificate in use by the pod's proxy (its
 # 'default' secret), read with istioctl proxy-config secret as section 8 does; a proxy istioctl
 # cannot reach (a pod that is not Running cannot be port-forwarded to) is read through its own admin
-# endpoint instead, as section 9 does. Status 0 when a certificate was written.
+# endpoint instead, as section 9 does. Status 0 when a certificate was written; 1 when the proxy
+# answered and holds no 'default' certificate; 2 when neither read answered, with the first line of
+# the error in <out.pem>.err. A read that fails is never taken for a proxy without a certificate.
 proxy_cert() {
   local raw
-  raw=$(timeout 60 istioctl --context "$CONTEXT" proxy-config secret "$2" -n "$1" -o json 2>/dev/null) \
-    || raw=$(k --request-timeout=60s -n "$1" exec "$2" -c istio-proxy -- pilot-agent request GET 'config_dump?resource=dynamic_active_secrets' 2>/dev/null)
+  rm -f "$3" "$3.err"
+  raw=$(timeout 60 istioctl --context "$CONTEXT" proxy-config secret "$2" -n "$1" -o json 2>/dev/null) && jq -e 'type == "object"' <<<"$raw" >/dev/null 2>&1 \
+    || raw=$(k --request-timeout=60s -n "$1" exec "$2" -c istio-proxy -- pilot-agent request GET 'config_dump?resource=dynamic_active_secrets' 2>"$3.err")
+  if ! jq -e 'type == "object"' <<<"$raw" >/dev/null 2>&1; then
+    { grep -v '^$' "$3.err" 2>/dev/null | head -1 | grep . || echo "neither istioctl proxy-config secret nor the proxy's admin endpoint answered (60 s each)"; } >"$3.err.1"
+    mv "$3.err.1" "$3.err"; return 2
+  fi
+  rm -f "$3.err"
   jq -r '(.dynamicActiveSecrets // .configs // [])[]? | select(.name == "default") | .secret
     | (.tlsCertificate.certificateChain.inlineBytes // .tls_certificate.certificate_chain.inline_bytes) // empty' <<<"$raw" 2>/dev/null \
-    | head -1 | base64 -d 2>/dev/null | openssl x509 -out "$3" 2>/dev/null && [ -s "$3" ]
+    | head -1 | base64 -d 2>/dev/null | openssl x509 -out "$3" 2>/dev/null && [ -s "$3" ] && return 0
+  rm -f "$3"; return 1
 }
 # socket_cert <ns> <pod> <container> <socket dir> <out.pem>: the leaf of the SVID the pod's Workload
 # API client fetches over the mounted socket, as section 6 does; the JSON, which carries the private
-# key, is dropped at once. Status 0 when a certificate was written.
+# key, is dropped at once. Status 0 when a certificate was written; 1 when the agent answered that it
+# issued no identity to the pod (PermissionDenied, as for section 6's unlabelled pod); 2 when the
+# read failed otherwise, with the first line of the error in <out.pem>.err.
 socket_cert() {
   local json
-  json=$(k --request-timeout=60s -n "$1" exec "$2" -c "$3" -- /opt/spire/bin/spire-agent api fetch x509 -socketPath "$4/socket" -timeout 5s -output json 2>/dev/null)
+  rm -f "$5" "$5.err"
+  json=$(k --request-timeout=60s -n "$1" exec "$2" -c "$3" -- /opt/spire/bin/spire-agent api fetch x509 -socketPath "$4/socket" -timeout 5s -output json 2>"$5.err")
   jq -r '.svids[0].x509_svid // empty' <<<"$json" 2>/dev/null | base64 -d 2>/dev/null | openssl x509 -inform DER -out "$5" 2>/dev/null
   json=""
-  [ -s "$5" ]
+  if [ -s "$5" ]; then rm -f "$5.err"; return 0; fi
+  rm -f "$5"
+  if grep -q 'PermissionDenied desc = no identity issued' "$5.err" 2>/dev/null; then rm -f "$5.err"; return 1; fi
+  { grep -v -e '^$' -e '^command terminated' "$5.err" 2>/dev/null | tail -1 | grep . || echo "the fetch over the socket returned no SVID and no reason"; } >"$5.err.1"
+  mv "$5.err.1" "$5.err"; return 2
 }
 # cert_uri <pem>: the SPIFFE URI SAN of a certificate
 cert_uri() { openssl x509 -noout -ext subjectAltName -in "$1" 2>/dev/null | grep -o 'URI:spiffe://[^,]*' | head -1 | sed 's/^URI://'; }
@@ -991,20 +1007,22 @@ st=$(h status zone-policy -n "$ISTIO_NS" -o json | jq -r .info.status)
 
 # --------------------------------------------------------------------------------------------
 section "14. registration-inventory"
-say "A declared workload is a pod that runs in a plane namespace (one with the label \`ztd.facis.io/plane\`) and holds a SPIFFE certificate. The inventory is the set of registration entries on the SPIRE server. Both are read here from the live zone and compared by SPIFFE ID, in both directions; nothing is declared by a written list or by what the charts render. The entries are read once (\`spire-server entry show\`), then the pods once: every pod of a plane namespace, and every pod of any other namespace that has an \`istio-proxy\` container or a \`csi.spiffe.io\` volume, so that a certificate outside a plane cannot hide. The certificate in use is read from a meshed pod's proxy (\`istioctl proxy-config secret\`, its \`default\` secret) and from an unmeshed pod's Workload API client over the mounted socket (\`spire-agent api fetch x509\`); a pod with neither is not observable from outside." ''
-say "Outcomes of an entry: **matched** (its pod runs in a plane namespace with the identity label and the certificate read from it carries the entry's ID and chains to the SPIRE CA); **entry without a certificate in use** (the pod is gone, or holds no certificate the proof can read; recorded, not failed); **entry outside a plane namespace** (failed); **entry not created by the registration rule** (failed: no \`k8s:pod-uid\` selector or a selector the rule does not write, a pod without the identity label, a parent other than the SPIRE agent of the pod's node, or an ID other than \`spiffe://$TD/ns/<namespace>/sa/<service account>\` of that pod). Then every certificate read: one that no entry of its own pod lists (**certificate without an entry**), one in a pod outside a plane namespace (**certificate outside a plane namespace**) or one that does not chain to the SPIRE CA fails, its issuer printed. Rows of the proof's own pods (service account \`stand-in\`, or a pod of \`fixtures/stand-ins.yaml\`) are marked \`fixture\`." ''
+say "A declared workload is a pod that runs in a plane namespace (one with the label \`ztd.facis.io/plane\`) and holds a SPIFFE certificate. The inventory is the set of registration entries on the SPIRE server. Both are read here from the live zone and compared by SPIFFE ID, in both directions; nothing is declared by a written list or by what the charts render. The entries are read once (\`spire-server entry show\`), then the pods once: every pod of a plane namespace, and every pod of any other namespace that has an \`istio-proxy\` container or a \`csi.spiffe.io\` volume, so that a certificate outside a plane cannot hide. The certificate in use is read from a meshed pod's proxy (\`istioctl proxy-config secret\`, its \`default\` secret) and from an unmeshed pod's Workload API client over the mounted socket (\`spire-agent api fetch x509\`); a pod with neither is not observable from outside. A reader that ran and failed (the read errors or times out) is a failed check of its own, never taken for a pod without a certificate; a reader whose container is not running reads nothing, as nothing is in use." ''
+say "Outcomes of an entry: **matched** (its pod runs in a plane namespace with the identity label and the certificate read from it carries the entry's ID and chains to the SPIRE CA); **entry without a certificate in use** (the pod is gone, or holds no certificate the proof can read; recorded, not failed); **entry outside a plane namespace** (failed); **entry not created by the registration rule** (failed: no \`k8s:pod-uid\` selector or a selector the rule does not write, a field the rule leaves unset (admin, downstream, DNS names, federation, hint, store, TTLs, expiry), a pod without the identity label, a parent other than the SPIRE agent of the pod's node, or an ID other than \`spiffe://$TD/ns/<namespace>/sa/<service account>\` of that pod; an entry whose namespace cannot be told is reported here, not as outside a plane). Then every certificate read: one that no entry of its own pod lists (**certificate without an entry**), one in a pod outside a plane namespace (**certificate outside a plane namespace**) or one that does not chain to the SPIRE CA fails, its issuer printed. Rows of the proof's own pods (service account \`stand-in\`, or a pod of \`fixtures/stand-ins.yaml\`) are marked \`fixture\`." ''
 inv=$work/inventory; rm -rf "$inv"; mkdir -p "$inv"
 spire_server entry show -output json >"$inv/entries.json" 2>"$inv/entries.err"; inv_rc=$?
 spire_server bundle show >"$inv/bundle.pem" 2>/dev/null
-k get namespaces -o json >"$inv/namespaces.json"; k get pods -A -o json >"$inv/pods.json"; k get nodes -o json >"$inv/nodes.json"
+k get namespaces -o json >"$inv/namespaces.json" 2>"$inv/k8s.err" && k get pods -A -o json >"$inv/pods.json" 2>>"$inv/k8s.err" && k get nodes -o json >"$inv/nodes.json" 2>>"$inv/k8s.err"
+check $? "registration-inventory: the namespaces, pods and nodes of the cluster are read" "$(head -1 "$inv/k8s.err" | grep . || echo "$(jq '.items | length' "$inv/namespaces.json") namespaces, $(jq '.items | length' "$inv/pods.json") pods, $(jq '.items | length' "$inv/nodes.json") nodes")"
 [ $inv_rc -eq 0 ] && jq -e '.entries | type == "array"' "$inv/entries.json" >/dev/null 2>&1
 check $? "registration-inventory: the entries on the SPIRE server are read" "$(jq '.entries | length' "$inv/entries.json" 2>/dev/null || head -1 "$inv/entries.err") entries"
 sed -e "s/__DATA__/$DATA/g" -e "s/__MGMT__/$MGMT/g" fixtures/stand-ins.yaml \
   | python3 -c 'import sys, yaml
 for d in yaml.safe_load_all(sys.stdin):
     if d and d["kind"] == "Pod": print(d["metadata"]["namespace"] + "/" + d["metadata"]["name"])' >"$inv/fixtures.txt"
-# The pods examined and their readers, one line each: <ns> <pod> proxy istio-proxy - | <ns> <pod> socket <container> <socket dir>
-python3 - "$inv/namespaces.json" "$inv/pods.json" >"$inv/readers.txt" <<'PY'
+# The pods examined and their readers, one line each, with whether the reader's container runs:
+# <ns> <pod> proxy istio-proxy - <running|stopped> | <ns> <pod> socket <container> <socket dir> <running|stopped>
+python3 - "$inv/namespaces.json" "$inv/pods.json" >"$inv/readers.txt" 2>"$inv/readers.err" <<'PY'
 import json, sys
 plane = {n["metadata"]["name"] for n in json.load(open(sys.argv[1]))["items"] if "ztd.facis.io/plane" in (n["metadata"].get("labels") or {})}
 for p in json.load(open(sys.argv[2]))["items"]:
@@ -1012,32 +1030,45 @@ for p in json.load(open(sys.argv[2]))["items"]:
     if p["status"].get("phase") in ("Succeeded", "Failed") or m.get("deletionTimestamp"):
         continue
     ctrs = (s.get("initContainers") or []) + s["containers"]
+    st = p["status"]
+    running = {c["name"] for c in (st.get("initContainerStatuses") or []) + (st.get("containerStatuses") or []) if "running" in (c.get("state") or {})}
+    up = lambda name: "running" if name in running else "stopped"
     csi = {v["name"] for v in s.get("volumes") or [] if (v.get("csi") or {}).get("driver") == "csi.spiffe.io"}
     proxy = any(c["name"] == "istio-proxy" for c in ctrs)
     if m["namespace"] not in plane and not proxy and not csi:
         continue
     if proxy:
-        print(m["namespace"], m["name"], "proxy", "istio-proxy", "-")
+        print(m["namespace"], m["name"], "proxy", "istio-proxy", "-", up("istio-proxy"))
     for c in s["containers"]:
         if c["name"] == "istio-proxy" or "spire-agent" not in c["image"]:
             continue
         for vm in c.get("volumeMounts") or []:
             if vm["name"] in csi:
-                print(m["namespace"], m["name"], "socket", c["name"], vm["mountPath"]); break
+                print(m["namespace"], m["name"], "socket", c["name"], vm["mountPath"], up(c["name"])); break
 PY
-# certs.tsv: <ns> <pod> <reader> <SPIFFE URI> <issuer> <chains to the SPIRE CA: 1|0>, one line per reader
+check $? "registration-inventory: the pods whose certificates are read are listed (every pod of a plane namespace, and every pod elsewhere with a proxy or a csi.spiffe.io volume)" "$(head -1 "$inv/readers.err" | grep . || echo "$(wc -l <"$inv/readers.txt") readers on $(cut -d' ' -f1,2 "$inv/readers.txt" | sort -u | wc -l) pods")"
+# certs.tsv, one line per reader: <ns> <pod> <reader> <status> <SPIFFE URI> <issuer> <chains to the
+# SPIRE CA: 1|0> <error>. Status: ok (a certificate was read), none (the reader answered and the pod
+# holds no certificate), stopped (the reader's container is not running, so nothing is in use and
+# nothing is read), error (the read failed: a failed check of its own, never taken for "none").
 : >"$inv/certs.tsv"
-while read -r ns pod reader ctr dir; do
-  f=$inv/cert.pem; rm -f "$f"
-  if [ "$reader" = proxy ]; then proxy_cert "$ns" "$pod" "$f"; else socket_cert "$ns" "$pod" "$ctr" "$dir" "$f"; fi
-  if [ -s "$f" ]; then
-    chains=0; openssl verify -CAfile "$inv/bundle.pem" "$f" >/dev/null 2>&1 && chains=1
-    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$ns" "$pod" "$reader" "$(cert_uri "$f")" "$(openssl x509 -noout -issuer -nameopt RFC2253 -in "$f" 2>/dev/null | sed 's/^issuer=//')" "$chains" >>"$inv/certs.tsv"
+while read -r ns pod reader ctr dir up; do
+  f=$inv/cert.pem; rm -f "$f" "$f.err"; uri=""; issuer=""; chains=0; err=""
+  if [ "$up" != running ]; then
+    st=stopped
   else
-    printf '%s\t%s\t%s\t\t\t0\n' "$ns" "$pod" "$reader" >>"$inv/certs.tsv"
+    if [ "$reader" = proxy ]; then proxy_cert "$ns" "$pod" "$f"; else socket_cert "$ns" "$pod" "$ctr" "$dir" "$f"; fi
+    case $? in
+      0) st=ok; uri=$(cert_uri "$f"); issuer=$(openssl x509 -noout -issuer -nameopt RFC2253 -in "$f" 2>/dev/null | sed 's/^issuer=//')
+         openssl verify -CAfile "$inv/bundle.pem" "$f" >/dev/null 2>&1 && chains=1
+         [ -n "$uri" ] || { st=error; err="the certificate read carries no SPIFFE URI"; };;
+      1) st=none;;
+      *) st=error; err=$(tr '\t' ' ' <"$f.err" 2>/dev/null | cut -c1-200);;
+    esac
   fi
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$ns" "$pod" "$reader" "$st" "$uri" "$issuer" "$chains" "$err" >>"$inv/certs.tsv"
 done <"$inv/readers.txt"
-rm -f "$inv/cert.pem"
+rm -f "$inv/cert.pem" "$inv/cert.pem.err"
 python3 - "$inv" "$TD" >"$inv/report.md" 2>"$inv/report.err" <<'PY'
 import json, sys
 d, td = sys.argv[1], sys.argv[2]
@@ -1051,9 +1082,9 @@ node_uid = {n["metadata"]["name"]: n["metadata"]["uid"] for n in json.load(open(
 fixtures = {l.strip() for l in open(f"{d}/fixtures.txt") if l.strip()}
 certs = []
 for line in open(f"{d}/certs.tsv"):
-    ns, pod, reader, uri, issuer, chains = line.rstrip("\n").split("\t")
-    certs.append(dict(ns=ns, pod=pod, key=f"{ns}/{pod}", reader=reader, uri=uri, issuer=issuer, chains=chains == "1"))
-readers = {c["key"] for c in certs}
+    ns, pod, reader, status, uri, issuer, chains, err = line.rstrip("\n").split("\t")
+    certs.append(dict(ns=ns, pod=pod, key=f"{ns}/{pod}", reader=reader, status=status, uri=uri if status == "ok" else "", issuer=issuer, chains=chains == "1", err=err))
+RNAME = {"proxy": "proxy", "socket": "Workload API client"}
 checks = []
 def check(ok, title, detail=""): checks.append(dict(ok=ok, title=title, detail=detail))
 plane = lambda ns: ns is not None and PLANE in nsl.get(ns, {})
@@ -1061,6 +1092,10 @@ meshed = lambda ns: nsl.get(ns, {}).get("istio-injection") == "enabled"
 sa = lambda p: p["spec"].get("serviceAccountName") or "default"
 labelled = lambda p: (p["metadata"].get("labels") or {}).get(IDENT) == "true"
 template = lambda ns, s: f"spiffe://{td}/ns/{ns}/sa/{s}"
+# The fields of an entry the registration rule (the ClusterSPIFFEID of zone-policy) leaves unset: an
+# entry that sets any of them was not written by the rule, whatever its selectors and ID.
+UNSET = ("admin", "downstream", "dns_names", "federates_with", "hint", "store_svid", "x509_svid_ttl", "jwt_svid_ttl", "expires_at")
+agent_parent = lambda parent: parent.startswith("/spire/agent/k8s_psat/") and parent.rsplit("/", 1)[-1] in node_uid.values()
 gone = lambda p: p is None or p["status"].get("phase") in ("Succeeded", "Failed")
 def fixture(key, p):
     return "fixture" if key in fixtures or (p is not None and sa(p) == "stand-in") else ""
@@ -1085,12 +1120,16 @@ for e in ents:
     uid = (sel.get("pod-uid") or [None])[0]
     p = by_uid.get(uid) if uid else None
     path = e["spiffe_id"]["path"].split("/")
-    ns = p["metadata"]["namespace"] if p else ((sel.get("ns") or [None])[0] or (path[2] if len(path) > 2 and path[1] == "ns" else None))
+    shaped = len(path) == 5 and path[0] == "" and path[1] == "ns" and path[3] == "sa" and path[2] and path[4]
+    ns = p["metadata"]["namespace"] if p else ((sel.get("ns") or [None])[0] or (path[2] if shaped else None))
     key = f"{ns}/{p['metadata']['name']}" if p else None
     podtxt = f"`{key}`" if p else ("gone" if uid else "none (no `k8s:pod-uid` selector)")
     reasons = []
     if not uid: reasons.append("no k8s:pod-uid selector")
     if other: reasons.append("selectors the rule does not write: " + ", ".join(other))
+    extra = [f for f in UNSET if e.get(f) not in (None, False, 0, "", "0", [])]
+    if extra: reasons.append("fields the rule does not write: " + ", ".join(f"{f}={json.dumps(e[f])}" for f in extra))
+    if ns is None: reasons.append("no namespace: no pod, no k8s:ns selector, and an ID not of the template's shape /ns/<namespace>/sa/<service account>")
     if p:
         if not labelled(p): reasons.append(f"the pod carries no {IDENT} label")
         if eid != template(ns, sa(p)): reasons.append(f"the ID differs from {template(ns, sa(p))}")
@@ -1098,11 +1137,21 @@ for e in ents:
         nu = node_uid.get(p["spec"].get("nodeName") or "")
         if not (parent.startswith("/spire/agent/") and nu and parent.endswith("/" + nu)):
             reasons.append(f"its parent {parent or 'none'} is not the SPIRE agent of the pod's node")
-    elif uid and sel.get("ns") and sel.get("sa") and eid != template(sel["ns"][0], sel["sa"][0]):
-        reasons.append(f"the ID differs from {template(sel['ns'][0], sel['sa'][0])}")
+    else:
+        # The pod is gone (or never existed): what can still be checked is the template's shape, the
+        # selectors against it, and a parent that is the SPIRE agent of a node of the cluster.
+        if uid and sel.get("ns") and sel.get("sa") and eid != template(sel["ns"][0], sel["sa"][0]):
+            reasons.append(f"the ID differs from {template(sel['ns'][0], sel['sa'][0])}")
+        elif ns is not None and (not shaped or e["spiffe_id"]["trust_domain"] != td):
+            reasons.append(f"the ID is not of the template's shape spiffe://{td}/ns/<namespace>/sa/<service account>")
+        if uid and not agent_parent(parent):
+            reasons.append(f"its parent {parent or 'none'} is not the SPIRE agent of a node of the cluster")
     pc = [c for c in certs if p and c["key"] == key]
-    certtxt = "; ".join(f"{c['reader']}: `{c['uri']}`" if c["uri"] else f"{c['reader']}: none" for c in pc) or "not read"
-    if not plane(ns):
+    def certcell(c):
+        if c["status"] == "ok": return f"{c['reader']}: `{c['uri']}`"
+        return f"{c['reader']}: " + {"none": "none", "stopped": "not running", "error": "**read failed**"}[c["status"]]
+    certtxt = "; ".join(certcell(c) for c in pc) or "not read"
+    if ns is not None and not plane(ns):
         outcome = "**entry outside a plane namespace**"; n["outside"] += 1
         if uid: uid_failed.setdefault(uid, set()).add(eid)
         check(False, f"registration-inventory: entry outside a plane namespace: {eid}", f"pod {key or podtxt}, namespace {ns or 'unknown'} carries no {PLANE} label" + (f"; also {'; '.join(reasons)}" if reasons else ""))
@@ -1119,8 +1168,9 @@ for e in ents:
     else:
         uid_ids.setdefault(uid, set()).add(eid)
         if not pc: why = "not observable: the pod has no proxy and no Workload API client"
-        elif p["status"].get("phase") != "Running": why = f"the pod is {p['status'].get('phase')}, no certificate read"
-        elif all(not c["uri"] for c in pc): why = "the pod holds no certificate yet"
+        elif any(c["status"] == "error" for c in pc): why = "its certificate could not be read (a failed check of its own, below)"
+        elif all(c["status"] == "stopped" for c in pc): why = f"the pod is {p['status'].get('phase')} and its " + " and ".join(RNAME[c["reader"]] for c in pc) + (" are" if len(pc) > 1 else " is") + " not running"
+        elif all(c["status"] in ("none", "stopped") for c in pc): why = "the pod holds no certificate yet"
         else: why = "the certificate read carries another ID or does not chain to the SPIRE CA"
         outcome = f"entry without a certificate in use: {why}"; n["without"] += 1
     say(f"| `{eid}` | {podtxt} | {yn(plane(ns))} ({ns or 'unknown'}) | {yn(p is not None and labelled(p)) if p else '-'} | {certtxt} | {outcome} | {fixture(key, p)} |")
@@ -1130,7 +1180,13 @@ say(f"{len(ents)} entries: {n['matched']} matched, {n['without']} without a cert
 say("")
 if n["outside"] == 0: check(True, "registration-inventory: no entry on the SPIRE server is outside a plane namespace", f"{n['outside']} outside")
 if n["rule"] == 0 and n["outside"] == 0: check(True, "registration-inventory: every entry on the SPIRE server was created by the registration rule (the k8s:pod-uid selector of a labelled pod of a plane namespace, the SPIRE agent of its node as parent, the template's ID)", f"{n['rule']} not created by the rule")
-check(n["matched"] > 0, "registration-inventory: entries are matched to the certificates their pods hold (the readers work)", f"{n['matched']} matched")
+# Every reader that ran must have answered: a read that fails is a failed check, never "no certificate".
+# There is no floor on the number matched: a zone whose entries nothing holds, or that has none, passes.
+unread = [c for c in certs if c["status"] == "error"]
+for c in unread:
+    check(False, f"registration-inventory: the certificate in use could not be read: {c['key']} ({RNAME[c['reader']]})", c["err"] or "no reason given")
+st = {k_: sum(c["status"] == k_ for c in certs) for k_ in ("ok", "none", "stopped", "error")}
+if not unread: check(True, "registration-inventory: every certificate reader that ran answered (a read that fails is a failed check, not a pod without a certificate)", f"{len(certs)} readers: {st['ok']} certificates read, {st['none']} answered with none, {st['stopped']} not running, {st['error']} failed")
 # The other direction: every certificate read, against the entries of its own pod
 say("### The certificates in use")
 say("")
@@ -1138,8 +1194,11 @@ say("| pod | reader | SPIFFE ID | issuer | outcome | |")
 say("|---|---|---|---|---|---|")
 bad, failed = 0, {}  # one failed check per pod, SPIFFE ID and outcome, whichever readers saw it
 for c in certs:
-    if not c["uri"]: continue
     p = by_key.get(c["key"])
+    if c["status"] == "error":
+        say(f"| `{c['key']}` | {c['reader']} | - | - | **could not be read** (a failed check of its own): {c['err']} | {fixture(c['key'], p)} |")
+        continue
+    if not c["uri"]: continue
     if not plane(c["ns"]):
         outcome, title, why = "**certificate outside a plane namespace**", "certificate outside a plane namespace", f"namespace {c['ns']} carries no {PLANE} label"
     elif p is not None and c["uri"] not in uid_ids.get(p["metadata"]["uid"], set()) and c["uri"] in uid_failed.get(p["metadata"]["uid"], set()):
@@ -1154,10 +1213,10 @@ for c in certs:
         bad += 1
     if title:
         f = failed.setdefault((c["key"], c["uri"], title), dict(readers=[], issuer=c["issuer"], why=why))
-        f["readers"].append({"proxy": "proxy", "socket": "Workload API client"}[c["reader"]])
+        f["readers"].append(RNAME[c["reader"]])
     say(f"| `{c['key']}` | {c['reader']} | `{c['uri']}` | {c['issuer']} | {outcome} | {fixture(c['key'], p)} |")
 held = [c for c in certs if c["uri"]]
-if not held: say("| none | | | | | |")
+if not held and not unread: say("| none | | | | | |")
 say("")
 for (key, uri, title), f in failed.items():
     check(False, f"registration-inventory: {title}: {uri}", f"pod {key} (read from its {' and '.join(f['readers'])}): {f['why']}; issuer {f['issuer']}")
@@ -1175,8 +1234,11 @@ say("")
 for p in work_pods:
     key = p["metadata"]["namespace"] + "/" + p["metadata"]["name"]
     labels = ", ".join(f"{k}={v}" for k, v in sorted((p["metadata"].get("labels") or {}).items())) or "none"
-    rs = sorted({c["reader"] for c in certs if c["key"] == key})
-    why = "no proxy and no Workload API client" if not rs else "no certificate read from its " + " or ".join({"proxy": "proxy", "socket": "Workload API client"}[r] for r in rs)
+    pcs = [c for c in certs if c["key"] == key]
+    if not pcs: why = "no proxy and no Workload API client"
+    elif any(c["status"] == "error" for c in pcs): why = "its " + " or ".join(RNAME[c["reader"]] for c in pcs if c["status"] == "error") + " could not be read (a failed check above)"
+    elif all(c["status"] == "stopped" for c in pcs): why = "its " + " and ".join(RNAME[c["reader"]] for c in pcs) + (" are" if len(pcs) > 1 else " is") + " not running"
+    else: why = "no certificate held by its " + " or ".join(RNAME[c["reader"]] for c in pcs)
     say(f"- `{key}` ({why}; labels: {labels}){' fixture' if fixture(key, p) else ''}")
 if not work_pods: say("- none in a namespace with the injection label")
 if cp_pods:
@@ -1322,16 +1384,30 @@ else
     [ -z "$entries" ] && break; sleep 2
   done
   # The certificates in use by the proxies of the plane namespaces (section 14's reader): none may
-  # carry a stand-in identity.
+  # carry a stand-in identity. A listing or a read that fails is reported as a leftover, never
+  # taken for none, so the zone is not kept on a read that could not look; a proxy whose container
+  # is not running holds no certificate in use and is not read.
   certs_left=""
-  while read -r ns pod; do
-    proxy_cert "$ns" "$pod" "$work/left-cert.pem" || continue
-    u=$(cert_uri "$work/left-cert.pem"); [[ $u == */sa/stand-in ]] && certs_left="$certs_left $ns/$pod=$u"
-  done < <(k get pods -A -o json 2>/dev/null | jq -r --argjson ns "$(k get ns -l ztd.facis.io/plane -o json | jq -c '[.items[].metadata.name]')" \
-    '.items[] | select(.metadata.namespace as $n | $ns | index($n)) | select([(.spec.initContainers // [])[].name, .spec.containers[].name] | index("istio-proxy")) | "\(.metadata.namespace) \(.metadata.name)"')
-  rm -f "$work/left-cert.pem"; certs_left=${certs_left# }
+  if plane_ns=$(k get ns -l ztd.facis.io/plane -o json 2>/dev/null | jq -ec '[.items[].metadata.name]') \
+     && plane_pods=$(k get pods -A -o json 2>/dev/null | jq -er --argjson ns "$plane_ns" '[.items[] | select(.metadata.namespace as $n | $ns | index($n))
+          | select(.metadata.deletionTimestamp == null and .status.phase != "Succeeded" and .status.phase != "Failed")
+          | select([(.spec.initContainers // [])[].name, .spec.containers[].name] | index("istio-proxy"))
+          | "\(.metadata.namespace) \(.metadata.name) \(if [(.status.initContainerStatuses // [])[], (.status.containerStatuses // [])[] | select(.name == "istio-proxy" and .state.running)] | length > 0 then "running" else "stopped" end)"] | join("\n")'); then
+    while read -r ns pod up; do
+      if [ -z "$ns" ] || [ "$up" != running ]; then continue; fi
+      proxy_cert "$ns" "$pod" "$work/left-cert.pem"
+      case $? in
+        0) u=$(cert_uri "$work/left-cert.pem"); [[ $u == */sa/stand-in ]] && certs_left="$certs_left $ns/$pod=$u";;
+        1) ;;
+        *) certs_left="$certs_left $ns/$pod=unread($(cat "$work/left-cert.pem.err" 2>/dev/null))";;
+      esac
+    done <<<"$plane_pods"
+  else
+    certs_left="the plane namespaces or their pods could not be listed"
+  fi
+  rm -f "$work/left-cert.pem" "$work/left-cert.pem.err"; certs_left=${certs_left# }
   [ -z "$left" ] && [ -z "$entries" ] && [ -z "$certs_left" ]
-  check $? "nothing of the proof's fixtures stays in the zone: no stand-in pod, Service or ServiceAccount in either plane, no per-node SVID stand-in and no stand-in ServiceAccount in $SPIRE_NS, no kube-public pod, no scratch namespace, no SPIRE entry for a stand-in identity, and no proxy of a plane namespace holding a certificate for one" "left: $(tr '\n' ' ' <<<"${left:-none}"); stand-in entries: ${entries:-none}; stand-in certificates: ${certs_left:-none}"
+  check $? "nothing of the proof's fixtures stays in the zone: no stand-in pod, Service or ServiceAccount in either plane, no per-node SVID stand-in and no stand-in ServiceAccount in $SPIRE_NS, no kube-public pod, no scratch namespace, no SPIRE entry for a stand-in identity, and no proxy of a plane namespace holding a certificate for one (every running proxy read)" "left: $(tr '\n' ' ' <<<"${left:-none}"); stand-in entries: ${entries:-none}; stand-in certificates: ${certs_left:-none}"
   code "$(k -n "$SPIRE_NS" get pods -o wide | sed 's/  */ /g')"
   server_td=$(k -n "$SPIRE_NS" get cm spire-server -o jsonpath='{.data.server\.conf}' | jq -r .server.trust_domain)
   td_note="final"; [[ $server_td == *.trust.invalid ]] && td_note="interim"

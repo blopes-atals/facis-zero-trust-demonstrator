@@ -65,15 +65,20 @@ it is what it was before.
   `istio-proxy` container or a `csi.spiffe.io` volume), and reads each pod's certificate in use: from
   its proxy (`istioctl proxy-config secret`, the `default` secret; through the proxy's own admin
   endpoint when the pod is not Running) and from an unmeshed Workload API client over the mounted
-  socket (`spire-agent api fetch x509`). First a table of the entries: SPIFFE ID, the pod its
+  socket (`spire-agent api fetch x509`). A reader that ran and failed (the read errors or times
+  out) is one failed check of its own, never taken for a pod without a certificate; a reader whose
+  container is not running reads nothing; there is no floor on the number matched, so a zone whose
+  entries nothing holds, or that has none, passes. First a table of the entries: SPIFFE ID, the pod its
   `k8s:pod-uid` names, whether its namespace carries the plane label and the pod the identity
   label, the certificate read, and one outcome: **matched**; **entry without a certificate in use**
   (the pod is gone, or holds no certificate the proof can read; recorded with the reason, not
   failed); **entry outside a plane namespace** (one failed check); **entry not created by the
   registration rule** (one failed check: no `k8s:pod-uid` selector or a selector the rule does not
-  write, a pod without the identity label, a parent other than the SPIRE agent of the pod's node,
-  or an ID other than `/ns/<namespace>/sa/<service account>` of that pod; the controller-manager
-  writes one `k8s:pod-uid` selector per entry). Then the reverse list, every certificate read, with its issuer: one that no entry of its own
+  write, a field the rule leaves unset (`admin`, `downstream`, `dns_names`, `federates_with`,
+  `hint`, `store_svid`, the TTLs, `expires_at`), a pod without the identity label, a parent other
+  than the SPIRE agent of the pod's node, or an ID other than `/ns/<namespace>/sa/<service
+  account>` of that pod; an entry whose namespace cannot be told is reported here, not as outside
+  a plane; the controller-manager writes one `k8s:pod-uid` selector per entry). Then the reverse list, every certificate read, with its issuer: one that no entry of its own
   pod lists (**certificate without an entry**), one outside a plane namespace (**certificate outside
   a plane namespace**) or one that does not chain to the SPIRE CA is one failed check each. Last,
   **plane pods without an identity**: every pod of a plane namespace from which no certificate was
@@ -91,7 +96,9 @@ it is what it was before.
   controller-manager 8082, the agents on each node's loopback), nothing of the proof's fixtures left
   (no stand-in pod, Service or ServiceAccount in either plane or in `spire-system`, no `kube-public`
   pod, no scratch namespace, no SPIRE entry for a stand-in identity and no proxy of a plane
-  namespace holding a certificate for one: `stand-in entries: none; stand-in certificates: none`),
+  namespace holding a certificate for one: `stand-in entries: none; stand-in certificates: none`;
+  every running proxy is read, and a listing or a read that fails is reported there, not taken for
+  none),
   the trust domain in use
   (marked interim when it ends in `.trust.invalid`), and the pin with its limitation: the mesh is
   proven node-locally on these clusters, cross-node meshed traffic is not, until the provider
