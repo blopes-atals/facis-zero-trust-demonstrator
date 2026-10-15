@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# scenario: workload-identity / The certificates in use all have entries
+# level: L1
+# requirement: Every SPIFFE certificate in use in the zone has its entry and sits in a plane namespace
+export PYTHONPATH="$(dirname "$0")${PYTHONPATH:+:$PYTHONPATH}"
+exec python3 - <<'PYEOF'
+from inv_lib import *
+
+z = Zone(); z.namespace("data")
+u1 = z.pod("data", "meshed", sa="m"); u2 = z.pod("data", "unmeshed", sa="u")
+z.entry("/ns/data/sa/m", u1); z.entry("/ns/data/sa/u", u2)
+z.cert("data", "meshed", f"spiffe://{TD}/ns/data/sa/m", reader="proxy")
+z.cert("data", "unmeshed", f"spiffe://{TD}/ns/data/sa/u", reader="socket")
+rep, ch = z.run(); show(rep, ch)
+expect(not failed(ch), "no failure expected")
+sect = rep.split("### The certificates in use")[1].split("###")[0]
+rows = [l for l in sect.splitlines() if l.startswith("| `")]
+expect(len(rows) == 2 and all("| matched |" in l for l in rows), f"each certificate must be matched: {rows}")
+print("2 certificates listed, each matched")
+PYEOF

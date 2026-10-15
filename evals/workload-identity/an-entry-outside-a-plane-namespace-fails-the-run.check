@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# scenario: workload-identity / An entry outside a plane namespace fails the run
+# level: L1
+# requirement: The proof records the registration inventory by SPIFFE ID
+export PYTHONPATH="$(dirname "$0")${PYTHONPATH:+:$PYTHONPATH}"
+exec python3 - <<'PYEOF'
+from inv_lib import *
+
+z = Zone(); z.namespace("scratch", plane=False)
+u = z.pod("scratch", "p", sa="p")
+z.entry("/ns/scratch/sa/p", u); z.cert("scratch", "p", f"spiffe://{TD}/ns/scratch/sa/p")
+rep, ch = z.run(); show(rep, ch)
+r = row(rep, "/ns/scratch/sa/p")
+expect(any("entry outside a plane namespace" in x for x in r), "outcome entry outside a plane namespace missing")
+expect(any("entry outside a plane namespace" in c["title"] for c in failed(ch)), "a failed check must be added")
+print("outcome printed and failure count increased")
+PYEOF

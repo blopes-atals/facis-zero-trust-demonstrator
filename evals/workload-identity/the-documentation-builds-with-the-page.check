@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# scenario: workload-identity / The documentation builds with the page
+# level: L1
+# requirement: The identity path is documented
+cd "$EVAL_ROOT" || exit 1
+grep -q 'workload-identity.md' mkdocs.yml || { echo "docs/workload-identity.md not in the mkdocs nav"; exit 1; }
+out=$(mkdocs build --strict -d "$EVAL_TMP/site" 2>&1); rc=$?
+echo "$out" | tail -15
+[ $rc -eq 0 ] || { echo "expected exit 0, got $rc"; exit 1; }
+echo "build exit 0, page in nav"

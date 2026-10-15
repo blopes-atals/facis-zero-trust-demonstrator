@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# scenario: workload-identity / A hand-made entry fails the run
+# level: L1
+# requirement: Every entry on the server was created by the registration rule
+export PYTHONPATH="$(dirname "$0")${PYTHONPATH:+:$PYTHONPATH}"
+exec python3 - <<'PYEOF'
+from inv_lib import *
+
+variants = {}
+def base():
+    z = Zone(); z.namespace("data"); return z
+# 1. no pod selector
+z = base(); z.entry("/ns/data/sa/manual", selectors=[{"type": "unix", "value": "uid:0"}])
+variants["no pod selector"] = z
+# 2. names a pod that is not labelled
+z = base(); u = z.pod("data", "unl", sa="unl", labelled=False); z.entry("/ns/data/sa/unl", u)
+variants["pod not labelled"] = z
+# 3. SPIFFE ID differs from the template
+z = base(); u = z.pod("data", "w", sa="w"); z.entry("/ns/data/sa/wrong", u)
+variants["ID differs from template"] = z
+bad = 0
+for name, z in variants.items():
+    rep, ch = z.run()
+    rows = [l for l in rep.splitlines() if l.startswith("|") and "not created by the registration rule" in l]
+    f = [c for c in failed(ch) if "not created by the registration rule" in c["title"]]
+    print(f"{name}: rows={len(rows)} failed checks={len(f)}")
+    if not rows or not f: bad += 1; show(rep, ch)
+expect(bad == 0, f"{bad} variant(s) not reported as not created by the registration rule with a failure")
+PYEOF

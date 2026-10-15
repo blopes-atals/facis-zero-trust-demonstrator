@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# scenario: workload-identity / A certificate without an entry fails the run
+# level: L1
+# requirement: Every SPIFFE certificate in use in the zone has its entry and sits in a plane namespace
+export PYTHONPATH="$(dirname "$0")${PYTHONPATH:+:$PYTHONPATH}"
+exec python3 - <<'PYEOF'
+from inv_lib import *
+
+z = Zone(); z.namespace("data")
+z.pod("data", "rogue", sa="rogue")
+z.cert("data", "rogue", f"spiffe://{TD}/ns/data/sa/rogue")
+rep, ch = z.run(); show(rep, ch)
+expect("certificate without an entry" in rep, "record must print certificate without an entry")
+expect(any("certificate without an entry" in c["title"] for c in failed(ch)), "failure count must increase")
+print("reported and failed")
+PYEOF
