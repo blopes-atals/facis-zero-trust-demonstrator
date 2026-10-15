@@ -335,6 +335,14 @@ socket_cert() {
   { grep -v -e '^$' -e '^command terminated' "$5.err" 2>/dev/null | tail -1 | grep . || echo "the fetch over the socket returned no SVID and no reason"; } >"$5.err.1"
   mv "$5.err.1" "$5.err"; return 2
 }
+# pod_gone <ns> <pod> <uid>: status 0 when the pod listed with <uid> no longer exists (not found, or
+# its name now belongs to a pod with another uid), so a read that failed met a pod deleted after the
+# listing; status 1 when the pod still exists or the lookup itself failed, so the failed read stands.
+pod_gone() {
+  local now
+  now=$(k --request-timeout=30s -n "$1" get pod "$2" --ignore-not-found -o jsonpath='{.metadata.uid}' 2>/dev/null) || return 1
+  [ "$now" != "$3" ]
+}
 # cert_uri <pem>: the SPIFFE URI SAN of a certificate
 cert_uri() { openssl x509 -noout -ext subjectAltName -in "$1" 2>/dev/null | grep -o 'URI:spiffe://[^,]*' | head -1 | sed 's/^URI://'; }
 # The pin of a participant cluster (see the header): PIN_NODE is istiod's node once section 5 read it;
@@ -1007,7 +1015,7 @@ st=$(h status zone-policy -n "$ISTIO_NS" -o json | jq -r .info.status)
 
 # --------------------------------------------------------------------------------------------
 section "14. registration-inventory"
-say "A declared workload is a pod that runs in a plane namespace (one with the label \`ztd.facis.io/plane\`) and holds a SPIFFE certificate. The inventory is the set of registration entries on the SPIRE server. Both are read here from the live zone and compared by SPIFFE ID, in both directions; nothing is declared by a written list or by what the charts render. The entries are read once (\`spire-server entry show\`), then the pods once: every pod of a plane namespace, and every pod of any other namespace that has an \`istio-proxy\` container or a \`csi.spiffe.io\` volume, so that a certificate outside a plane cannot hide. The certificate in use is read from a meshed pod's proxy (\`istioctl proxy-config secret\`, its \`default\` secret) and from an unmeshed pod's Workload API client over the mounted socket (\`spire-agent api fetch x509\`); a pod with neither is not observable from outside. A reader that ran and failed (the read errors or times out) is a failed check of its own, never taken for a pod without a certificate; a reader whose container is not running reads nothing, as nothing is in use." ''
+say "A declared workload is a pod that runs in a plane namespace (one with the label \`ztd.facis.io/plane\`) and holds a SPIFFE certificate. The inventory is the set of registration entries on the SPIRE server. Both are read here from the live zone and compared by SPIFFE ID, in both directions; nothing is declared by a written list or by what the charts render. The entries are read once (\`spire-server entry show\`), then the pods once: every pod of a plane namespace, and every pod of any other namespace that has an \`istio-proxy\` container or a \`csi.spiffe.io\` volume, so that a certificate outside a plane cannot hide. The certificate in use is read from a meshed pod's proxy (\`istioctl proxy-config secret\`, its \`default\` secret) and from an unmeshed pod's Workload API client over the mounted socket (\`spire-agent api fetch x509\`); a pod with neither is not observable from outside. A reader that ran and failed (the read errors or times out) is a failed check of its own, never taken for a pod without a certificate, unless the pod, looked up again by name and uid, no longer exists (deleted after the listing: its entry is then one without a certificate in use, the pod is gone); a reader whose container is not running reads nothing, as nothing is in use." ''
 say "Outcomes of an entry: **matched** (its pod runs in a plane namespace with the identity label and the certificate read from it carries the entry's ID and chains to the SPIRE CA); **entry without a certificate in use** (the pod is gone, or holds no certificate the proof can read; recorded, not failed); **entry outside a plane namespace** (failed); **entry not created by the registration rule** (failed: no \`k8s:pod-uid\` selector or a selector the rule does not write, a field the rule leaves unset (admin, downstream, DNS names, federation, hint, store, TTLs, expiry), a pod without the identity label, a parent other than the SPIRE agent of the pod's node, or an ID other than \`spiffe://$TD/ns/<namespace>/sa/<service account>\` of that pod; an entry whose namespace cannot be told is reported here, not as outside a plane). Then every certificate read: one that no entry of its own pod lists (**certificate without an entry**), one in a pod outside a plane namespace (**certificate outside a plane namespace**) or one that does not chain to the SPIRE CA fails, its issuer printed. Rows of the proof's own pods (service account \`stand-in\`, or a pod of \`fixtures/stand-ins.yaml\`) are marked \`fixture\`." ''
 inv=$work/inventory; rm -rf "$inv"; mkdir -p "$inv"
 spire_server entry show -output json >"$inv/entries.json" 2>"$inv/entries.err"; inv_rc=$?
@@ -1021,7 +1029,7 @@ sed -e "s/__DATA__/$DATA/g" -e "s/__MGMT__/$MGMT/g" fixtures/stand-ins.yaml \
 for d in yaml.safe_load_all(sys.stdin):
     if d and d["kind"] == "Pod": print(d["metadata"]["namespace"] + "/" + d["metadata"]["name"])' >"$inv/fixtures.txt"
 # The pods examined and their readers, one line each, with whether the reader's container runs:
-# <ns> <pod> proxy istio-proxy - <running|stopped> | <ns> <pod> socket <container> <socket dir> <running|stopped>
+# <ns> <pod> proxy istio-proxy - <running|stopped> <uid> | <ns> <pod> socket <container> <socket dir> <running|stopped> <uid>
 python3 - "$inv/namespaces.json" "$inv/pods.json" >"$inv/readers.txt" 2>"$inv/readers.err" <<'PY'
 import json, sys
 plane = {n["metadata"]["name"] for n in json.load(open(sys.argv[1]))["items"] if "ztd.facis.io/plane" in (n["metadata"].get("labels") or {})}
@@ -1038,21 +1046,24 @@ for p in json.load(open(sys.argv[2]))["items"]:
     if m["namespace"] not in plane and not proxy and not csi:
         continue
     if proxy:
-        print(m["namespace"], m["name"], "proxy", "istio-proxy", "-", up("istio-proxy"))
+        print(m["namespace"], m["name"], "proxy", "istio-proxy", "-", up("istio-proxy"), m["uid"])
     for c in s["containers"]:
         if c["name"] == "istio-proxy" or "spire-agent" not in c["image"]:
             continue
         for vm in c.get("volumeMounts") or []:
             if vm["name"] in csi:
-                print(m["namespace"], m["name"], "socket", c["name"], vm["mountPath"], up(c["name"])); break
+                print(m["namespace"], m["name"], "socket", c["name"], vm["mountPath"], up(c["name"]), m["uid"]); break
 PY
 check $? "registration-inventory: the pods whose certificates are read are listed (every pod of a plane namespace, and every pod elsewhere with a proxy or a csi.spiffe.io volume)" "$(head -1 "$inv/readers.err" | grep . || echo "$(wc -l <"$inv/readers.txt") readers on $(cut -d' ' -f1,2 "$inv/readers.txt" | sort -u | wc -l) pods")"
 # certs.tsv, one line per reader: <ns> <pod> <reader> <status> <SPIFFE URI> <issuer> <chains to the
 # SPIRE CA: 1|0> <error>. Status: ok (a certificate was read), none (the reader answered and the pod
 # holds no certificate), stopped (the reader's container is not running, so nothing is in use and
-# nothing is read), error (the read failed: a failed check of its own, never taken for "none").
+# nothing is read), gone (the read failed and the pod, looked up again by name and uid, no longer
+# exists: deleted after the listing, so its entry is one without a certificate in use), error (the
+# read failed and the pod still exists, or could not be looked up: a failed check of its own, never
+# taken for "none").
 : >"$inv/certs.tsv"
-while read -r ns pod reader ctr dir up; do
+while read -r ns pod reader ctr dir up uid; do
   f=$inv/cert.pem; rm -f "$f" "$f.err"; uri=""; issuer=""; chains=0; err=""
   if [ "$up" != running ]; then
     st=stopped
@@ -1063,7 +1074,8 @@ while read -r ns pod reader ctr dir up; do
          openssl verify -CAfile "$inv/bundle.pem" "$f" >/dev/null 2>&1 && chains=1
          [ -n "$uri" ] || { st=error; err="the certificate read carries no SPIFFE URI"; };;
       1) st=none;;
-      *) st=error; err=$(tr '\t' ' ' <"$f.err" 2>/dev/null | cut -c1-200);;
+      *) if pod_gone "$ns" "$pod" "$uid"; then st=gone; err=""
+         else st=error; err=$(tr '\t' ' ' <"$f.err" 2>/dev/null | cut -c1-200); fi;;
     esac
   fi
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$ns" "$pod" "$reader" "$st" "$uri" "$issuer" "$chains" "$err" >>"$inv/certs.tsv"
@@ -1085,6 +1097,8 @@ for line in open(f"{d}/certs.tsv"):
     ns, pod, reader, status, uri, issuer, chains, err = line.rstrip("\n").split("\t")
     certs.append(dict(ns=ns, pod=pod, key=f"{ns}/{pod}", reader=reader, status=status, uri=uri if status == "ok" else "", issuer=issuer, chains=chains == "1", err=err))
 RNAME = {"proxy": "proxy", "socket": "Workload API client"}
+# Pods whose read failed and that, looked up again, no longer exist: deleted after the listing
+gone_since = {c["key"] for c in certs if c["status"] == "gone"}
 checks = []
 def check(ok, title, detail=""): checks.append(dict(ok=ok, title=title, detail=detail))
 plane = lambda ns: ns is not None and PLANE in nsl.get(ns, {})
@@ -1149,7 +1163,7 @@ for e in ents:
     pc = [c for c in certs if p and c["key"] == key]
     def certcell(c):
         if c["status"] == "ok": return f"{c['reader']}: `{c['uri']}`"
-        return f"{c['reader']}: " + {"none": "none", "stopped": "not running", "error": "**read failed**"}[c["status"]]
+        return f"{c['reader']}: " + {"none": "none", "stopped": "not running", "gone": "pod deleted after the listing", "error": "**read failed**"}[c["status"]]
     certtxt = "; ".join(certcell(c) for c in pc) or "not read"
     if ns is not None and not plane(ns):
         outcome = "**entry outside a plane namespace**"; n["outside"] += 1
@@ -1165,6 +1179,9 @@ for e in ents:
     elif any(c["uri"] == eid and c["chains"] for c in pc):
         uid_ids.setdefault(uid, set()).add(eid)
         outcome = "matched"; n["matched"] += 1
+    elif key in gone_since:
+        uid_ids.setdefault(uid, set()).add(eid)
+        outcome = "entry without a certificate in use: the pod is gone (deleted after the listing, before its certificate was read)"; n["without"] += 1
     else:
         uid_ids.setdefault(uid, set()).add(eid)
         if not pc: why = "not observable: the pod has no proxy and no Workload API client"
@@ -1185,8 +1202,8 @@ if n["rule"] == 0 and n["outside"] == 0: check(True, "registration-inventory: ev
 unread = [c for c in certs if c["status"] == "error"]
 for c in unread:
     check(False, f"registration-inventory: the certificate in use could not be read: {c['key']} ({RNAME[c['reader']]})", c["err"] or "no reason given")
-st = {k_: sum(c["status"] == k_ for c in certs) for k_ in ("ok", "none", "stopped", "error")}
-if not unread: check(True, "registration-inventory: every certificate reader that ran answered (a read that fails is a failed check, not a pod without a certificate)", f"{len(certs)} readers: {st['ok']} certificates read, {st['none']} answered with none, {st['stopped']} not running, {st['error']} failed")
+st = {k_: sum(c["status"] == k_ for c in certs) for k_ in ("ok", "none", "stopped", "gone", "error")}
+if not unread: check(True, "registration-inventory: every certificate reader that ran answered (a read that fails is a failed check, not a pod without a certificate)", f"{len(certs)} readers: {st['ok']} certificates read, {st['none']} answered with none, {st['stopped']} not running, {st['gone']} on a pod deleted after the listing, {st['error']} failed")
 # The other direction: every certificate read, against the entries of its own pod
 say("### The certificates in use")
 say("")
@@ -1224,7 +1241,7 @@ if bad == 0: check(True, "registration-inventory: every certificate in use read 
 # The plane pods that hold no certificate
 holders = {c["key"] for c in held}
 without = [p for p in pods if plane(p["metadata"]["namespace"]) and not gone(p) and not p["metadata"].get("deletionTimestamp")
-           and p["metadata"]["namespace"] + "/" + p["metadata"]["name"] not in holders]
+           and p["metadata"]["namespace"] + "/" + p["metadata"]["name"] not in holders | gone_since]
 work_pods = [p for p in without if meshed(p["metadata"]["namespace"])]
 cp_pods = [p for p in without if not meshed(p["metadata"]["namespace"])]
 say("### Plane pods without an identity")
@@ -1385,21 +1402,22 @@ else
   done
   # The certificates in use by the proxies of the plane namespaces (section 14's reader): none may
   # carry a stand-in identity. A listing or a read that fails is reported as a leftover, never
-  # taken for none, so the zone is not kept on a read that could not look; a proxy whose container
-  # is not running holds no certificate in use and is not read.
+  # taken for none, so the zone is not kept on a read that could not look, unless the pod, looked up
+  # again by name and uid, no longer exists (deleted after the listing); a proxy whose container is
+  # not running holds no certificate in use and is not read.
   certs_left=""
   if plane_ns=$(k get ns -l ztd.facis.io/plane -o json 2>/dev/null | jq -ec '[.items[].metadata.name]') \
      && plane_pods=$(k get pods -A -o json 2>/dev/null | jq -er --argjson ns "$plane_ns" '[.items[] | select(.metadata.namespace as $n | $ns | index($n))
           | select(.metadata.deletionTimestamp == null and .status.phase != "Succeeded" and .status.phase != "Failed")
           | select([(.spec.initContainers // [])[].name, .spec.containers[].name] | index("istio-proxy"))
-          | "\(.metadata.namespace) \(.metadata.name) \(if [(.status.initContainerStatuses // [])[], (.status.containerStatuses // [])[] | select(.name == "istio-proxy" and .state.running)] | length > 0 then "running" else "stopped" end)"] | join("\n")'); then
-    while read -r ns pod up; do
+          | "\(.metadata.namespace) \(.metadata.name) \(.metadata.uid) \(if [(.status.initContainerStatuses // [])[], (.status.containerStatuses // [])[] | select(.name == "istio-proxy" and .state.running)] | length > 0 then "running" else "stopped" end)"] | join("\n")'); then
+    while read -r ns pod uid up; do
       if [ -z "$ns" ] || [ "$up" != running ]; then continue; fi
       proxy_cert "$ns" "$pod" "$work/left-cert.pem"
       case $? in
         0) u=$(cert_uri "$work/left-cert.pem"); [[ $u == */sa/stand-in ]] && certs_left="$certs_left $ns/$pod=$u";;
         1) ;;
-        *) certs_left="$certs_left $ns/$pod=unread($(cat "$work/left-cert.pem.err" 2>/dev/null))";;
+        *) pod_gone "$ns" "$pod" "$uid" || certs_left="$certs_left $ns/$pod=unread($(cat "$work/left-cert.pem.err" 2>/dev/null))";;
       esac
     done <<<"$plane_pods"
   else

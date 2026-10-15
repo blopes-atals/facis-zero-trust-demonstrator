@@ -66,7 +66,9 @@ it is what it was before.
   its proxy (`istioctl proxy-config secret`, the `default` secret; through the proxy's own admin
   endpoint when the pod is not Running) and from an unmeshed Workload API client over the mounted
   socket (`spire-agent api fetch x509`). A reader that ran and failed (the read errors or times
-  out) is one failed check of its own, never taken for a pod without a certificate; a reader whose
+  out) is one failed check of its own, never taken for a pod without a certificate, unless the pod,
+  looked up again by name and uid, no longer exists (deleted after the listing: its entry is then
+  without a certificate in use, the pod is gone); a reader whose
   container is not running reads nothing; there is no floor on the number matched, so a zone whose
   entries nothing holds, or that has none, passes. First a table of the entries: SPIFFE ID, the pod its
   `k8s:pod-uid` names, whether its namespace carries the plane label and the pod the identity

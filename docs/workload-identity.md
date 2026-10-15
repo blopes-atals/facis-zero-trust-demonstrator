@@ -110,7 +110,9 @@ a plane namespace, and every pod of any other namespace that has an `istio-proxy
 read from a meshed pod's proxy (`istioctl proxy-config secret`, its `default` secret) and from an
 unmeshed pod's Workload API client over the mounted socket (`spire-agent api fetch x509`). A reader
 that ran and failed (the read errors or times out) is a failed check of its own, never taken for a
-pod without a certificate; a reader whose container is not running reads nothing, as nothing is in
+pod without a certificate, unless the pod, looked up again by name and uid, no longer exists: it
+was deleted after the listing, and its entry reads "without a certificate in use, the pod is gone";
+a reader whose container is not running reads nothing, as nothing is in
 use. There is no floor on how many entries are matched: a zone whose entries nothing holds, or that
 has none, passes. Each
 entry is set next to the pod its `k8s:pod-uid` selector names and the certificate read from that
@@ -119,7 +121,7 @@ pod, with one outcome:
 | Outcome | Condition | Fails the run |
 |---|---|---|
 | matched | the pod runs in a plane namespace with the identity label, and its certificate in use carries the entry's SPIFFE ID and chains to the SPIRE CA | no |
-| entry without a certificate in use | the pod is gone, or runs without a certificate the proof can read (its proxy or client answers that it holds none or is not running, or it has neither: not observable from outside) | no; the record names the reason (a read that failed is its own failed check) |
+| entry without a certificate in use | the pod is gone (also when it was deleted between the listing and its read, checked by name and uid), or runs without a certificate the proof can read (its proxy or client answers that it holds none or is not running, or it has neither: not observable from outside) | no; the record names the reason (a read that failed is its own failed check) |
 | entry outside a plane namespace | the entry's namespace carries no plane label | yes |
 | entry not created by the registration rule | no `k8s:pod-uid` selector or a selector the rule does not write, a field the rule leaves unset (admin, downstream, DNS names, federation, hint, store, TTLs, expiry), a pod without the identity label, a parent other than the SPIRE agent of the pod's node, a SPIFFE ID other than `/ns/<namespace>/sa/<service account>` of that pod, or a namespace that cannot be told (no pod, no `k8s:ns` selector, an ID not of the template's shape) | yes |
 
