@@ -44,8 +44,9 @@ class Zone:
                              "parent_id": {"trust_domain": TD, "path": parent or f"/spire/agent/k8s_psat/c/{NODE_UID}"},
                              "selectors": sel})
 
-    def cert(self, ns, pod, uri, reader="proxy", chains=True):
-        self.certs.append((ns, pod, reader, uri, "CN=SPIRE", "1" if chains else "0"))
+    def cert(self, ns, pod, uri="", reader="proxy", chains=True, status="ok", err=""):
+        # certs.tsv row: ns pod reader status uri issuer chains error (status: ok | none | stopped | error)
+        self.certs.append((ns, pod, reader, status, uri, "CN=SPIRE", "1" if chains else "0", err))
 
     def run(self):
         d = tempfile.mkdtemp(dir=os.environ.get("EVAL_TMP"))

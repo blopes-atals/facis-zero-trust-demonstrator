@@ -6,8 +6,7 @@ export PYTHONPATH="$(dirname "$0")${PYTHONPATH:+:$PYTHONPATH}"
 exec python3 - <<'PYEOF'
 from inv_lib import *
 
-# Ambiguity: read literally per entry. The zone also holds one matched entry so that the
-# section-level "readers work" sanity check (>=1 matched) does not mask the effect of the unheld entries.
+# Read literally per entry; one matched entry is kept in the zone, the unheld entries must still add no failure.
 z = Zone(); z.namespace("data")
 um = z.pod("data", "ok", sa="ok"); z.entry("/ns/data/sa/ok", um); z.cert("data", "ok", f"spiffe://{TD}/ns/data/sa/ok")
 u1 = z.pod("data", "nocert", sa="nocert")

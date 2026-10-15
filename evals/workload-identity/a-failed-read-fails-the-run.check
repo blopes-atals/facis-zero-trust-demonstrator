@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# scenario: workload-identity / A failed read fails the run
+# level: L1
+# requirement: A certificate the proof cannot read fails the run
+export PYTHONPATH="$(dirname "$0")${PYTHONPATH:+:$PYTHONPATH}"
+exec python3 - <<'PYEOF'
+from inv_lib import *
+
+for reader in ("proxy", "socket"):
+    z = Zone(); z.namespace("data")
+    u = z.pod("data", "p", sa="p"); z.entry("/ns/data/sa/p", u)
+    z.cert("data", "p", reader=reader, status="error", err="exec timed out after 60s")
+    rep, ch = z.run(); show(rep, ch)
+    f = failed(ch)
+    expect(f, f"{reader}: a failed read must add a failure")
+    expect(any("exec timed out" in c["detail"] for c in f), f"{reader}: the failure must carry the read error")
+    expect("read failed" in rep and "exec timed out" in rep, f"{reader}: the record must print the read as failed with its error")
+    r = row(rep, "/ns/data/sa/p`")
+    expect(r and "| matched" not in r[0] and " matched |" not in r[0], f"{reader}: the entry must not be counted as matched: {r}")
+print("failed reads (proxy and Workload API client) fail the run, print the error, entry not matched")
+PYEOF
