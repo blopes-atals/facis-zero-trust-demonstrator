@@ -68,8 +68,11 @@ it is what it was before.
   socket (`spire-agent api fetch x509`). A reader that ran and failed (the read errors or times
   out) is one failed check of its own, never taken for a pod without a certificate, unless the pod,
   looked up again by name and uid, no longer exists (deleted after the listing: its entry is then
-  without a certificate in use, the pod is gone); a reader whose
-  container is not running reads nothing; there is no floor on the number matched, so a zone whose
+  without a certificate in use, the pod is gone) or is terminating with the reader's container
+  stopped (recorded as not running); a reader whose container is not running reads nothing; a
+  terminating pod is read like any other while its reader runs (its containers keep running
+  through the grace period); the reader list is tab-separated with the socket's mount path last
+  and escaped, so no value a pod's author chooses can shift a field; there is no floor on the number matched, so a zone whose
   entries nothing holds, or that has none, passes. First a table of the entries: SPIFFE ID, the pod its
   `k8s:pod-uid` names, whether its namespace carries the plane label and the pod the identity
   label, the certificate read, and one outcome: **matched**; **entry without a certificate in use**
@@ -99,8 +102,9 @@ it is what it was before.
   (no stand-in pod, Service or ServiceAccount in either plane or in `spire-system`, no `kube-public`
   pod, no scratch namespace, no SPIRE entry for a stand-in identity and no proxy of a plane
   namespace holding a certificate for one: `stand-in entries: none; stand-in certificates: none`;
-  every running proxy is read, and a listing or a read that fails is reported there, not taken for
-  none),
+  every running proxy is read, terminating pods included, and a listing or a read that fails is
+  reported there, not taken for none, unless the pod is gone or terminating with its proxy
+  stopped),
   the trust domain in use
   (marked interim when it ends in `.trust.invalid`), and the pin with its limitation: the mesh is
   proven node-locally on these clusters, cross-node meshed traffic is not, until the provider

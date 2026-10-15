@@ -112,8 +112,11 @@ unmeshed pod's Workload API client over the mounted socket (`spire-agent api fet
 that ran and failed (the read errors or times out) is a failed check of its own, never taken for a
 pod without a certificate, unless the pod, looked up again by name and uid, no longer exists: it
 was deleted after the listing, and its entry reads "without a certificate in use, the pod is gone";
-a reader whose container is not running reads nothing, as nothing is in
-use. There is no floor on how many entries are matched: a zone whose entries nothing holds, or that
+a pod that is terminating with the reader's container stopped since is recorded as not running. A
+reader whose container is not running reads nothing, as nothing is in use; a terminating pod is
+read like any other while its reader runs, since its containers keep running through the grace
+period. No value a pod's author chooses, such as a mount path, can shift which pod or reader a
+read is recorded against. There is no floor on how many entries are matched: a zone whose entries nothing holds, or that
 has none, passes. Each
 entry is set next to the pod its `k8s:pod-uid` selector names and the certificate read from that
 pod, with one outcome:
