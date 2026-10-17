@@ -69,7 +69,7 @@
       "additionalProperties": false,
       "required": ["address", "verifyTokenSecret"],
       "properties": {
-        "address": { "type": "string", "pattern": "^(https?://[^\\s]+)?$", "description": "Address of an OpenBao the zone does not own; exclusive with openbao.server.enabled." },
+        "address": { "type": "string", "pattern": "^(https://[^\\s]+)?$", "description": "Address of an OpenBao the zone does not own, https only (the verification token crosses the network to it); exclusive with openbao.server.enabled." },
         "verifyTokenSecret": { "type": "string", "pattern": "^([a-z0-9]([-a-z0-9.]*[a-z0-9])?)?$", "description": "Secret in the management namespace holding the verification token (key verify-token)." }
       }
     }

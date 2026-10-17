@@ -35,7 +35,13 @@ used only by the token-store integration tests.
 
 The installer builds the upstream chart from the lock file into its cache before it renders or
 installs the release (`helm dependency build`, which refuses a lock that does not match the chart's
-dependencies), and checks the built archive's digest on every later use. It fills the release's zone
+dependencies). The lock's digest covers the list of dependencies, not the archive's contents, so the
+archive is pinned separately: its sha256 is committed in the chart's `dependencies.sha256`, and
+`scripts/ci/verify-chart-dependencies.sh` refuses an archive that differs from it, after every build
+and on every later use of the cache, as the installer refuses a SPIRE or Istio download that does
+not match its pinned digest. The chart gate (`scripts/ci/check-charts.sh`) and the secrets baseline
+run the same check after their own build. Upgrading the upstream chart changes `Chart.yaml`,
+`Chart.lock` and `dependencies.sha256` together. It fills the release's zone
 facts from the umbrella's defaults with the zone file on top: the management namespace, the zone's
 `zone.storageClass` (refused when the zone file does not state it) and the Cilium switch.
 
@@ -44,7 +50,9 @@ identity label `spiffe.io/spire-managed-identity: "true"`. Because the release i
 istiod and after the registration rule of `zone-policy`, each pod is created with the injector's
 sidecar, a SPIRE entry and an SVID: the server holds
 `spiffe://<trust domain>/ns/ztd-mgmt/sa/ztd-openbao`, the bootstrap `…/sa/ztd-openbao-bootstrap`, the
-verification hook `…/sa/default`. The server listens without TLS inside its pod; between pods the
+verification hook `…/sa/ztd-verify-openbao`, a ServiceAccount of its own that holds no role and
+mounts no API token, so that a mesh policy for OpenBao can tell the hook from any other labelled pod
+of the namespace. The server listens without TLS inside its pod; between pods the
 sidecars carry its traffic as mesh mTLS under the mesh-wide STRICT peer authentication
 ([ADR-0009](adr/0009-service-mesh-mode-istio-sidecar-with-cilium.md),
 [Workload identity](workload-identity.md)), and the plane's default deny admits only pods of the same
@@ -84,7 +92,14 @@ values, the upstream chart's included. The server's StatefulSet uses the `Rollin
 pod by hand), so an upgrade that changes the server's pod template, such as its image or resources,
 restarts the server, which comes back sealed. The same change renders a Job with a new name: Helm
 creates it, it waits for the pod of the new revision, unseals it before `--wait` gives up, and Helm
-removes the previous Job. An upgrade with the same values renders the same name, so the manifest is
+removes the previous Job. It reads the update revision only once the StatefulSet's controller has
+seen the new spec (`status.observedGeneration` at least `metadata.generation`), so it never mistakes
+the previous revision for the current one. If the server was already sealed before the upgrade (it
+restarted outside the lifecycle), the pod is not ready and the StatefulSet, which replaces only a
+ready pod, would not roll: the Job then unseals that pod of the previous revision first, the rolling
+update replaces it, and the Job unseals the new one. When it cannot (the pod does not answer, or the
+Secret is missing) it fails naming the revision it waited for and `scripts/secrets/unseal.sh`
+([Troubleshooting](troubleshooting.md)). An upgrade with the same values renders the same name, so the manifest is
 identical and no Job runs.
 
 The `ztd-verify` policy can read `sys/mounts/*`, read `secret/data/ztd-fixture/*`, use the
@@ -147,6 +162,26 @@ unseals it and finds the same fixture value. This manual step is a declared read
 uninstall need none; an automatic unseal needs a key-management backend the demonstrator does not
 operate.
 
+### Who can unseal the store
+
+The unseal key is a single share (threshold 1), and it sits, with the root token until the bootstrap
+has revoked it, in the Kubernetes Secret `ztd-openbao-bootstrap` of the management namespace. That
+is the demonstrator's decision, so that deploy, redeploy and uninstall need no operator: the key is
+protected by Kubernetes RBAC, and at rest only where the cluster encrypts Secrets in etcd, nothing more.
+Anyone who can read Secrets in the management namespace can unseal the store and, with
+`bao operator generate-root`, take it over. The charts keep that set small: the only Role that
+names Secrets there is the bootstrap's, which reads and patches `ztd-openbao-bootstrap` by name and
+may create Secrets (Kubernetes cannot limit `create` to a name); the verification hook reads its
+token from a Secret volume, holds no role and mounts no API token; no ClusterRole of the charts
+grants access to Secrets, and the upstream chart's auth-delegator binding is off. Cluster
+administrators, and any binding added outside the charts, still read the Secret.
+
+The production path removes the key from the cluster: an auto-unseal backend (a cloud KMS, an HSM
+through PKCS#11, or transit unseal against another OpenBao), as the XFSC deployment offers, or
+Shamir shares above one held by separate operators, with the root token never stored. Either
+replaces the bootstrap's key handling; the external mode above is how a zone uses such an instance
+today.
+
 ### Teardown
 
 `scripts/install-zone/install.sh uninstall` removes `ztd-openbao` first, then the other releases in
@@ -159,7 +194,9 @@ The XFSC ArgoCD deployment, which FACIS names as the reference deployment, alrea
 the same chart, 0.28.3, wrapped with selectable auto-unseal backends
 ([`eclipse-xfsc/deployment`, `INFRA/security/openbao/Chart.yaml`](https://github.com/eclipse-xfsc/deployment/blob/739606691ecff72b3a40404a19fce44d9c22b0ee/INFRA/security/openbao/Chart.yaml)).
 There the release uses that instance instead of its own: `openbao.server.enabled: false`,
-`external.address` names it and `external.verifyTokenSecret` names a Secret in the management
+`external.address` names it (`https://` only: the hook sends its token to a server outside the
+zone, which the zone's mesh does not protect, and checks the server's certificate against the
+hook image's CA bundle; the schema and the chart refuse `http://`) and `external.verifyTokenSecret` names a Secret in the management
 namespace with a `verify-token` key. Nothing is installed or initialised; only the verification hook
 runs (health, unseal state and the two engines). `openbao.server.enabled` and `external.address` are
 exclusive.

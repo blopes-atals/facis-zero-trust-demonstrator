@@ -36,6 +36,9 @@ no sidecar) under the Cilium lane below. The native sidecar exits with the boots
 {{- if and $bundled .Values.external.address }}
 {{- fail "openbao.server.enabled and external.address are exclusive: either the release installs OpenBao or it verifies an existing one" }}
 {{- end }}
+{{- if and .Values.external.address (not (hasPrefix "https://" .Values.external.address)) }}
+{{- fail "external.address must be https://: the verification hook sends its token to an OpenBao outside the zone, which the zone's mesh does not protect" }}
+{{- end }}
 {{- if and .Values.external.address (not .Values.external.verifyTokenSecret) }}
 {{- fail "external.address needs external.verifyTokenSecret, the Secret holding the verification token" }}
 {{- end }}

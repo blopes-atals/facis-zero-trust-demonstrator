@@ -312,6 +312,7 @@ jobs:
                        .get("requiredDuringSchedulingIgnoredDuringExecution") or {}).get("nodeSelectorTerms") or []
               return [v for term in terms for e in term.get("matchExpressions") or []
                       if e.get("key") == "kubernetes.io/hostname" for v in e.get("values") or []]
+          accounts = {"server": "ztd-openbao", "bootstrap": "ztd-openbao-bootstrap", "verification": "ztd-verify-openbao"}
           for zone, path, want in (("kind", sys.argv[1], []), ("zone-a", sys.argv[2], ["istiod-node-not-found"])):
               for name, t in pods(path).items():
                   label = (t["metadata"].get("labels") or {}).get("spiffe.io/spire-managed-identity")
@@ -319,7 +320,11 @@ jobs:
                       sys.exit(f"ztd-openbao render ({zone}): the {name} pod template lacks spiffe.io/spire-managed-identity: \"true\"")
                   if node_pin(t) != want:
                       sys.exit(f"ztd-openbao render ({zone}): the {name} pod template's node pin is {node_pin(t)}, not {want}")
-              print(f"ztd-openbao render ({zone}): the server and both jobs carry the identity label; node pin {want or 'none'}")
+                  # Each pod its own ServiceAccount, so each its own SPIFFE ID (none on "default").
+                  sa = t["spec"].get("serviceAccountName") or "default"
+                  if sa != accounts[name]:
+                      sys.exit(f"ztd-openbao render ({zone}): the {name} pod runs as ServiceAccount {sa}, not {accounts[name]}")
+              print(f"ztd-openbao render ({zone}): the server and both jobs carry the identity label, each with its own ServiceAccount; node pin {want or 'none'}")
           PY
           python3 - "$RUNNER_TEMP/render/istiod.yaml" <<'PY'
           import sys, yaml
