@@ -6,12 +6,17 @@
 CHART=$EVAL_ROOT/deployment/helm/ztd-openbao
 out=$(helm template ztd-openbao "$CHART" -n ztd-mgmt -f "$CHART/ci/values.yaml" --set openbao.server.enabled=false --set external.address=https://bao.example.org:8200 --set external.verifyTokenSecret=bao-token 2>&1); rc=$?
 [ $rc -eq 0 ] || { echo "$out" | head; exit 1; }
-kinds=$(python3 -c '
+# The hook is the Job plus its own ServiceAccount; both must be helm hooks, nothing else may render.
+python3 -c '
 import sys, yaml
+seen = set()
 for d in yaml.safe_load_all(sys.stdin):
-    if d: print(d["kind"], d["metadata"]["name"])' <<<"$out" | sort)
-echo "$kinds"
-n=$(grep -c . <<<"$kinds")
-echo "$kinds" | grep -q 'Job ztd-verify-openbao' || { echo "verification hook missing"; exit 1; }
-other=$(grep -v -E '^Job ztd-verify-openbao$' <<<"$kinds")
-[ -z "$other" ] || { echo "objects other than the hook: $other"; exit 1; }
+    if not d: continue
+    k = d["kind"] + " " + d["metadata"]["name"]
+    hook = (d["metadata"].get("annotations") or {}).get("helm.sh/hook")
+    print(k, "hook=" + str(hook))
+    if k not in ("Job ztd-verify-openbao", "ServiceAccount ztd-verify-openbao") or not hook:
+        print("not part of the verification hook:", k); sys.exit(1)
+    seen.add(k)
+if "Job ztd-verify-openbao" not in seen:
+    print("verification hook missing"); sys.exit(1)' <<<"$out"
