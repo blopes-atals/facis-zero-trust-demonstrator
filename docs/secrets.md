@@ -169,12 +169,27 @@ has revoked it, in the Kubernetes Secret `ztd-openbao-bootstrap` of the manageme
 is the demonstrator's decision, so that deploy, redeploy and uninstall need no operator: the key is
 protected by Kubernetes RBAC, and at rest only where the cluster encrypts Secrets in etcd, nothing more.
 Anyone who can read Secrets in the management namespace can unseal the store and, with
-`bao operator generate-root`, take it over. The charts keep that set small: the only Role that
-names Secrets there is the bootstrap's, which reads and patches `ztd-openbao-bootstrap` by name and
-may create Secrets (Kubernetes cannot limit `create` to a name); the verification hook reads its
-token from a Secret volume, holds no role and mounts no API token; no ClusterRole of the charts
-grants access to Secrets, and the upstream chart's auth-delegator binding is off. Cluster
-administrators, and any binding added outside the charts, still read the Secret.
+`bao operator generate-root`, take it over. These are the bindings of the zone's eight releases
+(read from `scripts/install-zone/install.sh render`) that reach the Secret:
+
+| Release | Binding | Grant | Reach |
+| --- | --- | --- | --- |
+| `ztd-openbao` | Role and RoleBinding `ztd-openbao-bootstrap` (ServiceAccount `ztd-openbao-bootstrap`) | `get` and `patch` on `ztd-openbao-bootstrap` by name, `create` on Secrets of `ztd-mgmt` | the bootstrap Secret, by name; Kubernetes cannot limit `create` to a name |
+| `istiod` | ClusterRole `istiod-clusterrole-istio-system` (ServiceAccount `istiod` of `istio-system`) | `get`, `list`, `watch` on Secrets in every namespace | every Secret of the cluster, the bootstrap Secret included: istiod reads the TLS credentials of gateways and the kubeconfigs of remote clusters |
+| `istiod` | ClusterRole `istio-reader-clusterrole-istio-system` (ServiceAccount `istio-reader-service-account` of `istio-system`) | `get`, `list`, `watch` on Secrets in every namespace | every Secret of the cluster; the account exists for multi-cluster discovery, which a zone does not use |
+| `istiod` | ClusterRole `istiod-gateway-controller-istio-system` (ServiceAccount `istiod`) | `create`, `patch`, `update` on Deployments in every namespace | indirect: a Deployment created in `ztd-mgmt` could mount the Secret |
+
+The other releases (`ztd`, `spire-crds`, `spire`, `istio-base`, `istio-cni`, `zone-policy`) render
+no Role or ClusterRole that names Secrets or creates workloads. The verification hook reads its
+token from a Secret volume, holds no role and mounts no API token, and the upstream chart's
+auth-delegator binding is off. So whoever holds the token of istiod or of the istio-reader account
+can unseal the store: istiod is the mesh's control plane, which already configures every sidecar of the
+zone, and both accounts sit in `istio-system`, where only
+the control plane runs. Outside the eight releases, the cluster's CNI may add more: Cilium's own
+chart, as installed on kind, binds its operator (`cilium-operator` of `kube-system`) to `get`,
+`list`, `watch` on Secrets in every namespace. Cluster administrators, the built-in `admin` and
+`edit` roles where a binding grants them in `ztd-mgmt`, and any binding added outside the charts,
+still read the Secret.
 
 The production path removes the key from the cluster: an auto-unseal backend (a cloud KMS, an HSM
 through PKCS#11, or transit unseal against another OpenBao), as the XFSC deployment offers, or
@@ -198,7 +213,7 @@ There the release uses that instance instead of its own: `openbao.server.enabled
 zone, which the zone's mesh does not protect, and checks the server's certificate against the
 hook image's CA bundle; the schema and the chart refuse `http://`) and `external.verifyTokenSecret` names a Secret in the management
 namespace with a `verify-token` key. Nothing is installed or initialised; only the verification hook
-runs (health, unseal state and the two engines). `openbao.server.enabled` and `external.address` are
+(the Job and its ServiceAccount, both Helm hooks) runs (health, unseal state and the two engines). `openbao.server.enabled` and `external.address` are
 exclusive.
 
 ## The baseline proof (TDR-BDD-08)
