@@ -9,7 +9,9 @@
 # that serves different bytes for the same version would pass `helm dependency build`; this check
 # refuses it, as the zone installer refuses a SPIRE or Istio download that does not match its pinned
 # digest. <archives-dir> is where the archives were built (default <chart-dir>/charts). Passes only
-# when it holds exactly the archives listed, each with its committed digest. Used by
+# when it holds exactly the archives listed, each a regular file with its committed digest, and
+# nothing else: Helm also loads an unpacked chart directory (or a symbolic link) found in charts/,
+# so any other entry, hidden ones included, is refused as unpinned. Used by
 # scripts/ci/check-charts.sh, scripts/install-zone/install.sh and scripts/secrets/baseline.sh after
 # every `helm dependency build`, before the chart is rendered or installed.
 set -euo pipefail
@@ -27,14 +29,15 @@ while read -r want name; do
   case "$want" in ''|'#'*) continue ;; esac
   [[ "$want" =~ ^[0-9a-f]{64}$ ]] || fail "dependencies.sha256: '$want' is not a sha256 digest"
   [[ "$name" =~ ^[A-Za-z0-9._-]+\.tgz$ ]] || fail "dependencies.sha256: '$name' is not an archive name"
-  [ -f "$archives/$name" ] || fail "$name was not built into $archives"
+  if [ ! -f "$archives/$name" ] || [ -L "$archives/$name" ]; then fail "$name was not built into $archives as a regular file"; fi
   have=$(sha256 "$archives/$name")
   [ "$have" = "$want" ] || fail "$name has digest $have, not the committed $want"
   listed=$((listed + 1))
 done <"$pins"
 [ "$listed" -gt 0 ] || fail "dependencies.sha256 lists no archive"
-shopt -s nullglob
-for built in "$archives"/*.tgz; do
-  awk -v n="${built##*/}" '$2 == n { found = 1 } END { exit !found }' "$pins" || fail "${built##*/} is in $archives but has no committed digest"
+shopt -s nullglob dotglob
+for built in "$archives"/*; do
+  awk -v n="${built##*/}" '$2 == n { found = 1 } END { exit !found }' "$pins" \
+    || fail "${built##*/} is in $archives but is not an archive with a committed digest (Helm would load it as a dependency)"
 done
 echo "dependency archives match dependencies.sha256 ($listed)"

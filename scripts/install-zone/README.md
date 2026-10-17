@@ -75,11 +75,16 @@ scripts/install-zone/install.sh install
 checkout carries no `charts/` folder. Before it renders or installs the release, the installer runs
 `helm dependency build` on a copy of `Chart.yaml` and `Chart.lock` in its cache, with a repository
 configuration of its own (the user's Helm repositories are neither read nor changed). Helm refuses a
-lock whose digest does not match the chart's dependencies, and the run stops naming the chart. The
-build runs once per `Chart.yaml` and `Chart.lock`; the built archive's sha256 is recorded in the
-cache and checked on every later use. Each run copies the chart from the checkout and adds the built
-dependency, so the chart's own templates and values are always the checkout's. The upstream
-repository is reached at the first build, as SPIRE's and Istio's are at their first fetch.
+lock whose digest does not match the chart's dependencies, and the run stops naming the chart. That
+digest covers the list of dependencies, not the archive's bytes, so the archive is pinned on its own:
+its sha256 is committed in `deployment/helm/ztd-openbao/dependencies.sha256`, and
+`scripts/ci/verify-chart-dependencies.sh` refuses an archive with another digest, a missing one, or
+anything else in the chart's `charts/` folder (an unpacked chart directory included). The build runs
+once per `Chart.yaml` and `Chart.lock`; nothing in the cache is trusted on its own. Each run copies
+the chart from the checkout into its work directory, copies the built archives in, and checks that
+copy against the committed pins before Helm reads it, so the bytes installed are the bytes checked
+and the chart's own templates and values are always the checkout's. The upstream repository is
+reached at the first build, as SPIRE's and Istio's are at their first fetch.
 
 ## The node pin of OpenBao
 
