@@ -47,7 +47,7 @@ The upstream charts are installed as they ship, pinned by version, each owning, 
 removing its own CRDs ([OSS dependencies](dependencies.md#identity-and-service-mesh)); the values
 the repository sets on them live in `deployment/helm/values/`. The upstream OpenBao chart is the one
 exception: it is a dependency of the project chart `deployment/helm/ztd-openbao`, built from that
-chart's `Chart.lock`. Every release after the umbrella reads the zone facts it needs from the
+chart's `Chart.lock` and checked against the archive digest committed beside it. Every release after the umbrella reads the zone facts it needs from the
 umbrella's defaults with the zone file on top. The release namespace of the
 umbrella holds its release and its hook jobs and is not a plane namespace. The zone file is written
 from what the cluster baseline recorded; the charts have no defaults for it. The design, the

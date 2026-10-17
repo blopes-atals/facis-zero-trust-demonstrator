@@ -12,8 +12,9 @@
 #   6 istio-cni    istio-system  the Istio CNI plugin, chained behind the cluster's CNI
 #   7 zone-policy  istio-system  ClusterSPIFFEID, STRICT PeerAuthentication, identity-band checks
 #   8 ztd-openbao  ztd-mgmt      OpenBao, its bootstrap Job and verification hook (project chart
-#                                wrapping the upstream openbao chart, built from its Chart.lock);
-#                                last, so its pods are created with a sidecar and an SVID
+#                                wrapping the upstream openbao chart, built from its Chart.lock,
+#                                pinned by digest); last, so its pods are created with a sidecar
+#                                and an SVID
 #
 # Usage:
 #   scripts/install-zone/install.sh install          install or upgrade the zone (idempotent)
@@ -81,6 +82,8 @@ SPIRE_SHA256=aadaeabe1dfecbcd803d541580ab41c229d99c0075ace3b6e050b0ceef36aa8d
 ISTIO_VERSION=1.31.1
 ISTIO_ARCHIVE_URL=https://github.com/istio/istio/releases/download/$ISTIO_VERSION/istio-$ISTIO_VERSION-linux-amd64.tar.gz
 ISTIO_ARCHIVE_SHA256=cb4af2e8a099acfc51368c1d15d4deab8321ae628554d4ee5c74f62ebe775857
+# The upstream openbao chart of ztd-openbao: its version in the project chart's Chart.lock, its
+# archive's sha256 in deployment/helm/ztd-openbao/dependencies.sha256 (build_openbao_chart).
 
 # ---- The steps: release, namespace, chart, values file, zone facts (<values key>=<zone key>,...),
 # ---- extra lifecycle settings. "zone" as values file means the zone file itself; no values file
@@ -247,13 +250,16 @@ fetch_istio() {
 
 # build_openbao_chart: deployment/helm/ztd-openbao with its upstream dependency built from the
 # committed Chart.lock. `helm dependency build` refuses a lock whose digest does not match the
-# chart's dependencies. It runs once per Chart.yaml and Chart.lock, into the cache, with a
-# repository configuration of the installer's own (the user's Helm repositories are neither read
-# nor changed); the built archive's sha256 is recorded there and checked on every later use. Each
-# run copies the chart from the checkout into its work directory and adds the built dependency, so
-# the chart's templates and values are always the checkout's.
+# chart's dependencies; that digest covers the list of dependencies, not the archive's bytes, so
+# the built archive is then checked against the sha256 committed in the chart's
+# dependencies.sha256 (scripts/ci/verify-chart-dependencies.sh), on the first build and on every
+# later use of the cache, as the SPIRE and Istio downloads are checked against their pins above.
+# The build runs once per Chart.yaml and Chart.lock, into the cache, with a repository
+# configuration of the installer's own (the user's Helm repositories are neither read nor
+# changed). Each run copies the chart from the checkout into its work directory and adds the
+# verified dependency, so the chart's templates and values are always the checkout's.
 build_openbao_chart() {
-  local src=$REPO/deployment/helm/ztd-openbao out=$work/chart-ztd-openbao key dir url want name
+  local src=$REPO/deployment/helm/ztd-openbao out=$work/chart-ztd-openbao key dir url
   if [ -f "$out/.ready" ]; then echo "$out"; return; fi
   key=$(cat "$src/Chart.yaml" "$src/Chart.lock" >"$work/openbao-chart-key"; sha256 "$work/openbao-chart-key" | cut -c1-16)
   dir=$CACHE/ztd-openbao-deps-$key
@@ -268,15 +274,10 @@ build_openbao_chart() {
       cat "$work/openbao-deps.log" >&2
       die "chart ztd-openbao: its dependency was not built from Chart.lock (a lock out of sync with Chart.yaml, or $url unreachable)"
     fi
-    for name in "$dir"/chart/charts/*.tgz; do
-      printf '%s %s\n' "$(sha256 "$name")" "${name##*/}"
-    done >"$dir/archives.sha256"
     touch "$dir/.built"
   fi
-  while read -r want name; do
-    [ "$(sha256 "$dir/chart/charts/$name")" = "$want" ] \
-      || die "chart ztd-openbao: the dependency $name built from Chart.lock into $dir has changed since; remove $dir and rerun"
-  done <"$dir/archives.sha256"
+  "$REPO/scripts/ci/verify-chart-dependencies.sh" "$src" "$dir/chart/charts" >/dev/null \
+    || die "chart ztd-openbao: the dependency built from Chart.lock into $dir does not match the committed deployment/helm/ztd-openbao/dependencies.sha256; remove $dir and rerun, and if it fails again, do not install (the repository serves other bytes for the pinned version)"
   rm -rf "$out"; cp -R "$src" "$out"; rm -rf "$out/charts"; cp -R "$dir/chart/charts" "$out/charts"
   touch "$out/.ready"
   echo "$out"

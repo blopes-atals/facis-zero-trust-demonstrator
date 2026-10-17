@@ -30,6 +30,7 @@ trap 'rm -f "$lane"' EXIT
 
 helm repo add openbao https://openbao.github.io/openbao-helm >/dev/null 2>&1 || true
 helm dependency build "$store" >/dev/null
+"$root/scripts/ci/verify-chart-dependencies.sh" "$store"
 # up: the umbrella, then the store into the management namespace the umbrella created. A second up
 # with the same values renders the same bootstrap Job name, so no bootstrap runs; the verification
 # hook runs on every upgrade.
