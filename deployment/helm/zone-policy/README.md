@@ -1,7 +1,8 @@
 # zone-policy — the identity policy of one zone
 
-The one project chart of the identity path, and the last of the seven releases of a zone
-(`scripts/install-zone/install.sh`), because it uses the CRDs the SPIRE and Istio releases own. It
+The one project chart of the identity path, and the seventh of the eight releases of a zone
+(`scripts/install-zone/install.sh`), because it uses the CRDs the SPIRE and Istio releases own; the
+secret store `ztd-openbao` follows it, so that its pods are registered at creation. It
 installs into `istio-system`, the mesh root namespace:
 
 - **`ClusterSPIFFEID` `plane-workloads`**: the registration by selector. Every pod with

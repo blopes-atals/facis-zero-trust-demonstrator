@@ -9,36 +9,60 @@ OpenBao is MPL-2.0. It is deployed as a separate, unmodified service and used th
 written licence exception for it (Licence Exception Notice v1.0, follow-up requirement F-07) is
 **open** — submitted, not yet decided. See [OSS dependencies](dependencies.md#licence-exceptions).
 
-## OpenBao in the umbrella
+## OpenBao as a release of its own
 
-The umbrella chart (`deployment/helm/ztd`, [Umbrella chart](umbrella-chart.md)) installs OpenBao as a
-dependency when a zone sets `openbao.enabled: true`. It is off by default; the kind zone file
-(`ci/values.yaml`) turns it on.
+OpenBao is the release `ztd-openbao`, from the project chart `deployment/helm/ztd-openbao` (its values
+in the chart's `README.md`). It is the eighth and last release of a zone ([Deployment](deployment.md)): the zone installer
+(`scripts/install-zone/install.sh`) installs it into the management-plane namespace after
+`zone-policy`, with `--wait --wait-for-jobs`. The umbrella chart installs no OpenBao, and its schema
+refuses the values it once took for it (`openbao.enabled`, `openbaoBootstrap`, `openbaoExternal`).
+Every zone the installer installs gets the release: the kind zone and the participant zones A and B.
+The IONOS cluster, which runs the visualization only, does not.
 
 | | |
 |---|---|
-| Chart | `openbao` 0.28.3 from `https://openbao.github.io/openbao-helm` (locked in `Chart.lock`) |
-| Server | OpenBao v2.5.4, the chart's app version, image pinned by digest in `values.yaml` |
+| Chart | `deployment/helm/ztd-openbao`, wrapping `openbao` 0.28.3 from `https://openbao.github.io/openbao-helm`, locked in the chart's `Chart.lock` |
+| Server | OpenBao v2.5.4, the upstream chart's app version, image pinned by digest in `values.yaml` |
 | Mode | standalone, one replica, file storage on a volume of the zone's storage class |
-| Namespace | the management plane (`ztd-mgmt`) |
+| Namespace | the management plane (`ztd-mgmt`, the umbrella's `planes.management.namespace`) |
+| Names | StatefulSet `ztd-openbao`, pod `ztd-openbao-0`, Services `ztd-openbao` and `ztd-openbao-internal`, ServiceAccount `ztd-openbao` |
 | Engines | KV version 2 at `secret/`, transit at `transit/` |
 | Not used | the agent injector, the Kubernetes auth method and its cluster-wide auth-delegator binding (they come with the ZT-11 signing flow), high availability |
 
-The chart version and the server version are different numbers: 0.28.3 is the Helm chart, v2.5.4 the
-OpenBao it ships. The OpenBao 2.7.0 image in `scripts/tools/pins.env` is a separate pin, used only by
-the token-store integration tests.
+The chart version and the server version are different numbers: 0.28.3 is the upstream Helm chart,
+v2.5.4 the OpenBao it ships. The OpenBao 2.7.0 image in `scripts/tools/pins.env` is a separate pin,
+used only by the token-store integration tests.
 
-The server listens without TLS inside the management plane. Transport protection between workloads
-is the mesh layer's ([ADR-0001](adr/0001-service-mesh-mode-istio-ambient-with-cilium.md)), and the
-plane's default-deny admits only pods of the same plane.
+The installer builds the upstream chart from the lock file into its cache before it renders or
+installs the release (`helm dependency build`, which refuses a lock that does not match the chart's
+dependencies), and checks the built archive's digest on every later use. It fills the release's zone
+facts from the umbrella's defaults with the zone file on top: the management namespace, the zone's
+`zone.storageClass` (refused when the zone file does not state it) and the Cilium switch.
+
+**Identity and transport.** The server pods, the bootstrap Job and the verification hook carry the
+identity label `spiffe.io/spire-managed-identity: "true"`. Because the release is installed after
+istiod and after the registration rule of `zone-policy`, each pod is created with the injector's
+sidecar, a SPIRE entry and an SVID: the server holds
+`spiffe://<trust domain>/ns/ztd-mgmt/sa/ztd-openbao`, the bootstrap `…/sa/ztd-openbao-bootstrap`, the
+verification hook `…/sa/default`. The server listens without TLS inside its pod; between pods the
+sidecars carry its traffic as mesh mTLS under the mesh-wide STRICT peer authentication
+([ADR-0009](adr/0009-service-mesh-mode-istio-sidecar-with-cilium.md),
+[Workload identity](workload-identity.md)), and the plane's default deny admits only pods of the same
+plane. The jobs complete under injection: the native sidecar exits with the job's container. The
+mesh-identity proof (`scripts/verify-mesh-identity/verify.sh`) shows `ztd-mgmt/ztd-openbao-0` as a
+matched declared workload in its registration inventory.
+
+Without a mesh (the secrets baseline on kind's own CNI) the label is inert: the pods start without a
+proxy and the release installs the same way.
 
 ### Bootstrap
 
 A sealed OpenBao is not ready, and with `--wait` Helm runs post-install hooks only once every regular
-resource is ready, so no hook could ever unseal it. The bootstrap is therefore a regular Job,
-`ztd-openbao-bootstrap-<hash>`, and the release is installed with `--wait --wait-for-jobs`. Its state
-lives in the Kubernetes Secret `ztd-openbao-bootstrap` in the management namespace, and every run is
-safe to repeat:
+resource is ready, so no hook could ever unseal it. The bootstrap is therefore a regular Job of the same
+release, `ztd-openbao-bootstrap-<hash>`, which `--wait-for-jobs` waits for. It reaches the sealed
+server through the main Service `ztd-openbao`, which publishes not-ready addresses: Kubernetes marks
+the endpoint ready and the mesh routes to it. Its state lives in the Kubernetes Secret
+`ztd-openbao-bootstrap` in the management namespace, and every run is safe to repeat:
 
 | State found | What the Job does |
 |---|---|
@@ -51,10 +75,14 @@ safe to repeat:
 | `state=configured` | renews the verification token and exits |
 
 After a successful run the Secret holds the unseal key, the verification token and the state; the root
-token is revoked. The Job name carries a hash of its script and values: it reruns when the bootstrap
-changes, and an unchanged upgrade renders the same manifest. Credentials reach `curl` through header
-and body files in a memory volume, never on a command line, and the Job's log names states and HTTP
-codes only.
+token is revoked. Credentials reach `curl` through header and body files in a memory volume, never on
+a command line, and the Job's log names states and HTTP codes only.
+
+**The upgrade rerun.** The Job's name carries a hash of its script and of the whole of the chart's
+values, the upstream chart's included. An upgrade that changes any value, such as the server's image,
+resources or storage, which restart the server sealed, renders a Job with a new name: Helm creates
+it, it unseals the restarted server before `--wait` gives up, and Helm removes the previous Job. An
+upgrade with the same values renders the same name, so the manifest is identical and no Job runs.
 
 The `ztd-verify` policy can read `sys/mounts/*`, read `secret/data/ztd-fixture/*`, use the
 `ztd-fixture` transit key, and look up and renew itself. Nothing else.
@@ -62,9 +90,10 @@ The `ztd-verify` policy can read `sys/mounts/*`, read `secret/data/ztd-fixture/*
 The Job's Role may create Secrets in the management namespace — Kubernetes RBAC cannot limit `create`
 to one name — and may read and patch only `ztd-openbao-bootstrap`.
 
-**Network.** The Job reaches the Kubernetes API from the management plane. Under Cilium the chart opens
-that lane itself, as a `CiliumNetworkPolicy` to the `kube-apiserver` entity for the Job's pods only, so
-OpenBao bootstraps whether or not the zone's `networkPolicy.kubeApi` lane is on. With another CNI that
+**Network.** The Job reaches the Kubernetes API from the management plane; on a meshed zone the call
+leaves through its sidecar as plain TCP, since the API server has no sidecar. Under Cilium the chart
+opens that lane itself, as a `CiliumNetworkPolicy` to the `kube-apiserver` entity for the Job's pods
+only (the zone fact `cni.cilium.enabled`). With another CNI the umbrella's `networkPolicy.kubeApi`
 lane must be open (on kind, `scripts/secrets/kind-api-lane.sh` prints it from the live cluster).
 
 ### Verification
@@ -75,16 +104,30 @@ release unless the server is initialised and unsealed, `secret/` is KV version 2
 transit; with the bundled server it also reads the fixture value (printing a 12-character hash of it,
 never the value) and round-trips the fixture transit key. It renews the token, so the token does not
 expire while the release is upgraded or verified at least once every 32 days. The Job stays until the
-next run replaces it, so its log can be collected.
+next run replaces it, so its log can be collected (`kubectl -n ztd-mgmt logs job/ztd-verify-openbao
+-c verify`).
 
 **Token expiry.** If the verification token expires, the hook fails. Recovery: generate a root token
 with the unseal key (`bao operator generate-root`), issue a new periodic token with the `ztd-verify`
 policy, write it to the Secret's `verify-token`, and revoke the root token again.
 
+### The node pin on the participant zones
+
+On the participant clusters of zone A and zone B the provider's pod network masquerades pod traffic
+between nodes, so a meshed pod on another node than istiod never passes its proxy's readiness. Their
+zone files set `openbao.pinToMeshNode: true`, and the installer then reads the node istiod runs on
+after the istiod release and pins the OpenBao server and both jobs to it, a required node affinity on
+`kubernetes.io/hostname` (the chart value `global.pin.node`; `istiod-node-not-found`, which matches no
+node, when istiod has none). The server's volume (`WaitForFirstConsumer`) binds on that node. The pin
+is temporary: it falls when the provider's network is fixed
+([OSC environment](environments/osc.md#the-node-pin-of-openbao)). The kind zone is not pinned.
+
 ### After a restart: manual unseal
 
-OpenBao seals itself whenever its pod restarts and stays not ready until it is unsealed. Unsealing is
-a documented manual step, not an automatic one:
+OpenBao seals itself whenever its pod restarts and stays not ready until it is unsealed. The bootstrap
+covers the restarts the lifecycle causes: the first install, and an upgrade that changes a value
+(above). A restart the lifecycle does not cause, such as an eviction, a node reboot or an
+out-of-memory kill, leaves the server sealed until it is unsealed by hand:
 
 ```bash
 scripts/secrets/unseal.sh            # namespace ztd-mgmt, pod ztd-openbao-0
@@ -93,29 +136,35 @@ scripts/secrets/unseal.sh            # namespace ztd-mgmt, pod ztd-openbao-0
 The script reads the key from the Secret and hands it to `bao write sys/unseal key=-` on standard
 input, so it never appears on a command line (which the API server's audit log records) or in the
 output. The data survives: the secrets baseline restarts the pod, observes it sealed and not ready,
-unseals it and finds the same fixture value.
+unseals it and finds the same fixture value. This manual step is a declared reading of the TDR's
+"zero manual intervention" rule ([Specification changes](specifications.md)): deploy, redeploy and
+uninstall need none; an automatic unseal needs a key-management backend the demonstrator does not
+operate.
 
 ### Teardown
 
-`helm uninstall` deletes the plane namespaces, and with them the OpenBao volume and the bootstrap
-Secret. It is a destructive reset: the next install initialises a new, empty store.
+`scripts/install-zone/install.sh uninstall` removes `ztd-openbao` first, then the other releases in
+reverse order; the umbrella's uninstall deletes the plane namespaces, and with them the OpenBao volume
+and the bootstrap Secret. It is a destructive reset: the next install initialises a new, empty store.
 
 ### An existing OpenBao
 
 The XFSC ArgoCD deployment, which FACIS names as the reference deployment, already installs OpenBao —
 the same chart, 0.28.3, wrapped with selectable auto-unseal backends
 ([`eclipse-xfsc/deployment`, `INFRA/security/openbao/Chart.yaml`](https://github.com/eclipse-xfsc/deployment/blob/739606691ecff72b3a40404a19fce44d9c22b0ee/INFRA/security/openbao/Chart.yaml)).
-There the umbrella uses that instance instead of its own: `openbaoExternal.address` names it and
-`openbaoExternal.verifyTokenSecret` names a Secret in the management namespace with a `verify-token`
-key. Nothing is installed or initialised; only the verification hook runs (health, unseal state and
-the two engines). `openbao.enabled` and `openbaoExternal.address` are exclusive.
+There the release uses that instance instead of its own: `openbao.server.enabled: false`,
+`external.address` names it and `external.verifyTokenSecret` names a Secret in the management
+namespace with a `verify-token` key. Nothing is installed or initialised; only the verification hook
+runs (health, unseal state and the two engines). `openbao.server.enabled` and `external.address` are
+exclusive.
 
 ## The baseline proof (TDR-BDD-08)
 
 `release.yml` proves the baseline on every candidate, in two jobs of the same run:
 
-**Secrets baseline** (`scripts/secrets/baseline.sh`) installs the umbrella with OpenBao on a disposable
-kind cluster, restarts OpenBao and unseals it by hand (`restart.json`), and runs the canary scan
+**Secrets baseline** (`scripts/secrets/baseline.sh`) installs two releases on a disposable kind cluster
+with kind's own CNI and no mesh: the umbrella, then `ztd-openbao` with its kind values. It restarts
+OpenBao and unseals it by hand (`restart.json`), upgrades both releases again, and runs the canary scan
 (`scripts/secrets/canary_scan.py`) twice: right after the install, before the restart deletes the first
 OpenBao pod and the upgrade replaces the verification hook, and again at the end. `scan.json` holds both
 stages and is clean only if both were. Each scan:

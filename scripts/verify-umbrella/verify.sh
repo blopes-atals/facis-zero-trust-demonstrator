@@ -16,9 +16,6 @@ REPO=$(git rev-parse --show-toplevel)
 CHART=$REPO/deployment/helm/ztd
 VALUES=${VALUES:-$CHART/ci/values.yaml}
 AMBIENT_VALUES=${AMBIENT_VALUES:-$PWD/ambient-values.yaml}
-# The layout proof runs without OpenBao, which the kind zone file turns on: OpenBao has its own proof
-# (docs/secrets.md), and the stand-in below would collide with its Service name.
-NOBAO=(--set openbao.enabled=false)
 CONTEXT=${KUBE_CONTEXT:-kind-ztd}
 RELEASE=ztd; RNS=ztd-system
 # yaml_get <file> <key>... : one value out of a YAML file; the path travels as an argument, never inside the source
@@ -88,7 +85,7 @@ k get ns "$MGMT" "$DATA" "${CTRL[@]}" >/dev/null 2>&1; [ $? -ne 0 ]; check $? "n
 
 say '' '## 2. Install from zero' ''
 start=$(date +%s)
-out=$(h upgrade --install "$RELEASE" "$CHART" -n "$RNS" --create-namespace -f "$VALUES" "${NOBAO[@]}" --wait --timeout 5m 2>&1); rc=$?
+out=$(h upgrade --install "$RELEASE" "$CHART" -n "$RNS" --create-namespace -f "$VALUES" --wait --timeout 5m 2>&1); rc=$?
 check $rc "helm upgrade --install from an empty cluster returns 0" "$(( $(date +%s) - start ))s"
 code "$(printf '%s\n' "$out" | grep -vE '^(NOTES|LAST DEPLOYED|NAMESPACE|STATUS|REVISION|TEST SUITE):' | head -20)"
 status=$(h status "$RELEASE" -n "$RNS" -o json | python3 -c 'import sys,json;print(json.load(sys.stdin)["info"]["status"])')
@@ -115,7 +112,7 @@ k get ciliumclusterwidenetworkpolicy "${RELEASE}-allow-ambient-hostprobes" >/dev
 
 say '' '## 4. Install again: idempotent' ''
 h get manifest "$RELEASE" -n "$RNS" > /tmp/ztd-manifest-1.yaml
-out=$(h upgrade --install "$RELEASE" "$CHART" -n "$RNS" -f "$VALUES" "${NOBAO[@]}" --wait --timeout 5m 2>&1); rc=$?
+out=$(h upgrade --install "$RELEASE" "$CHART" -n "$RNS" -f "$VALUES" --wait --timeout 5m 2>&1); rc=$?
 check $rc "second helm upgrade --install returns 0"
 h get manifest "$RELEASE" -n "$RNS" > /tmp/ztd-manifest-2.yaml
 diff -q /tmp/ztd-manifest-1.yaml /tmp/ztd-manifest-2.yaml >/dev/null; check $? "rendered manifest identical between the two installs"
@@ -142,7 +139,7 @@ r=$(k -n "$DATA" exec data-plain -- nslookup "tsa-policy-engine.$MGMT.svc.cluste
 
 say '' '## 6. Mesh mode is one label: the excursion to the parked ambient mode, and back' ''
 say 'Sidecar is the installed baseline (ADR-0009). The release is switched to ambient with the excursion fixture, which must bring the ambient label and the Cilium host-probe exception while the denial and the lane hold, and then back to sidecar, which must leave neither behind.' ''
-out=$(h upgrade --install "$RELEASE" "$CHART" -n "$RNS" -f "$AMBIENT_VALUES" "${NOBAO[@]}" --wait --timeout 5m 2>&1); rc=$?
+out=$(h upgrade --install "$RELEASE" "$CHART" -n "$RNS" -f "$AMBIENT_VALUES" --wait --timeout 5m 2>&1); rc=$?
 check $rc "upgrade to ambient mode returns 0"
 code "$(k get ns "$MGMT" "$DATA" -L ztd.facis.io/plane,istio.io/dataplane-mode,istio-injection | sed 's/  */ /g')"
 for ns in "$MGMT" "$DATA"; do [ "$(k get ns "$ns" -o jsonpath='{.metadata.labels.istio\.io/dataplane-mode}')" = ambient ]; check $? "ambient mode: istio.io/dataplane-mode=ambient on $ns"; done
@@ -150,7 +147,7 @@ for ns in "$MGMT" "$DATA"; do [ "$(k get ns "$ns" -o jsonpath='{.metadata.labels
 k get ciliumclusterwidenetworkpolicy "${RELEASE}-allow-ambient-hostprobes" >/dev/null 2>&1; check $? "ambient mode: the Cilium host-probe exception is rendered (mode ambient, Cilium)"
 expect_deny  "$DATA" data-plain  "http://openbao-standin.$MGMT.svc:8080/hostname"   "ambient mode: cross-plane call still DENIED"
 expect_allow "$DATA" pdp-adapter "http://tsa-policy-engine.$MGMT.svc:8080/hostname" "ambient mode: matrix lane still ALLOWED"
-out=$(h upgrade --install "$RELEASE" "$CHART" -n "$RNS" -f "$VALUES" "${NOBAO[@]}" --wait --timeout 5m 2>&1); rc=$?
+out=$(h upgrade --install "$RELEASE" "$CHART" -n "$RNS" -f "$VALUES" --wait --timeout 5m 2>&1); rc=$?
 check $rc "back to sidecar mode returns 0"
 code "$(k get ns "$MGMT" "$DATA" -L ztd.facis.io/plane,istio.io/dataplane-mode,istio-injection | sed 's/  */ /g')"
 for ns in "$MGMT" "$DATA"; do [ "$(k get ns "$ns" -o jsonpath='{.metadata.labels.istio-injection}')" = enabled ]; check $? "sidecar mode restored: istio-injection=enabled on $ns"; done
