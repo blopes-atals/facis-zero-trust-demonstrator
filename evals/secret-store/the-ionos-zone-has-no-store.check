@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# scenario: secret-store / The IONOS zone has no store
+# level: L1
+# requirement: The participant zones install OpenBao
+. "$EVAL_ROOT/evals/lib.sh"
+z=$ZONES/ionos.yaml
+python3 - "$z" <<'PY' || exit 1
+import sys, yaml
+d = yaml.safe_load(open(sys.argv[1]))
+for k in ("openbao", "openbaoBootstrap", "openbaoExternal"):
+    assert k not in d, "ionos zone file sets %s" % k
+print("ionos zone file sets no OpenBao value")
+PY
+out=$(helm template ztd "$EVAL_ROOT/deployment/helm/ztd" -n ztd-system -f "$z" 2>&1) || { echo "$out" | head -3; exit 1; }
+grep -qi 'openbao' <<<"$(grep -E '^(kind|  name):' <<<"$out")" && { echo "OpenBao object rendered"; exit 1; }
+echo ok

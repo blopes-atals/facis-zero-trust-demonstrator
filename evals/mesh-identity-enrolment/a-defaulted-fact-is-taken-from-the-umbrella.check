@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# scenario: mesh-identity-enrolment / A defaulted fact is taken from the umbrella
+# level: L1
+# requirement: A release's zone facts are the umbrella's defaults with the zone file on top
+. "$EVAL_ROOT/evals/lib.sh"
+python3 - "$KIND_ZONE" <<'PY' || { echo "kind zone file states planes.management.namespace; check precondition broken"; exit 1; }
+import sys, yaml
+d = yaml.safe_load(open(sys.argv[1])); sys.exit(1 if (d.get("planes") or {}).get("management",{}).get("namespace") else 0)
+PY
+def=$(python3 -c "import yaml,sys;print(yaml.safe_load(open('$EVAL_ROOT/deployment/helm/ztd/values.yaml'))['planes']['management']['namespace'])")
+render "$KIND_ZONE" ztd-openbao ztd
+echo "$OUT"; [ $RC -eq 0 ] || { echo "render exit $RC"; exit 1; }
+echo "umbrella default management namespace: $def"
+python3 - "$EVAL_TMP/out/ztd-openbao.yaml" "$EVAL_TMP/out/ztd.yaml" "$def" <<'PY'
+import sys, yaml
+bao = [d for d in yaml.safe_load_all(open(sys.argv[1])) if d]
+umb = [d for d in yaml.safe_load_all(open(sys.argv[2])) if d]
+def_ns = sys.argv[3]
+nss = {d["metadata"].get("namespace") for d in bao if d["kind"] in ("StatefulSet","Service","Job")}
+print("ztd-openbao namespaces:", nss)
+created = {d["metadata"]["name"] for d in umb if d["kind"] == "Namespace"}
+assert nss == {def_ns}, "release must render into the default management namespace"
+assert def_ns in created, "umbrella must create that namespace"
+PY

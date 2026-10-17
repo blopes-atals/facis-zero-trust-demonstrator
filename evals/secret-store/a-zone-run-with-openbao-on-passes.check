@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# scenario: secret-store / A zone run with OpenBao on passes
+# level: L2
+# requirement: The participant zones install OpenBao
+. "$EVAL_ROOT/evals/lib.sh"
+echo "needs a participant cluster (zerotrust-a or zerotrust-b) and its zone file; out of bounds for this run (kind-ztd only)"
+exit 77

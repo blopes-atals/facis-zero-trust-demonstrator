@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# scenario: secret-store / A clean clone installs
+# level: L1
+# requirement: The chart carries the upstream server as its locked dependency
+. "$EVAL_ROOT/evals/lib.sh"
+git -C "$EVAL_ROOT" rev-parse HEAD >/dev/null 2>&1 || exit 77
+clone=$EVAL_TMP/clone; mkdir -p "$clone"
+git -C "$EVAL_ROOT" archive HEAD | tar -x -C "$clone"
+[ ! -d "$clone/deployment/helm/ztd-openbao/charts" ] || { echo "archive has charts/"; exit 1; }
+[ -f "$clone/deployment/helm/ztd-openbao/Chart.lock" ] || { echo "Chart.lock not committed"; exit 1; }
+cache
+# a cold dependency cache for the store: remove any seeded built dependency
+rm -rf "$INSTALL_ZONE_CACHE"/ztd-openbao-deps-* 2>/dev/null
+out=$(ZONE_VALUES=$clone/deployment/helm/ztd/ci/values.yaml RENDER_DIR=$EVAL_TMP/out INSTALL_ZONE_CACHE=$INSTALL_ZONE_CACHE timeout 300 "$clone/scripts/install-zone/install.sh" render ztd-openbao 2>&1); rc=$?
+echo "$out" | tail -6
+if [ $rc -ne 0 ]; then
+  grep -qi 'could not resolve\|no such host\|connection\|timeout\|dial tcp\|Temporary failure' <<<"$out" && { echo "no network to the chart repository"; exit 77; }
+  echo "exit $rc"; exit 1
+fi
+[ -s "$EVAL_TMP/out/ztd-openbao.yaml" ] || { echo "nothing rendered"; exit 1; }
+ls "$INSTALL_ZONE_CACHE" | grep -q 'ztd-openbao-deps' && echo "dependency built into the cache"

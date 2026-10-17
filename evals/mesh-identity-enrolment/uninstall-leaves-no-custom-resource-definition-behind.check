@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# scenario: mesh-identity-enrolment / Uninstall leaves no custom resource definition behind
+# level: L2
+# requirement: A zone installs from an empty cluster in one order, idempotently
+. "$EVAL_ROOT/evals/lib.sh"
+need_cluster
+cache
+export KUBE_CONTEXT=kind-ztd
+out=$("$INSTALL" uninstall 2>&1); rc=$?
+echo "$out" | head -10
+restore() { "$INSTALL" install >"$EVAL_TMP/restore.log" 2>&1 || echo "WARNING: restoring the zone failed: $(tail -3 "$EVAL_TMP/restore.log")"; }
+if [ $rc -ne 0 ]; then restore; echo "uninstall exit $rc"; exit 1; fi
+first=$(head -1 <<<"$out")
+crds=$(k get crd -o name | grep -E 'spiffe\.io|istio\.io|spire' )
+# plane namespaces carry the plane label (the installer's own ztd-system release namespace holds only the release record)
+nss=$(k get ns -l ztd.facis.io/plane -o name)
+restore
+[ "$first" = "uninstall ztd-openbao: done" ] || { echo "ztd-openbao was not uninstalled first: $first"; exit 1; }
+[ -z "$crds" ] || { echo "CRDs left: $crds"; exit 1; }
+[ -z "$nss" ] || { echo "namespaces left: $nss"; exit 1; }
+echo "no SPIRE or Istio CRD and no plane namespace left; zone reinstalled for the checks after this one"

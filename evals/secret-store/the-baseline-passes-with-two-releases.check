@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# scenario: secret-store / The baseline passes with two releases
+# level: L2
+# requirement: The secrets baseline installs the store as its own release
+. "$EVAL_ROOT/evals/lib.sh"
+echo "needs the release workflow's secrets-baseline job on a disposable kind cluster without a mesh (scripts/secrets/baseline.sh reinstalls the umbrella meshless on the current context); kind-ztd carries the zone under test"
+exit 77

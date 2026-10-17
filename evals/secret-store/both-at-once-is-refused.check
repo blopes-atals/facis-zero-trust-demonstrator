@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# scenario: secret-store / Both at once is refused
+# level: L1
+# requirement: An existing OpenBao can be verified instead of installed
+. "$EVAL_ROOT/evals/lib.sh"
+CHART=$EVAL_ROOT/deployment/helm/ztd-openbao
+out=$(helm template ztd-openbao "$CHART" -n ztd-mgmt -f "$CHART/ci/values.yaml" --set openbao.server.enabled=true --set external.address=https://bao.example.org:8200 --set external.verifyTokenSecret=bao-token 2>&1); rc=$?
+echo "$out" | head -4 | cut -c1-300
+[ $rc -ne 0 ] || { echo "expected render failure"; exit 1; }
+grep -q 'openbao.server.enabled' <<<"$out" && grep -q 'external.address' <<<"$out" && grep -qi exclusive <<<"$out" || { echo "error must name both values as exclusive"; exit 1; }

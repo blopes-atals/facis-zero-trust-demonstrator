@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# scenario: secret-store / Rendering without a cluster
+# level: L1
+# requirement: On a provider-masqueraded pod network the release is pinned to istiod's node
+. "$EVAL_ROOT/evals/lib.sh"
+cache; rm -rf "$EVAL_TMP/out"; mkdir -p "$EVAL_TMP/out"
+# no cluster reachable: a kubeconfig that points nowhere, and a kubectl/helm that would hang or fail
+printf 'apiVersion: v1\nkind: Config\nclusters:\n- name: x\n  cluster: {server: "https://127.0.0.1:1"}\ncontexts:\n- name: nowhere\n  context: {cluster: x, user: u}\ncurrent-context: nowhere\nusers:\n- name: u\n  user: {}\n' > "$EVAL_TMP/kubeconfig"
+out=$(KUBECONFIG=$EVAL_TMP/kubeconfig KUBE_CONTEXT=nowhere ZONE_VALUES=$ZONES/zone-a.yaml RENDER_DIR=$EVAL_TMP/out "$INSTALL" render ztd-openbao 2>&1); rc=$?
+echo "$out" | tail -3
+[ $rc -eq 0 ] || { echo "expected exit 0, got $rc"; exit 1; }
+f=$EVAL_TMP/out/ztd-openbao.yaml
+grep -q 'istiod-node-not-found' "$f" || { echo "placeholder node name not rendered"; exit 1; }
+grep -q 'kubernetes.io/hostname' "$f" || { echo "no hostname affinity"; exit 1; }
+# server pod, bootstrap and verify pods must each carry the pin
+python3 - "$f" <<'PY'
+import sys, yaml
+docs = [d for d in yaml.safe_load_all(open(sys.argv[1])) if d]
+want = {("StatefulSet","ztd-openbao"),("Job","ztd-verify-openbao")}
+pinned = set()
+for d in docs:
+    spec = d.get("spec", {})
+    tpl = spec.get("template", {}).get("spec") if d["kind"] in ("StatefulSet","Job") else None
+    if not tpl: continue
+    na = (tpl.get("affinity") or {}).get("nodeAffinity") or {}
+    s = yaml.safe_dump(na)
+    if "istiod-node-not-found" in s: pinned.add((d["kind"], d["metadata"]["name"]))
+print("pinned:", sorted(pinned))
+assert ("StatefulSet","ztd-openbao") in pinned, "server not pinned"
+assert ("Job","ztd-verify-openbao") in pinned, "verify hook not pinned"
+assert any(k=="Job" and n.startswith("ztd-openbao-bootstrap-") for k,n in pinned), "bootstrap not pinned"
+PY

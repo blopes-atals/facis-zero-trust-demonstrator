@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# scenario: mesh-identity-enrolment / The zone file wins over the default
+# level: L1
+# requirement: A release's zone facts are the umbrella's defaults with the zone file on top
+. "$EVAL_ROOT/evals/lib.sh"
+render "$KIND_ZONE" ztd-openbao; [ $RC -eq 0 ] || { echo "$OUT"; exit 1; }
+grep -q '^kind: CiliumNetworkPolicy' "$EVAL_TMP/out/ztd-openbao.yaml" || { echo "precondition: default zone should render the CiliumNetworkPolicy"; exit 1; }
+zone_with nocil "d.setdefault('cni',{}).setdefault('cilium',{})['enabled']=False"
+render "$EVAL_TMP/nocil.yaml" ztd-openbao; echo "$OUT"; [ $RC -eq 0 ] || exit 1
+if grep -q '^kind: CiliumNetworkPolicy' "$EVAL_TMP/out/ztd-openbao.yaml"; then echo "CiliumNetworkPolicy still rendered"; exit 1; fi
+echo "no CiliumNetworkPolicy with cni.cilium.enabled false"

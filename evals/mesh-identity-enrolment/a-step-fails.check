@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# scenario: mesh-identity-enrolment / A step fails
+# level: L2
+# requirement: A zone installs from an empty cluster in one order, idempotently
+. "$EVAL_ROOT/evals/lib.sh"
+need_cluster
+# A helm that reports the zone-policy deployment as not reaching Ready; everything else passes through.
+real=$(command -v helm); mkdir -p "$EVAL_TMP/bin"
+cat > "$EVAL_TMP/bin/helm" <<SH
+#!/usr/bin/env bash
+echo "\$*" >> "$EVAL_TMP/helm-calls.log"
+case " \$* " in
+  *" upgrade zone-policy "*"--rollback-on-failure"*) echo "Error: context deadline exceeded: resource not ready"; exit 1 ;;
+esac
+exec "$real" "\$@"
+SH
+chmod +x "$EVAL_TMP/bin/helm"
+cache
+out=$(PATH=$EVAL_TMP/bin:$PATH INSTALL_ZONE_CACHE=$INSTALL_ZONE_CACHE KUBE_CONTEXT=kind-ztd "$INSTALL" install 2>&1); rc=$?
+echo "$out" | tail -6
+[ $rc -ne 0 ] || { echo "expected non-zero exit"; exit 1; }
+grep -q 'FAILED: release zone-policy' <<<"$out" || { echo "failure does not name zone-policy"; exit 1; }
+grep -q 'step 8/8: ztd-openbao into' <<<"$out" && { echo "installer went on to ztd-openbao"; exit 1; }
+grep -q 'upgrade ztd-openbao ' "$EVAL_TMP/helm-calls.log" && { echo "helm was called for ztd-openbao after the failure"; exit 1; }
+echo ok

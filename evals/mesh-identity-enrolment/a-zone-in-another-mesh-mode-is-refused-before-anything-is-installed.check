@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# scenario: mesh-identity-enrolment / A zone in another mesh mode is refused before anything is installed
+# level: L1
+# requirement: A zone installs from an empty cluster in one order, idempotently
+. "$EVAL_ROOT/evals/lib.sh"
+for mode in ambient none; do
+  zone_with mode "d.setdefault('mesh',{})['mode']='$mode'"
+  for cmd in render install; do
+    cache; rm -rf "$EVAL_TMP/out"; mkdir -p "$EVAL_TMP/out"
+    out=$(ZONE_VALUES=$EVAL_TMP/mode.yaml RENDER_DIR=$EVAL_TMP/out KUBE_CONTEXT=kind-ztd "$INSTALL" $cmd 2>&1); rc=$?
+    echo "[$mode $cmd rc=$rc] $(head -3 <<<"$out")"
+    [ $rc -ne 0 ] || { echo "expected non-zero"; exit 1; }
+    grep -q 'mesh.mode' <<<"$out" && grep -q "$mode" <<<"$out" || { echo "message must name mesh.mode and $mode"; exit 1; }
+    [ -z "$(ls -A "$EVAL_TMP/out")" ] || { echo "something rendered before refusal"; exit 1; }
+  done
+done

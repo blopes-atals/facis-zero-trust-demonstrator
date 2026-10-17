@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# scenario: secret-store / An unchanged upgrade is a no-op
+# level: L1
+# requirement: The bootstrap reaches a sealed server and reruns when the server may restart
+. "$EVAL_ROOT/evals/lib.sh"
+render "$KIND_ZONE" ztd-openbao; [ $RC -eq 0 ] || { echo "$OUT"; exit 1; }
+cp "$EVAL_TMP/out/ztd-openbao.yaml" "$EVAL_TMP/a.yaml"
+render "$KIND_ZONE" ztd-openbao; [ $RC -eq 0 ] || exit 1
+cmp "$EVAL_TMP/a.yaml" "$EVAL_TMP/out/ztd-openbao.yaml" || { echo "two renders differ"; exit 1; }
+j=$(grep -E '^  name: ztd-openbao-bootstrap-' "$EVAL_TMP/a.yaml" | sort -u); echo "bootstrap job: $j"
+[ -n "$j" ] || { echo "no bootstrap Job with a hashed name"; exit 1; }

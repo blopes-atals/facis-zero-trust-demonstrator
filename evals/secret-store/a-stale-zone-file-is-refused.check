@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# scenario: secret-store / A stale zone file is refused
+# level: L1
+# requirement: OpenBao is a release of its own, installed after the registration rule
+. "$EVAL_ROOT/evals/lib.sh"
+for key in openbao.enabled openbaoBootstrap.image=x openbaoExternal.address=http://x; do
+  k=${key%%=*}; v=${key#*=}; [ "$v" = "$key" ] && v=true
+  out=$(helm template ztd "$EVAL_ROOT/deployment/helm/ztd" -n ztd-system -f "$KIND_ZONE" --set "$k=$v" 2>&1); rc=$?
+  echo "[$k rc=$rc] $(head -4 <<<"$out" | cut -c1-300)"
+  [ $rc -ne 0 ] || { echo "$k: expected render failure"; exit 1; }
+  grep -q "${k%%.*}" <<<"$out" || { echo "$k: error does not name the key"; exit 1; }
+  grep -qi 'schema\|values' <<<"$out" || { echo "$k: failure is not a values-schema failure"; exit 1; }
+done

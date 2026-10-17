@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# scenario: workload-identity / The kind zone with OpenBao on
+# level: L2
+# requirement: The secret store is a matched declared workload in the registration inventory
+. "$EVAL_ROOT/evals/lib.sh"
+ev=$(setup_file evidence/evidence.md); rc=$(cat "$(setup_file verify.rc)")
+echo "verify.sh exit status: $rc"
+[ "$rc" = 0 ] || { tail -5 "$SETUP_DIR/verify.log"; echo "expected zero failures"; exit 1; }
+td=$(python3 -c "import yaml;print(yaml.safe_load(open('$KIND_ZONE'))['zone']['trustDomain'])")
+row=$(grep -F '`ztd-mgmt/ztd-openbao-0`' "$ev" | grep -F 'matched' | grep -F "spiffe://$td/ns/ztd-mgmt/sa/ztd-openbao" | head -1)
+echo "inventory row: ${row:0:240}"
+[ -n "$row" ] || { echo "ztd-mgmt/ztd-openbao-0 not listed as matched with its SPIFFE ID"; exit 1; }
+grep -q '^- PASS: registration-inventory: no OpenBao pod is a plane pod without an identity' "$ev" || { echo "stray OpenBao pod without identity (or check missing)"; exit 1; }
+# the section listing plane pods without an identity must not name an OpenBao pod
+sec=$(sed -n '/plane pods without an identity/,/^$/p' "$ev" | grep -i 'ztd-openbao' || true)
+[ -z "$sec" ] || { echo "OpenBao pod listed without identity: $sec"; exit 1; }
+! grep -q '^- FAIL' "$ev" || { grep '^- FAIL' "$ev"; exit 1; }
+echo ok

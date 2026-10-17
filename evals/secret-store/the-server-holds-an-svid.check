@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# scenario: secret-store / The server holds an SVID
+# level: L2
+# requirement: The server and its jobs are created as declared workloads
+. "$EVAL_ROOT/evals/lib.sh"
+need_cluster
+td=$(python3 -c "import yaml;print(yaml.safe_load(open('$KIND_ZONE'))['zone']['trustDomain'])")
+want="spiffe://$td/ns/$MGMT/sa/ztd-openbao"
+echo "expected SPIFFE ID: $want"
+k -n "$MGMT" get pod ztd-openbao-0 -o json | jq -e '[.spec.initContainers[]?.name, .spec.containers[].name] | index("istio-proxy")' >/dev/null || { echo "server pod has no sidecar"; exit 1; }
+# the SPIRE entry
+ent=$(k -n spire-system exec spire-server-0 -c spire-server -- /opt/spire/bin/spire-server entry show -output json 2>/dev/null)
+pod_uid=$(k -n "$MGMT" get pod ztd-openbao-0 -o jsonpath='{.metadata.uid}')
+jq -e --arg id "/ns/$MGMT/sa/ztd-openbao" --arg uid "pod-uid:$pod_uid" '.entries[] | select(.spiffe_id.path==$id and ([.selectors[].value]|index($uid)))' <<<"$ent" >/dev/null \
+  || { echo "no SPIRE entry for $want bound to the current pod uid"; exit 1; }
+echo "SPIRE entry exists for the current pod"
+# the certificate in use by the proxy
+certs=$(k -n "$MGMT" exec ztd-openbao-0 -c istio-proxy -- curl -s localhost:15000/certs)
+jq -e --arg w "$want" '[.certificates[].cert_chain[]?.subject_alt_names[]?.uri] | index($w)' <<<"$certs" >/dev/null || { echo "proxy certificate in use does not carry $want"; exit 1; }
+echo "proxy certificate in use carries $want"

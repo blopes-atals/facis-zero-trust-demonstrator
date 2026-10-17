@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# scenario: secret-store / Without a mesh the release still installs
+# level: L2
+# requirement: The server and its jobs are created as declared workloads
+. "$EVAL_ROOT/evals/lib.sh"
+echo "needs a disposable cluster with no injection webhook (scripts/secrets/baseline.sh installs the umbrella with mesh.mode none on the current context); kind-ztd carries the zone under test and must not be reinstalled meshless"
+exit 77

@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# scenario: secret-store / The CI gate renders the chart
+# level: L1
+# requirement: The chart carries the upstream server as its locked dependency
+. "$EVAL_ROOT/evals/lib.sh"
+out=$(cd "$EVAL_ROOT" && timeout 600 scripts/ci/check-charts.sh deployment/helm/ztd-openbao 2>&1); rc=$?
+echo "$out" | tail -12
+[ $rc -eq 0 ] || { grep -qi 'could not resolve\|no such host\|dial tcp' <<<"$out" && exit 77; echo "exit $rc"; exit 1; }
+grep -qi 'ztd-openbao' <<<"$out" || { echo "chart not mentioned in output"; exit 1; }
+# the default run covers it too: the chart directory is under deployment/helm/
+[ -f "$EVAL_ROOT/deployment/helm/ztd-openbao/Chart.yaml" ] && [ -f "$EVAL_ROOT/deployment/helm/ztd-openbao/ci/values.yaml" ] || exit 1

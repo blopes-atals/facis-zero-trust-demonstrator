@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# scenario: mesh-identity-enrolment / A revisioned zone is refused before anything is installed
+# level: L1
+# requirement: A zone installs from an empty cluster in one order, idempotently
+. "$EVAL_ROOT/evals/lib.sh"
+zone_with rev "d.setdefault('mesh',{})['revision']='canary-1'"
+for cmd in render install; do
+  cache; rm -rf "$EVAL_TMP/out"; mkdir -p "$EVAL_TMP/out"
+  out=$(ZONE_VALUES=$EVAL_TMP/rev.yaml RENDER_DIR=$EVAL_TMP/out KUBE_CONTEXT=kind-ztd "$INSTALL" $cmd 2>&1); rc=$?
+  echo "[$cmd rc=$rc] $out" | head -5
+  [ $rc -ne 0 ] || { echo "$cmd: expected non-zero"; exit 1; }
+  grep -q 'mesh.revision' <<<"$out" && grep -q 'canary-1' <<<"$out" || { echo "$cmd: message must name mesh.revision and its value"; exit 1; }
+  [ -z "$(ls -A "$EVAL_TMP/out")" ] || { echo "$cmd: something rendered before refusal"; exit 1; }
+done
+# nothing installed by the refused install
+! helm --kube-context kind-ztd list -A 2>/dev/null | grep -q canary || true

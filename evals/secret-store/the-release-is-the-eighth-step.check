@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# scenario: secret-store / The release is the eighth step
+# level: L1
+# requirement: OpenBao is a release of its own, installed after the registration rule
+. "$EVAL_ROOT/evals/lib.sh"
+cache
+out=$("$INSTALL" plan 2>&1); echo "$out" | tail -3
+last=$(grep -E '^\s*[0-9]+/[0-9]+ ' <<<"$out" | tail -1)
+grep -Eq '^\s*8/8\s+ztd-openbao\s+into ztd-mgmt\s+chart deployment/helm/ztd-openbao' <<<"$last" || { echo "last step is not ztd-openbao into ztd-mgmt from deployment/helm/ztd-openbao: $last"; exit 1; }
+z=$(grep -n ' zone-policy ' <<<"$out" | head -1 | cut -d: -f1); o=$(grep -n ' ztd-openbao ' <<<"$out" | head -1 | cut -d: -f1)
+[ "$z" -lt "$o" ] || { echo "zone-policy not before ztd-openbao"; exit 1; }
