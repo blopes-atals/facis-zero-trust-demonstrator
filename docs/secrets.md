@@ -79,10 +79,13 @@ token is revoked. Credentials reach `curl` through header and body files in a me
 a command line, and the Job's log names states and HTTP codes only.
 
 **The upgrade rerun.** The Job's name carries a hash of its script and of the whole of the chart's
-values, the upstream chart's included. An upgrade that changes any value, such as the server's image,
-resources or storage, which restart the server sealed, renders a Job with a new name: Helm creates
-it, it unseals the restarted server before `--wait` gives up, and Helm removes the previous Job. An
-upgrade with the same values renders the same name, so the manifest is identical and no Job runs.
+values, the upstream chart's included. The server's StatefulSet uses the `RollingUpdate` strategy
+(the upstream default, `OnDelete`, would leave a changed value unapplied until someone deleted the
+pod by hand), so an upgrade that changes the server's pod template, such as its image or resources,
+restarts the server, which comes back sealed. The same change renders a Job with a new name: Helm
+creates it, it waits for the pod of the new revision, unseals it before `--wait` gives up, and Helm
+removes the previous Job. An upgrade with the same values renders the same name, so the manifest is
+identical and no Job runs.
 
 The `ztd-verify` policy can read `sys/mounts/*`, read `secret/data/ztd-fixture/*`, use the
 `ztd-fixture` transit key, and look up and renew itself. Nothing else.

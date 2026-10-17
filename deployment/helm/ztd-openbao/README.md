@@ -59,6 +59,7 @@ helm upgrade --install ztd-openbao deployment/helm/ztd-openbao -n ztd-mgmt \
 | `openbao.server.dataStorage.storageClass` | `null` | Zone fact `zone.storageClass`; required with the bundled server |
 | `openbao.server.extraLabels` | the identity label | Labels of the server pods; the identity label makes them declared workloads under `zone-policy` |
 | `openbao.server.affinity` | node pin or the upstream anti-affinity | A template evaluated by the upstream chart: the node affinity of `global.pin.node` when set |
+| `openbao.server.updateStrategyType` | `RollingUpdate` | Not the upstream `OnDelete`: an upgrade that changes the pod template restarts the server, and the rerun bootstrap unseals it |
 | `openbao.*` | see `values.yaml` | Passed to the upstream chart: standalone, file storage, one replica, image pinned by digest, no injector, no auth-delegator |
 | `bootstrap.image` | `curlimages/curl` by digest | Image of the bootstrap Job and the verification hook |
 | `external.address` | `""` | An OpenBao the zone does not own; exclusive with `openbao.server.enabled` |

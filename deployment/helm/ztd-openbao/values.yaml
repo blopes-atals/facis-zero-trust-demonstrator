@@ -84,6 +84,11 @@ openbao:
       enabled: false
     standalone:
       enabled: true
+    # RollingUpdate, not the upstream default OnDelete: an upgrade that changes the server's pod
+    # template restarts the server, and the bootstrap Job, renamed by the same change, unseals the
+    # new pod (it waits for the pod of the StatefulSet's update revision). Under OnDelete a changed
+    # value would wait for someone to delete the pod by hand, and the server would come back sealed.
+    updateStrategyType: RollingUpdate
     dataStorage:
       size: 1Gi
       # zone fact: zone.storageClass; required with the bundled server
