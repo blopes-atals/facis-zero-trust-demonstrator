@@ -13,7 +13,9 @@ meshed zone its pod carries the identity label, so it is created with a sidecar 
 (spiffe://<trust domain>/ns/<namespace>/sa/ztd-verify-openbao) and reads the server as mesh mTLS;
 the native sidecar exits with the verify container. The ServiceAccount of its own keeps that SPIFFE
 ID apart from any other labelled pod of the namespace left on the default ServiceAccount, so a mesh
-policy for OpenBao can name the hook. It is a regular resource, so it exists before the hook runs.
+policy for OpenBao can name the hook. The ServiceAccount is a hook of the same phase and delete
+policy as the Job, one weight lower, so Helm creates it just before the Job and replaces both on the
+next run; in external mode the release thus holds the verification hook and nothing else.
 */ -}}
 {{- $bundled := eq (include "ztd-openbao.bundled" .) "true" }}
 {{- if or $bundled .Values.external.address }}
@@ -26,6 +28,8 @@ metadata:
   namespace: {{ .Values.managementNamespace }}
   labels:
     {{- include "ztd-openbao.labels" . | nindent 4 }}
+  annotations:
+    {{- include "ztd-openbao.hook.annotations" (dict "phase" "post-install,post-upgrade" "band" "platform" "offset" 9 "deletePolicy" "before-hook-creation") | nindent 4 }}
 automountServiceAccountToken: false
 ---
 apiVersion: batch/v1

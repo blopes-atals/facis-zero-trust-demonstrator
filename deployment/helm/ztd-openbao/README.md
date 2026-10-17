@@ -26,7 +26,8 @@ The chart wraps the upstream `openbao` chart 0.28.3 (OpenBao v2.5.4), a dependen
   restart the server sealed) runs it again and unseals the server; an unchanged upgrade renders the
   same name;
 - **the verification hook** `ztd-verify-openbao`, with a ServiceAccount of its own of the same name
-  (no role, no API token), post-install and post-upgrade, `platform` band
+  (no role, no API token; a hook too, weight 49, so it is created just before the Job and even an
+  external-mode release holds hooks only), post-install and post-upgrade, `platform` band
   offset 10 (weight 50; `templates/_hooks.tpl` is a copy of the umbrella's helper), which fails the
   release unless the server is initialised and unsealed with both engines, and with the bundled
   server reads the fixture value (a hash, never the value) and round-trips the fixture transit key;

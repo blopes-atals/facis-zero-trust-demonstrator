@@ -140,7 +140,8 @@ mesh label or its `default-deny` policy is missing, or if a control-plane namesp
 injection label. The `zone-policy` chart uses the `identity` band (20–39) through a copy of the
 helper, so the scheme reads the same across the charts: `server-healthy` (20),
 `trust-bundle-published` (25), `registrations-reconciled` (30). The `ztd-openbao` chart uses the
-`platform` band through another copy: `ztd-verify-openbao` (50).
+`platform` band through another copy: `ztd-verify-openbao` (50), whose ServiceAccount is a hook
+of weight 49 so that Helm creates it just before the Job.
 
 **The bands order jobs within a release; the installer orders the releases.** A zone is eight
 releases (the umbrella, the SPIRE and Istio upstream charts, `zone-policy`, `ztd-openbao`), installed
