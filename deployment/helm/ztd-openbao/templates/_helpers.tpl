@@ -1,26 +1,72 @@
 {{/*
-OpenBao helpers (docs/secrets.md).
-
-ztd.openbao.address: the server the bootstrap and the verification talk to - the external address
-when one is configured, otherwise the bundled server's Service, named the way the upstream chart
-names it (its fullname: the release name when that already contains "openbao", else
-<release>-openbao).
+Common labels for everything the chart creates.
 */}}
-{{- define "ztd.openbao.address" -}}
-{{- if .Values.openbaoExternal.address -}}
-{{- .Values.openbaoExternal.address -}}
+{{- define "ztd-openbao.labels" -}}
+app.kubernetes.io/name: {{ .Chart.Name }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version }}
+{{- end }}
+
+{{/*
+ztd-openbao.bundled: "true" when the release installs the server (openbao.server.enabled), else "".
+*/}}
+{{- define "ztd-openbao.bundled" -}}
+{{- if eq (toString .Values.openbao.server.enabled) "true" }}true{{ end -}}
+{{- end }}
+
+{{/*
+ztd-openbao.address: the server the bootstrap and the verification talk to - the external address
+when one is configured, otherwise the bundled server's main Service, named the way the upstream
+chart names it (its fullname: the release name when that already contains "openbao", else
+<release>-openbao). The main Service publishes not-ready addresses, so a sealed server is reachable
+through it, and through the mesh: Kubernetes marks the endpoint ready and Istio routes to it.
+*/}}
+{{- define "ztd-openbao.address" -}}
+{{- if .Values.external.address -}}
+{{- .Values.external.address -}}
 {{- else -}}
 {{- $fullname := printf "%s-openbao" .Release.Name -}}
 {{- if contains "openbao" .Release.Name }}{{ $fullname = .Release.Name }}{{ end -}}
-{{- printf "http://%s.%s.svc:8200" $fullname .Values.planes.management.namespace -}}
+{{- printf "http://%s.%s.svc:8200" $fullname .Values.managementNamespace -}}
 {{- end -}}
 {{- end }}
 
 {{/*
-ztd.openbao.bootstrapScript: the bootstrap Job's script (POSIX sh, curl image). See the state table in
-openbao-bootstrap.yaml. Inputs: BAO_ADDR, SECRET. Never prints a credential.
+ztd-openbao.podIdentity: the identity label the zone-policy registration rule selects, on every pod
+of the release, so that in a meshed zone each is created with the injector's sidecar, a SPIRE entry
+and an SVID (spiffe://<trust domain>/ns/<namespace>/sa/<service account>). The native sidecar exits
+with the job's container, so the jobs complete. Without a mesh the label is inert.
 */}}
-{{- define "ztd.openbao.bootstrapScript" -}}
+{{- define "ztd-openbao.podIdentity" -}}
+spiffe.io/spire-managed-identity: "true"
+{{- end }}
+
+{{/*
+ztd-openbao.pinAffinity: the node pin of a job's pod (global.pin.node), the same required node
+affinity on kubernetes.io/hostname that openbao.server.affinity gives the server. TEMPORARY,
+participant zones only: the provider's pod network masquerades cross-node pod traffic, so a meshed
+pod on another node than istiod never passes its proxy's readiness; the pin falls when the
+provider's network is fixed (docs/environments/osc.md). Renders nothing without a pin.
+*/}}
+{{- define "ztd-openbao.pinAffinity" -}}
+{{- with (.Values.global.pin).node }}
+affinity:
+  nodeAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: kubernetes.io/hostname
+              operator: In
+              values: [{{ . | quote }}]
+{{- end }}
+{{- end }}
+
+{{/*
+ztd-openbao.bootstrapScript: the bootstrap Job's script (POSIX sh, curl image). See the state table in
+bootstrap.yaml. Inputs: BAO_ADDR, SECRET. Never prints a credential.
+*/}}
+{{- define "ztd-openbao.bootstrapScript" -}}
 umask 077
 W=/work
 SA=/var/run/secrets/kubernetes.io/serviceaccount
