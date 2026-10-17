@@ -96,6 +96,7 @@ use_token() { printf 'X-Vault-Token: %s' "$1" > "$W/btoken"; }
 no_token() { rm -f "$W/btoken"; }
 jstr() { tr -d '\n' < "$2" | sed -n "s/.*\"$1\": *\"\([^\"]*\)\".*/\1/p"; }
 jbool() { tr -d '\n ' < "$2" | grep -o "\"$1\":[a-z]*" | head -1 | cut -d: -f2; }
+jnum() { tr -d '\n ' < "$2" | grep -o "\"$1\":[0-9]*" | head -1 | cut -d: -f2; }
 # field KEY -> the decoded value of one key of the Secret read last into $W/secret
 field() {
   sed -n 's/.*"data":{\([^}]*\)}.*/\1/p' "$W/secret" | tr ',' '\n' | sed -n "s/^\"$1\":\"\(.*\)\"$/\1/p" | base64 -d
@@ -116,21 +117,43 @@ patch_secret() {
   [ "$code" = 200 ] || die "patching Secret $SECRET: HTTP $code"
 }
 health() {
+  : > "$W/bbody"
   bao GET "sys/health?uninitcode=200&sealedcode=200&standbycode=200" >/dev/null || true
   initialized=$(jbool initialized "$W/bbody"); sealed=$(jbool sealed "$W/bbody")
+}
+
+# unseal_server WHAT: unseal the server that answers through the Service with the key of the Secret
+# read last; WHAT names it in the log.
+unseal_server() {
+  printf '{"key":"%s"}' "$(field unseal-key)" > "$W/req"
+  code=$(bao PUT sys/unseal "$W/req" || true); rm -f "$W/req"
+  if [ "$code" != 200 ] || [ "$(jbool sealed "$W/bbody")" != false ]; then die "unseal of $1: HTTP $code"; fi
+  rm -f "$W/bbody"
+  say "unsealed $1"
 }
 
 # The server pod must run the StatefulSet's update revision before the server is asked anything: on
 # an upgrade that restarts it, the previous pod (unsealed) may still answer through the Service,
 # which publishes not-ready and terminating addresses, and an unseal sent to it would leave the
-# replacement sealed. Compared: the StatefulSet's status.updateRevision and the pod's label
-# controller-revision-hash, on a pod that is not being deleted.
+# replacement sealed. Compared: the StatefulSet's status.updateRevision, once its controller has seen
+# the current spec (status.observedGeneration at least metadata.generation; before that the update
+# revision is still the previous one), and the pod's label controller-revision-hash, on a pod that is
+# not being deleted.
+#
+# A pod of the previous revision that is sealed (it restarted outside the lifecycle before this
+# upgrade) is not ready, and the StatefulSet (OrderedReady) never replaces a pod that is not ready,
+# so the upgrade would wait for ever: such a pod is unsealed with the stored key, it turns ready, and
+# the rolling update replaces it with the pod this Job then unseals.
+read_secret
 say "waiting for pod $POD to run the update revision of StatefulSet $STS"
 for i in $(seq 1 60); do
   want=""; have=""; deleting=yes
   code=$(kube GET "/apis/apps/v1/namespaces/$NS/statefulsets/$STS")
   [ "$code" = 200 ] || die "reading StatefulSet $STS: HTTP $code"
-  want=$(jstr updateRevision "$W/kbody")
+  generation=$(jnum generation "$W/kbody"); observed=$(jnum observedGeneration "$W/kbody")
+  if [ -n "$generation" ] && [ -n "$observed" ] && [ "$observed" -ge "$generation" ]; then
+    want=$(jstr updateRevision "$W/kbody")
+  fi
   code=$(kube GET "/api/v1/namespaces/$NS/pods/$POD")
   case "$code" in
     200) have=$(jstr controller-revision-hash "$W/kbody")
@@ -139,7 +162,14 @@ for i in $(seq 1 60); do
     *) die "reading pod $POD: HTTP $code" ;;
   esac
   [ -n "$want" ] && [ "$have" = "$want" ] && [ "$deleting" = no ] && break
-  [ "$i" = 60 ] && die "pod $POD does not run revision ${want:-unknown} of StatefulSet $STS (found ${have:-no pod})"
+  if [ -n "$want" ] && [ -n "$have" ] && [ "$have" != "$want" ] && [ "$deleting" = no ] && [ "$have_secret" = yes ]; then
+    health
+    if [ "$initialized" = true ] && [ "$sealed" = true ]; then
+      say "pod $POD of the previous revision is sealed, and the StatefulSet replaces only a ready pod"
+      unseal_server "pod $POD of the previous revision"
+    fi
+  fi
+  [ "$i" = 60 ] && die "pod $POD does not run revision ${want:-unknown} of StatefulSet $STS (found ${have:-no pod}). A sealed pod is not ready and the StatefulSet does not replace it: check 'bao status' in $POD, unseal it with scripts/secrets/unseal.sh and rerun the upgrade (docs/troubleshooting.md)"
   sleep 5
 done
 rm -f "$W/kbody"
@@ -182,10 +212,7 @@ elif [ "$have_secret" = no ]; then
 fi
 
 if [ "$sealed" != false ]; then
-  printf '{"key":"%s"}' "$(field unseal-key)" > "$W/req"
-  code=$(bao PUT sys/unseal "$W/req"); rm -f "$W/req"
-  [ "$code" = 200 ] && [ "$(jbool sealed "$W/bbody")" = false ] || die "unseal: HTTP $code"
-  say "unsealed"
+  unseal_server "pod $POD"
 fi
 
 state=$(field state)
