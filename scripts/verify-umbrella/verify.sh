@@ -122,17 +122,17 @@ say "  revision after the second install: $rev"
 say '' '## 5. Cross-plane calls: the negative case, and the matrix lanes' ''
 say 'Stand-in pods carry the matrix labels; nothing else about them is real. Targets serve HTTP on 8080.' ''
 k -n "$MGMT" run tsa-policy-engine --image="$AGNHOST" --labels=app.kubernetes.io/name=tsa-policy-engine --port=8080 --expose -- netexec --http-port=8080 >/dev/null 2>&1
-k -n "$MGMT" run openbao-standin --image="$AGNHOST" --labels=app.kubernetes.io/name=openbao --port=8080 --expose -- netexec --http-port=8080 >/dev/null 2>&1
+k -n "$MGMT" run openbao-standin --image="$AGNHOST" --labels=app.kubernetes.io/name=openbao-standin --port=8080 --expose -- netexec --http-port=8080 >/dev/null 2>&1
 k -n "$DATA" run data-target --image="$AGNHOST" --labels=app.kubernetes.io/name=data-target --port=8080 --expose -- netexec --http-port=8080 >/dev/null 2>&1
 k -n "$DATA" run data-plain --image="$CURL" --labels=app.kubernetes.io/name=data-plain --command -- sleep 3600 >/dev/null 2>&1
 k -n "$DATA" run pdp-adapter --image="$CURL" --labels=app.kubernetes.io/name=pdp-adapter --command -- sleep 3600 >/dev/null 2>&1
 k -n "$MGMT" run mgmt-probe --image="$CURL" --labels=app.kubernetes.io/name=mgmt-probe --command -- sleep 3600 >/dev/null 2>&1
 k -n "$MGMT" wait --for=condition=Ready pod/tsa-policy-engine pod/openbao-standin pod/mgmt-probe --timeout=180s >/dev/null 2>&1; check $? "management stand-ins Ready"
 k -n "$DATA" wait --for=condition=Ready pod/data-target pod/data-plain pod/pdp-adapter --timeout=180s >/dev/null 2>&1; check $? "data-plane stand-ins Ready"
-expect_deny  "$DATA" data-plain  "http://openbao-standin.$MGMT.svc:8080/hostname"           "unlabelled data-plane pod → openbao (management): DENIED"
+expect_deny  "$DATA" data-plain  "http://openbao-standin.$MGMT.svc:8080/hostname"           "unlabelled data-plane pod → openbao-standin (management): DENIED"
 expect_deny  "$DATA" data-plain  "http://tsa-policy-engine.$MGMT.svc:8080/hostname" "unlabelled data-plane pod → tsa-policy-engine (management): DENIED"
 expect_allow "$DATA" pdp-adapter "http://tsa-policy-engine.$MGMT.svc:8080/hostname" "pdp-adapter → tsa-policy-engine: ALLOWED (matrix lane pdp-adapter-to-tsa)"
-expect_deny  "$DATA" pdp-adapter "http://openbao-standin.$MGMT.svc:8080/hostname"           "pdp-adapter → openbao: DENIED (a lane is one pair, not a licence)"
+expect_deny  "$DATA" pdp-adapter "http://openbao-standin.$MGMT.svc:8080/hostname"           "pdp-adapter → openbao-standin: DENIED (a lane is one pair, not a licence)"
 expect_allow "$DATA" data-plain  "http://data-target.$DATA.svc:8080/hostname"        "data-plane pod → data-plane pod: ALLOWED (intra-plane lane)"
 expect_deny  "$MGMT" mgmt-probe  "http://data-target.$DATA.svc:8080/hostname"        "management pod → data plane: DENIED (default deny is both directions)"
 r=$(k -n "$DATA" exec data-plain -- nslookup "tsa-policy-engine.$MGMT.svc.cluster.local" 2>&1 | tail -3 | tr '\n' ' '); k -n "$DATA" exec data-plain -- nslookup "tsa-policy-engine.$MGMT.svc.cluster.local" >/dev/null 2>&1; check $? "DNS bypass: the denied pod still resolves names" "$r"

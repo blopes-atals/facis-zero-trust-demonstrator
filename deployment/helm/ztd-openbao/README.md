@@ -16,7 +16,10 @@ The chart wraps the upstream `openbao` chart 0.28.3 (OpenBao v2.5.4), a dependen
   ready), with its ServiceAccount, Role and RoleBinding, and under Cilium a `CiliumNetworkPolicy` to
   the `kube-apiserver` entity for its pods. It initialises the server once, keeps the unseal key in
   the Secret `ztd-openbao-bootstrap`, unseals, enables KV version 2 at `secret/` and transit at
-  `transit/`, issues a narrow periodic verification token and revokes the root token. Its name
+  `transit/`, issues a narrow periodic verification token and revokes the root token. It first
+  waits until the server pod runs the StatefulSet's update revision (its Role reads that one
+  StatefulSet and that one pod), so on an upgrade it unseals the new pod, not the one being
+  replaced. Its name
   hashes the script and the whole of the values: an upgrade that changes a value (and so may
   restart the server sealed) runs it again and unseals the server; an unchanged upgrade renders the
   same name;

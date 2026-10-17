@@ -64,7 +64,8 @@ affinity:
 
 {{/*
 ztd-openbao.bootstrapScript: the bootstrap Job's script (POSIX sh, curl image). See the state table in
-bootstrap.yaml. Inputs: BAO_ADDR, SECRET. Never prints a credential.
+bootstrap.yaml. Inputs: BAO_ADDR, SECRET, STS and POD (the server's StatefulSet and its pod). Never
+prints a credential.
 */}}
 {{- define "ztd-openbao.bootstrapScript" -}}
 umask 077
@@ -118,6 +119,30 @@ health() {
   bao GET "sys/health?uninitcode=200&sealedcode=200&standbycode=200" >/dev/null || true
   initialized=$(jbool initialized "$W/bbody"); sealed=$(jbool sealed "$W/bbody")
 }
+
+# The server pod must run the StatefulSet's update revision before the server is asked anything: on
+# an upgrade that restarts it, the previous pod (unsealed) may still answer through the Service,
+# which publishes not-ready and terminating addresses, and an unseal sent to it would leave the
+# replacement sealed. Compared: the StatefulSet's status.updateRevision and the pod's label
+# controller-revision-hash, on a pod that is not being deleted.
+say "waiting for pod $POD to run the update revision of StatefulSet $STS"
+for i in $(seq 1 60); do
+  want=""; have=""; deleting=yes
+  code=$(kube GET "/apis/apps/v1/namespaces/$NS/statefulsets/$STS")
+  [ "$code" = 200 ] || die "reading StatefulSet $STS: HTTP $code"
+  want=$(jstr updateRevision "$W/kbody")
+  code=$(kube GET "/api/v1/namespaces/$NS/pods/$POD")
+  case "$code" in
+    200) have=$(jstr controller-revision-hash "$W/kbody")
+         grep -q '"deletionTimestamp"' "$W/kbody" || deleting=no ;;
+    404) : ;;
+    *) die "reading pod $POD: HTTP $code" ;;
+  esac
+  [ -n "$want" ] && [ "$have" = "$want" ] && [ "$deleting" = no ] && break
+  [ "$i" = 60 ] && die "pod $POD does not run revision ${want:-unknown} of StatefulSet $STS (found ${have:-no pod})"
+  sleep 5
+done
+rm -f "$W/kbody"
 
 say "waiting for $BAO_ADDR"
 no_token

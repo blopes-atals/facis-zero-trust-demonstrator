@@ -88,7 +88,10 @@ The `ztd-verify` policy can read `sys/mounts/*`, read `secret/data/ztd-fixture/*
 `ztd-fixture` transit key, and look up and renew itself. Nothing else.
 
 The Job's Role may create Secrets in the management namespace — Kubernetes RBAC cannot limit `create`
-to one name — and may read and patch only `ztd-openbao-bootstrap`.
+to one name — and may read and patch only `ztd-openbao-bootstrap`. It may also read, by name, the
+StatefulSet `ztd-openbao` and the pod `ztd-openbao-0`: before it asks the server anything, the Job
+waits until that pod runs the StatefulSet's update revision, so that on an upgrade it never unseals
+the pod being replaced (still listed by the Service) and leaves the new one sealed.
 
 **Network.** The Job reaches the Kubernetes API from the management plane; on a meshed zone the call
 leaves through its sidecar as plain TCP, since the API server has no sidecar. Under Cilium the chart
