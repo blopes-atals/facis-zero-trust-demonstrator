@@ -179,21 +179,50 @@ Anyone who can read Secrets in the management namespace can unseal the store and
 | `istiod` | ClusterRole `istio-reader-clusterrole-istio-system` (ServiceAccount `istio-reader-service-account` of `istio-system`) | `get`, `list`, `watch` on Secrets in every namespace | every Secret of the cluster; the account exists for multi-cluster discovery, which a zone does not use |
 | `istiod` | ClusterRole `istiod-gateway-controller-istio-system` (ServiceAccount `istiod`) | `create`, `patch`, `update` on Deployments in every namespace | indirect: a Deployment created in `ztd-mgmt` could mount the Secret |
 | `spire` | ClusterRole and ClusterRoleBinding `spire-agent` (ServiceAccount `spire-agent` of `spire-system`, a DaemonSet on every node) | `get` on `nodes`, `pods` and `nodes/proxy` | indirect: the kubelet authorizes a websocket exec as `get` on `nodes/proxy`, so the account can exec into any pod on a node whose kubelet it reaches, its own node at least: istiod, which reads every Secret, and the bootstrap Job's pod, which holds the key |
+| `spire` | ClusterRole and ClusterRoleBinding `spire-system-spire-controller-manager` (ServiceAccount `spire-server` of `spire-system`, the SPIRE server's StatefulSet) | `get`, `list`, `watch`, `patch` on ValidatingWebhookConfigurations, not limited by name | indirect, at write time: a patch can add a webhook on Secrets to any existing configuration and point it at an endpoint of the account's choosing; the API server then sends that endpoint the whole bootstrap Secret each time it is created or updated, because an admission review carries the object |
 
-The other releases (`ztd`, `spire-crds`, `istio-base`, `istio-cni`, `zone-policy`) render no Role
-or ClusterRole that names Secrets or creates workloads, and `spire` renders none besides the agent's
-`nodes/proxy`. No other rendered role grants `nodes/proxy`, `pods/exec`, `pods/attach` or the
-creation of `serviceaccounts/token`, the other ways into a pod or an account that reads the
-Secret. The verification hook reads its token from a Secret volume, holds no role and mounts no API
-token, and the upstream chart's auth-delegator binding is off. So whoever holds the token of istiod,
-of the istio-reader account or of the SPIRE agent can unseal the store: istiod is the mesh's control
-plane, which already configures every sidecar of the zone, and the two Istio accounts sit in
-`istio-system`, where only the control plane runs; the agent's token sits in the agent's pod on every
-node, so a compromised node yields it. Outside the eight releases, the cluster's CNI may add more: Cilium's own
-chart, as installed on kind, binds its operator (`cilium-operator` of `kube-system`) to `get`,
-`list`, `watch` on Secrets in every namespace. Cluster administrators, the built-in `admin` and
-`edit` roles where a binding grants them in `ztd-mgmt`, and any binding added outside the charts,
-still read the Secret.
+The `spire` chart's hook accounts `spire-server-pre-upgrade`, `spire-server-post-install` and
+`spire-server-post-upgrade` hold `get` and `patch` on ValidatingWebhookConfigurations too, but only
+on `spire-system-spire-controller-manager-webhook` by name. A patch of that one configuration
+could add a Secret rule as well, so they are the same write-time path, held briefly: the accounts,
+their roles and bindings are Helm hooks that exist only while their Job runs during an install or an
+upgrade, and are deleted when it ends.
+
+The sweep behind the table covers every Role and ClusterRole of the eight releases, and every
+binding refers to one of them. Grants in these classes add no holder beyond the table and the hook
+accounts above:
+
+- Secrets: istiod's Role `istiod` also creates, updates and deletes Secrets, but only in
+  `istio-system`, and istiod already reads every Secret of the cluster.
+- Mutating and validating webhook configurations: istiod may update both kinds, not limited by name,
+  which is the same write-time path as the SPIRE server's; it adds no reach beyond istiod's
+  cluster-wide read of Secrets.
+- Workloads: no role creates or patches Pods, DaemonSets, StatefulSets, Jobs, CronJobs or
+  ReplicaSets; the only workload write is istiod's Deployments, in the table. The bootstrap and the
+  zone-policy check only `get` a workload they name.
+- `pods/exec`, `pods/attach`, `pods/portforward`, `serviceaccounts/token`: no role grants them;
+  `nodes/proxy` is the SPIRE agent's alone.
+- RBAC: no role writes Roles, ClusterRoles or their bindings, or holds `escalate`, `bind` or
+  `impersonate`.
+- Wildcards: istiod and istio-reader read every resource of the Istio and Gateway API groups, which
+  hold no Secrets, and istiod has every verb on `ingresses/status` only.
+- API extensions: no role writes CustomResourceDefinitions or APIServices. The `istio-base` and
+  `spire-crds` releases render their CRDs, which the installer applies; istiod and istio-reader
+  only read them, and the SPIRE server writes only the SPIRE custom resources.
+
+The releases `ztd`, `spire-crds`, `istio-base`, `istio-cni` and `zone-policy` render nothing in
+these classes. The verification hook reads its token from a Secret volume, holds no role and mounts
+no API token, and the upstream chart's auth-delegator binding is off. So whoever holds the token of
+istiod, of the istio-reader account, of the SPIRE agent or of the SPIRE server can unseal the
+store, and so can a SPIRE hook account while its Job runs: istiod is the mesh's control plane,
+which already configures every sidecar of the zone, and the two Istio accounts sit in
+`istio-system`, where only the control plane runs; the agent's token sits in the agent's pod on
+every node, so a compromised node yields it; the server's token sits in the SPIRE server's pod,
+which already issues every workload identity of the zone. Outside the eight releases, the cluster's
+CNI may add more: Cilium's own chart, as installed on kind, binds its operator (`cilium-operator`
+of `kube-system`) to `get`, `list`, `watch` on Secrets in every namespace. Cluster administrators,
+the built-in `admin` and `edit` roles where a binding grants them in `ztd-mgmt`, and any binding
+added outside the charts, still read the Secret.
 
 The production path removes the key from the cluster: an auto-unseal backend (a cloud KMS, an HSM
 through PKCS#11, or transit unseal against another OpenBao), as the XFSC deployment offers, or
