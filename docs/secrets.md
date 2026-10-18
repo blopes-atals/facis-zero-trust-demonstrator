@@ -178,14 +178,18 @@ Anyone who can read Secrets in the management namespace can unseal the store and
 | `istiod` | ClusterRole `istiod-clusterrole-istio-system` (ServiceAccount `istiod` of `istio-system`) | `get`, `list`, `watch` on Secrets in every namespace | every Secret of the cluster, the bootstrap Secret included: istiod reads the TLS credentials of gateways and the kubeconfigs of remote clusters |
 | `istiod` | ClusterRole `istio-reader-clusterrole-istio-system` (ServiceAccount `istio-reader-service-account` of `istio-system`) | `get`, `list`, `watch` on Secrets in every namespace | every Secret of the cluster; the account exists for multi-cluster discovery, which a zone does not use |
 | `istiod` | ClusterRole `istiod-gateway-controller-istio-system` (ServiceAccount `istiod`) | `create`, `patch`, `update` on Deployments in every namespace | indirect: a Deployment created in `ztd-mgmt` could mount the Secret |
+| `spire` | ClusterRole and ClusterRoleBinding `spire-agent` (ServiceAccount `spire-agent` of `spire-system`, a DaemonSet on every node) | `get` on `nodes`, `pods` and `nodes/proxy` | indirect: the kubelet authorizes a websocket exec as `get` on `nodes/proxy`, so the account can exec into any pod on a node whose kubelet it reaches, its own node at least: istiod, which reads every Secret, and the bootstrap Job's pod, which holds the key |
 
-The other releases (`ztd`, `spire-crds`, `spire`, `istio-base`, `istio-cni`, `zone-policy`) render
-no Role or ClusterRole that names Secrets or creates workloads. The verification hook reads its
-token from a Secret volume, holds no role and mounts no API token, and the upstream chart's
-auth-delegator binding is off. So whoever holds the token of istiod or of the istio-reader account
-can unseal the store: istiod is the mesh's control plane, which already configures every sidecar of the
-zone, and both accounts sit in `istio-system`, where only
-the control plane runs. Outside the eight releases, the cluster's CNI may add more: Cilium's own
+The other releases (`ztd`, `spire-crds`, `istio-base`, `istio-cni`, `zone-policy`) render no Role
+or ClusterRole that names Secrets or creates workloads, and `spire` renders none besides the agent's
+`nodes/proxy`. No other rendered role grants `nodes/proxy`, `pods/exec`, `pods/attach` or the
+creation of `serviceaccounts/token`, the other ways into a pod or an account that reads the
+Secret. The verification hook reads its token from a Secret volume, holds no role and mounts no API
+token, and the upstream chart's auth-delegator binding is off. So whoever holds the token of istiod,
+of the istio-reader account or of the SPIRE agent can unseal the store: istiod is the mesh's control
+plane, which already configures every sidecar of the zone, and the two Istio accounts sit in
+`istio-system`, where only the control plane runs; the agent's token sits in the agent's pod on every
+node, so a compromised node yields it. Outside the eight releases, the cluster's CNI may add more: Cilium's own
 chart, as installed on kind, binds its operator (`cilium-operator` of `kube-system`) to `get`,
 `list`, `watch` on Secrets in every namespace. Cluster administrators, the built-in `admin` and
 `edit` roles where a binding grants them in `ztd-mgmt`, and any binding added outside the charts,
