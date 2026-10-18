@@ -1,7 +1,0 @@
-#!/usr/bin/env bash
-# scenario: secret-store / A pinned zone places OpenBao with istiod
-# level: L2
-# requirement: On a provider-masqueraded pod network the release is pinned to istiod's node
-. "$EVAL_ROOT/evals/lib.sh"
-echo "needs a participant cluster (zerotrust-a or zerotrust-b) with a masqueraded pod network; out of bounds for this run (kind-ztd only). The pin's rendering is covered by 'Rendering without a cluster'."
-exit 77

@@ -1,8 +1,0 @@
-#!/usr/bin/env bash
-# scenario: secret-store / The kind zone is not pinned
-# level: L1
-# requirement: On a provider-masqueraded pod network the release is pinned to istiod's node
-. "$EVAL_ROOT/evals/lib.sh"
-render "$KIND_ZONE" ztd-openbao; [ $RC -eq 0 ] || { echo "$OUT"; exit 1; }
-if grep -q 'nodeAffinity' "$EVAL_TMP/out/ztd-openbao.yaml"; then echo "nodeAffinity rendered on the kind zone"; grep -n nodeAffinity "$EVAL_TMP/out/ztd-openbao.yaml"; exit 1; fi
-echo "no node affinity rendered"

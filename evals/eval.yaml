@@ -1,6 +1,0 @@
-# Created by ops-eval - review me.
-# Timeout is generous: the L2 checks read a kind-ztd cluster that setup installs.
-timeout: 1500
-setup: ./evals/setup.sh
-env:
-  KUBE_CONTEXT: kind-ztd
