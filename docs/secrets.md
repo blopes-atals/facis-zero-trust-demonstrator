@@ -204,8 +204,9 @@ accounts above:
   `nodes/proxy` is the SPIRE agent's alone.
 - RBAC: no role writes Roles, ClusterRoles or their bindings, or holds `escalate`, `bind` or
   `impersonate`.
-- Wildcards: istiod and istio-reader read every resource of the Istio and Gateway API groups, which
-  hold no Secrets, and istiod has every verb on `ingresses/status` only.
+- Wildcards: istiod and istio-reader read every resource of the Istio groups, and istiod every
+  resource of the Gateway API groups, where istio-reader reads only `gateways`. These groups hold
+  no Secrets, and istiod has every verb on `ingresses/status` only.
 - API extensions: no role writes CustomResourceDefinitions or APIServices. The `istio-base` and
   `spire-crds` releases render their CRDs, which the installer applies; istiod and istio-reader
   only read them, and the SPIRE server writes only the SPIRE custom resources.
