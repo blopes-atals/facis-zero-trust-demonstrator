@@ -46,6 +46,7 @@ its reasons, the requirements it answers, and what would reopen it.
 | ADR | Decision |
 |---|---|
 | [0011](0011-mock-tee-evidence-format-and-provisioning.md) | Mock TEE evidence — format, release artefact, and provisioning |
+| [0012](0012-central-observability-backends.md) | Collectors per cluster, observability backends central on the demonstrator cluster (refines 0005) |
 
 ## Format
 
