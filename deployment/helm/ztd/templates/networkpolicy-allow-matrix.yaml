@@ -8,7 +8,9 @@ one namespace, as it would then have no network lane.
 Each policy of a row carries the row's L7 owner (ztd.facis.io/l7-owner, the row's l7Owner) under
 mesh.mode sidecar, and none under none or the parked ambient, which has no per-pod proxy and deploys
 no waypoint, so nothing takes an L7 decision there.
+A participant zone only: the demonstrator cluster has no planes.
 */ -}}
+{{- if ne (include "ztd.role" .) "demonstrator" }}
 {{- range .Values.intraPlanePairs }}
 {{- $fromNs := include "ztd.endpointNamespace" (dict "root" $ "endpoint" .from) }}
 {{- $toNs := include "ztd.endpointNamespace" (dict "root" $ "endpoint" .to) }}
@@ -82,4 +84,5 @@ spec:
       ports:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+{{- end }}
 {{- end }}
