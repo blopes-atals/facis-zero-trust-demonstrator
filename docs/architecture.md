@@ -25,7 +25,7 @@ not a pod, `CiliumNetworkPolicy` objects. These are the only permitted paths:
 | PDP adapter → TSA policy engine | ALLOW (mTLS, named pair) | mesh policy |
 | aTLS gateway → cmcd / TCR resolve | ALLOW (named pair) | mesh policy |
 | workloads → OTel collector (export only) | ALLOW (declared bypass, ZT-26) | mesh policy, egress-restricted |
-| workloads → DNS | ALLOW (declared bypass) | network policy layer, port 53 |
+| workloads → DNS | ALLOW (declared bypass) | network policy layer, the resolver's port (53; 8053 on the Gardener clusters) |
 | anything else data → management (SPIRE server, ArgoCD, OpenBao, TSPA, Harbor, estserver, admin APIs) | **DENY** | both layers; ZT-55 matrix test |
 
 ### Declared openings of the network baseline
@@ -38,12 +38,12 @@ APIs), each listed with its reason; they are not rows of the allow matrix, which
 data-plane workloads into the management plane and whose catch-all denial still holds. In
 particular a data-plane workload reaches the SPIRE server on no port. Each opening is rendered by
 the umbrella chart only when the zone file enables it, and is proven by the named check of the
-[mesh identity evidence](evidences/mesh-identity/README.md):
+mesh identity proof, which every run records (see `scripts/verify-mesh-identity/README.md`):
 
 | Opening | Source | Destination | Port | Network policy layer | Proving check |
 |---|---|---|---|---|---|
 | `meshControlPlane` | pods of every plane namespace with the mesh label | istiod (`istio-system`) | 15012 (xDS) | egress in the source namespaces, ingress in `istio-system` (Kubernetes `NetworkPolicy`) | `control-planes-under-default-deny` (proxies SYNCED; no other istiod port reachable) |
-| `controlPlaneWebhooks` | the API server (entities `kube-apiserver`, `host`, `remote-node`) | istiod's webhook; the SPIRE controller-manager's webhook | 15017; 9443 | ingress in `istio-system` and `spire-system` (`CiliumNetworkPolicy`) | `control-planes-under-default-deny`, `install-order-idempotent` (injection and admission work) |
+| `controlPlaneWebhooks` | the API server (entities `kube-apiserver`, `host`, `remote-node`); where the zone names it, the provider's pod that relays the API server's calls (`fromEndpoints`; Gardener's `vpn-shoot` on zone A and zone B) | istiod's webhook; the SPIRE controller-manager's webhook | 15017; 9443 | ingress in `istio-system` and `spire-system` (`CiliumNetworkPolicy`) | `control-planes-under-default-deny`, `install-order-idempotent` (injection and admission work) |
 | `identityServer` | the SPIRE agents on the host network (entities `host`, `remote-node`) | the SPIRE server | 8081 | ingress in `spire-system` (`CiliumNetworkPolicy`) | `control-planes-under-default-deny` (every agent attested) |
 | `kubeApi` | pods of the management-plane namespaces | the API server (entity `kube-apiserver`) | the API server's port | egress in each management-plane namespace (`CiliumNetworkPolicy`) | `install-order-idempotent` (the controllers reconcile) |
 
