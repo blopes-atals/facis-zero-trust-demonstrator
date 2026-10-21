@@ -463,7 +463,8 @@ if [ "$MODE" = kind ] || [ "$DCTX" != "$ZCTX" ]; then
   entry_scale 0; kd -n "$NSB" wait --for=delete pod -l app.kubernetes.io/instance=otel-entry --timeout=60s >>"$LOG" 2>&1
   gw_pod=$(kz -n "$NSM" get pod -l $GW_PODS -o jsonpath='{.items[0].metadata.name}')
   # The gateway's own metrics on its loopback, through a port-forward on a free local port.
-  kz -n "$NSM" port-forward "pod/$gw_pod" :8888 >"$work/pf.log" 2>&1 & pf=$!
+  # kubectl itself in the background (not the kz function, whose subshell would outlive a kill).
+  kubectl --context "$ZCTX" -n "$NSM" port-forward "pod/$gw_pod" :8888 >"$work/pf.log" 2>&1 & pf=$!
   RESTORE+=("kill $pf 2>/dev/null; wait $pf 2>/dev/null")
   pf_port=""
   for _ in $(seq 1 20); do
