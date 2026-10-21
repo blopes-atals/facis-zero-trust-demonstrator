@@ -493,7 +493,7 @@ jobs:
           # file that plants one intra-plane pair, must be refused naming that pair.
           copy="$RUNNER_TEMP/coupling-pairs"
           mkdir -p "$copy/scripts" "$copy/deployment/helm"
-          cp -r scripts/install-zone scripts/ci "$copy/scripts/"
+          cp -r scripts/install-zone scripts/ci scripts/tools "$copy/scripts/"
           cp -r deployment/helm/values deployment/helm/zone-policy deployment/helm/ztd "$copy/deployment/helm/"
           sed -i 's/{{- range .Values.pairs }}/{{- range (initial .Values.pairs) }}/' \
             "$copy/deployment/helm/zone-policy/templates/authorizationpolicy-pairs.yaml"
