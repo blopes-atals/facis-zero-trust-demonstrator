@@ -1,4 +1,4 @@
-%% Render: npx -y -p @mermaid-js/mermaid-cli mmdc --no-font-embed -i docs/diagrams/03-trust-boundaries.mmd -o docs/diagrams/03-trust-boundaries.svg
+%% Render: docker run --rm -u "$(id -u):$(id -g)" -v "$PWD/docs/diagrams:/data" minlag/mermaid-cli --no-font-embed -i /data/03-trust-boundaries.mmd -o /data/03-trust-boundaries.svg (or, with a local Chrome: npx -y -p @mermaid-js/mermaid-cli mmdc --no-font-embed -i docs/diagrams/03-trust-boundaries.mmd -o docs/diagrams/03-trust-boundaries.svg)
 %% Diagram 03, trust boundaries. Illustrates docs/architecture.md section 6; the allow matrix and the bypass list there are the place of record.
 %% --no-font-embed: the embedded webfont is measured before it loads, which clips the widest line of every label in browsers.
 %%{init: {"flowchart": {"nodeSpacing": 30, "rankSpacing": 70, "wrappingWidth": 360}}}%%

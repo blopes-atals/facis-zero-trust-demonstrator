@@ -60,6 +60,7 @@ Direct dependencies of the Go module. Transitive dependencies are listed in the 
 | `github.com/cucumber/gherkin/go/v42` | v42.0.0 | MIT | parses the feature files for the Annex verbatim check (`cmd/bddpack`) |
 | `github.com/cucumber/messages/go/v34` | v34.2.0 | MIT | the Gherkin document model used with it |
 | `github.com/santhosh-tekuri/jsonschema/v6` | v6.0.3 | Apache-2.0 | validates SBOMs and mock attestations against their JSON Schemas at admission |
+| `go.opentelemetry.io/otel`, `/otel/sdk`, `/otel/trace`, `/otel/exporters/otlp/otlptrace/otlptracehttp` | v1.47.0 | Apache-2.0 | the OpenTelemetry Go SDK of the observability proof's echo service (`tools/trace-echo`): W3C trace-context propagation and one server span per request, exported by OTLP/HTTP |
 
 The admission check validates SBOMs against the official CycloneDX 1.5, 1.6 and 1.7 JSON Schemas and
 the schemas they reference (CycloneDX specification tag 1.7.2, Apache-2.0), vendored in
@@ -153,3 +154,36 @@ Cilium 1.18.8, and the same proof is re-run there with the keep opt-in. At every
 (`scripts/mesh-mode/check-upstream-state.sh`) runs alongside the proof. The SPIRE charts are
 upgraded as a pair (`spire-crds` first), because the controller-manager in `spire` is built
 against the CRDs of its `spire-crds`.
+
+## Observability
+
+The observability stack ([ADR-0012](adr/0012-central-observability-backends.md)) is installed from
+upstream charts by `scripts/install-zone/install.sh`: the collectors in each participant zone, the
+backends on the demonstrator cluster. Every chart is pinned by version and by the sha256 of its archive
+(the digest its repository's `index.yaml` publishes), and every image by tag and multi-arch index
+digest, all in `scripts/tools/pins.env`; the installer sets the images on the charts. The values the
+repository sets are in `deployment/helm/values/` (`otel-node.yaml`, `otel-gateway.yaml`,
+`otel-entry.yaml`, `prometheus.yaml`, `alertmanager.yaml`, `jaeger.yaml`).
+`scripts/verify-observability/check-rendered-images.sh` fails CI when a rendered image of these
+releases is not pinned by digest, is not in its list of accepted images with their licences, or is a
+Grafana or Loki component.
+
+| Component | Version | Installed through | Licence | Why |
+|---|---|---|---|---|
+| OpenTelemetry Collector (contrib distribution) | 0.162.0 | chart `opentelemetry-collector` 0.176.1, `https://open-telemetry.github.io/opentelemetry-helm-charts`, three releases: `otel-node`, `otel-gateway` (zones), `otel-entry` (demonstrator cluster) | Apache-2.0 | ZT-27's primary aggregation and export tool: pod logs, SPIRE metrics, OTLP from workloads and proxies, the revocation probe, the mutual-TLS entry |
+| Prometheus | v3.15.0 | chart `prometheus` 29.37.0, `https://prometheus-community.github.io/helm-charts`, release `prometheus`, subcharts off | Apache-2.0 | ZT-27's metrics store, by remote write; the alert rules of ZT-52 and ZT-51 |
+| Alertmanager | v0.34.1 | chart `alertmanager` 2.1.1, same repository, release `alertmanager` | Apache-2.0 | emits every alert (ZT-52, "emit alerts via the observability stack") |
+| Prometheus config reloader | v0.94.1 | the reloader both charts run beside the server | Apache-2.0 | reloads the rules and the route when their ConfigMap changes |
+| Jaeger (v2, all-in-one, Badger storage) | 2.22.0 | chart `jaeger` 4.16.1, `https://jaegertracing.github.io/helm-charts`, release `jaeger` | Apache-2.0 | ZT-27's OTel-compatible tracing backend |
+| cert-manager | v1.21.2 | on the demonstrator cluster: installed there already, found at v1.21.2; on kind: chart `cert-manager` v1.21.2, `https://charts.jetstack.io`, by `scripts/dev/kind-cert-manager-up.sh` | Apache-2.0 | issues the telemetry CA, the entry's server certificate and the zones' client certificates (project chart `deployment/helm/telemetry-issuers`) |
+| Cilium CLI | v0.20.1 | `scripts/tools/install.sh cilium-cli`, CI only | Apache-2.0 | waits for Cilium in the kind run of the observability proof |
+
+**Excluded: Grafana and Loki.** Both are AGPL-3.0, which breaches the Apache-2.0-compatibility rule;
+neither is installed. The Prometheus and Jaeger interfaces, reached with cluster access, are the
+visualization of the observability data on the IONOS cluster until the demonstrator UI takes over
+([Specifications](specifications.md)). The log store is an open point of ADR-0012; whichever is chosen
+gets its row here and its pin in `scripts/tools/pins.env`.
+
+**Upgrades.** An upgrade changes a version and its digest in `scripts/tools/pins.env` (and, for an
+image, the index digest read with `docker buildx imagetools inspect <image>:<tag>`), then reruns
+`scripts/verify-observability/verify.sh` on kind.
