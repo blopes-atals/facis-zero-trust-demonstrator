@@ -25,6 +25,10 @@ server:
     scrape_interval: 15s
     scrape_timeout: 10s
     evaluation_interval: 5s
+  # Telemetry buffered in a zone while its export path was down arrives late, and the collectors' queues
+  # may deliver batches out of order: Prometheus accepts samples up to an hour old.
+  tsdb:
+    out_of_order_time_window: 1h
   persistentVolume:
     enabled: true
     size: ""                     # installer: observabilityBackends.volumes.prometheus
