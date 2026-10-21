@@ -250,7 +250,11 @@ docker run --rm -v "$PWD:/repo" -w /repo -v "$(command -v helm):/usr/local/bin/h
   sh -c 'apk add --no-cache python3 py3-yaml curl >/dev/null && bash --version | head -1 && bash scripts/install-zone/install.sh render'
 ```
 
-Last run (2026-10-17, `bash:3.2` container, GNU bash 3.2.57(1)-release, repository mounted
+Last run (2026-10-21, `bash:3.2` container, GNU bash 3.2.57(1)-release, repository mounted
+read-only): exit 0; the kind zone's ten releases rendered (`ztd` 47 objects, `spire-crds` 3, `spire`
+36, `istio-base` 17, `istiod` 17, `istio-cni` 7, `zone-policy` 15, `ztd-openbao` 13, `otel-node` 3,
+`otel-gateway` 6) and the kind demonstrator's six (`ztd-demonstrator` 10, `telemetry-issuers` 10,
+`otel-entry` 4, `prometheus` 5, `alertmanager` 5, `jaeger` 5). The run before (2026-10-17, `bash:3.2` container, GNU bash 3.2.57(1)-release, repository mounted
 read-only, the chart cache mounted writable): exit 0, all eight releases rendered (`ztd` 38 objects,
 `spire-crds` 3, `spire` 36, `istio-base` 17, `istiod` 17, `istio-cni` 7, `zone-policy` 14,
 `ztd-openbao` 12), no `unbound variable`; `render ztd-openbao` rendered the one release, and `plan`

@@ -452,11 +452,18 @@ if [ "$MODE" = kind ] || [ "$DCTX" != "$ZCTX" ]; then
   RESTORE+=("kd -n $NSB scale deploy/otel-entry --replicas=1")
   entry_scale 0; kd -n "$NSB" wait --for=delete pod -l app.kubernetes.io/instance=otel-entry --timeout=60s >>"$LOG" 2>&1
   gw_pod=$(kz -n "$NSM" get pod -l $GW_PODS -o jsonpath='{.items[0].metadata.name}')
-  kz -n "$NSM" port-forward "pod/$gw_pod" 18899:8888 >>"$LOG" 2>&1 & pf=$!
-  RESTORE+=("kill $pf")
-  sleep 3
-  refused() { curl -s --max-time 5 http://127.0.0.1:18899/metrics | awk '/^otelcol_exporter_enqueue_failed_spans/ {s += $2} END {print s + 0}'; }
-  until_true 20 sh -c 'curl -sf --max-time 3 http://127.0.0.1:18899/metrics >/dev/null' || true
+  # The gateway's own metrics on its loopback, through a port-forward on a free local port.
+  kz -n "$NSM" port-forward "pod/$gw_pod" :8888 >"$work/pf.log" 2>&1 & pf=$!
+  RESTORE+=("kill $pf 2>/dev/null; wait $pf 2>/dev/null")
+  pf_port=""
+  for _ in $(seq 1 20); do
+    pf_port=$(sed -n 's/^Forwarding from 127\.0\.0\.1:\([0-9]*\) .*/\1/p' "$work/pf.log" | head -1)
+    [ -n "$pf_port" ] && break; sleep 1
+  done
+  cat "$work/pf.log" >>"$LOG"
+  refused() { curl -sf --max-time 5 "http://127.0.0.1:$pf_port/metrics" | awk '/^otelcol_exporter_enqueue_failed_spans/ {s += $2} END {print s + 0}'; }
+  metrics_read=no
+  [ -n "$pf_port" ] && curl -sf --max-time 5 "http://127.0.0.1:$pf_port/metrics" >/dev/null && metrics_read=yes
   before=$(refused)
   python3 - "$work/flood.json" <<'PY'
 import json, os, sys, time
@@ -470,12 +477,14 @@ PY
   for _ in $(seq 1 14); do codes="$codes $(post_otlp traces <"$work/flood.json")"; done
   sleep 3
   after=$(refused)
-  kill "$pf" 2>/dev/null; pop_restore
+  after_read=no
+  curl -sf --max-time 5 "http://127.0.0.1:$pf_port/metrics" >/dev/null && after_read=yes
+  kill "$pf" 2>/dev/null; wait "$pf" 2>/dev/null; pop_restore
   entry_scale 1; pop_restore
   kd -n "$NSB" rollout status deploy/otel-entry --timeout=120s >>"$LOG" 2>&1
   restarts_after=$( (kz -n "$NSM" get pods -o json; kz -n "$NSD" get pods -o json; kz -n ztd-otel-node get pods -o json) | jq -s '[.[].items[].status.containerStatuses[]?.restartCount] | add')
-  detail="span sent at the start of a 60 s outage (HTTP $bcode) stored afterwards: $span_ok; spire-server samples of the outage stored: ${samples:-0}; full queue: refused spans $before -> $after (OTLP answers:$codes); container restarts $restarts_before -> $restarts_after"
-  if [ "$bcode" = 200 ] && [ "$span_ok" = yes ] && [ "${samples:-0}" -ge 6 ] && [ "${after%.*}" -gt "${before%.*}" ] && [ "$restarts_before" = "$restarts_after" ]; then
+  detail="span sent at the start of a 60 s outage (HTTP $bcode) stored afterwards: $span_ok; spire-server samples of the outage stored: ${samples:-0}; full queue: refused spans $before -> $after, the gateway's metrics read before/after: $metrics_read/$after_read (OTLP answers:$codes); container restarts $restarts_before -> $restarts_after"
+  if [ "$bcode" = 200 ] && [ "$span_ok" = yes ] && [ "${samples:-0}" -ge 6 ] && [ "$metrics_read" = yes ] && [ "$after_read" = yes ] && [ "${after%.*}" -gt "${before%.*}" ] && [ "$restarts_before" = "$restarts_after" ]; then
     record export-buffered-while-down passed "$detail"
   else record export-buffered-while-down failed "$detail"; fi
 fi
