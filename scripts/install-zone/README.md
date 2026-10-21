@@ -105,7 +105,12 @@ updates the Secret `ztd-telemetry-client` (`tls.crt`, `tls.key`, and `ca.crt` th
 certificate, never its key) in `ztd-otel-node` and the management namespace of that context. The
 material passes through a temporary directory readable by the user alone and removed on exit, and
 the Secret is applied server-side, so no copy lands in a `last-applied` annotation. A zone namespace
-that does not exist stops the step: install the zone's umbrella first. The log store is not
+that does not exist stops the step: install the zone's umbrella first. The collectors read the
+certificate at start: after a copy that replaced one (a renewal, or the demonstrator role
+reinstalled with a new CA), restart them (`kubectl -n ztd-otel-node rollout restart
+ds/otel-node-agent`, `kubectl -n ztd-mgmt rollout restart deploy/otel-gateway`). On kind an
+`uninstall` of the demonstrator role followed by an `install` left no release behind and reinstalled
+every release (2026-10-21). The log store is not
 installed; it is an open point of ADR-0012.
 
 The demonstrator cluster needs cert-manager (it runs its own, v1.21.2); `install` refuses a cluster

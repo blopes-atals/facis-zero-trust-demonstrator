@@ -73,6 +73,8 @@ Each check is named by what it proves; the result is `passed`, `failed` or `pend
 | `other-egress-refused` | the zone gateway's pods reach the entry and no other external address |
 | `no-route-into-zone` | from the demonstrator side, the zone gateway and a node collector are refused (Prometheus reached as the control) |
 | `query-surfaces-not-public` | only the entry can be published, on its listener ports; Prometheus, Alertmanager and Jaeger are ClusterIP |
+| `prometheus-scrapes-no-zone` | the central Prometheus's only scrape target is itself: no address in a zone |
+| `gateway-holds-svid` | the SPIRE server holds the zone gateway's entry, and its proxy is ready (only with an SVID) |
 | `metrics-survive-restart` | the samples of the minute before a Prometheus restart are all there after it |
 | `missing-target-alerts` | the SPIRE server, then one agent, stop: an alert naming the zone (and the node) within 30 s, resolved on recovery |
 | `vanished-agent-alerts` | a node collector stops with its agent's series: an alert within 30 s |

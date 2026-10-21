@@ -30,6 +30,8 @@
 #                               node collector
 #   query-surfaces-not-public   only the entry's listeners can be published; the query surfaces are
 #                               ClusterIP Services
+#   prometheus-scrapes-no-zone  the central Prometheus has no scrape target in a zone
+#   gateway-holds-svid          the zone gateway is registered with SPIRE and its proxy holds an SVID
 #   metrics-survive-restart     samples stored before a Prometheus restart are still there after it
 #   missing-target-alerts       the SPIRE server, then one agent, stop: an alert within 30 s, resolved
 #   vanished-agent-alerts       a node collector stops with its agent's series: an alert within 30 s
@@ -354,6 +356,14 @@ if [ "$srv" = 1 ] && [ "$cm" = 1 ] && [ "${ns_srv:-0}" -gt 0 ] && [ "${ns_cr:-0}
   record spire-server-scraped passed "up == 1 for the server and the controller-manager; ${ns_srv} spire_server_ and ${ns_cr} controller_runtime_ series of $ZONE"
 else record spire-server-scraped failed "server up=$srv controller-manager up=$cm spire_server_ series=$ns_srv controller_runtime_ series=$ns_cr"; fi
 
+trust_domain=$(fact "$ZONE_VALUES" zone.trustDomain)
+gw_id="spiffe://$trust_domain/ns/$NSM/sa/otel-gateway"
+entry=$(kz -n spire-system exec spire-server-0 -c spire-server -- /opt/spire/bin/spire-server entry show -spiffeID "$gw_id" 2>/dev/null | sed -n 's/^Found \([0-9]*\) entr.*/\1/p')
+gw_ready=$(kz -n "$NSM" get pod -l "$GW_PODS" -o json | jq -r '[.items[0].status.containerStatuses[]?, .items[0].status.initContainerStatuses[]? | select(.name == "istio-proxy" or .name == "opentelemetry-collector") | select(.ready)] | length')
+if [ "${entry:-0}" -ge 1 ] && [ "$gw_ready" = 2 ]; then
+  record gateway-holds-svid passed "the SPIRE server holds the entry $gw_id; the gateway's proxy and collector are ready (the proxy is ready only with its SVID)"
+else record gateway-holds-svid failed "entries for $gw_id: ${entry:-0}; ready containers (proxy, collector): $gw_ready"; fi
+
 # ---------------------------------------------------------------- declared lanes
 server_ip=$(kz -n spire-system get pod spire-server-0 -o jsonpath='{.status.podIP}')
 if [ "${VERIFY_INJECT_FAULT:-}" = spire-lane-is-narrow ]; then
@@ -379,13 +389,13 @@ EOF
 fi
 c9988=$(standin curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://$server_ip:9988/metrics")
 c8082=$(standin curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://$server_ip:8082/metrics")
-standin curl -s -o /dev/null --max-time 5 "telnet://$server_ip:8081" </dev/null; r8081=$?
-# curl's telnet exits 0 only on a completed connection that the server closed; a refused or dropped
-# connection is 7 or 28. Through the stand-in's proxy, a passthrough that cannot connect upstream is
-# reset, which is 56 or 52.
-if [ "$c9988" = 200 ] && [ "$c8082" = 200 ] && [ "$r8081" != 0 ] && [ "$r8081" != 48 ]; then
-  record spire-lane-is-narrow passed "from the gateway's pods: 9988 HTTP $c9988, 8082 HTTP $c8082, registration port 8081 refused (curl exit $r8081)"
-else record spire-lane-is-narrow failed "9988 HTTP $c9988, 8082 HTTP $c8082, 8081 curl exit $r8081"; fi
+# The registration port speaks TLS: reachable, the handshake completes (an HTTP answer and a TLS
+# connect time); refused, neither. A bare TCP probe cannot tell an idle open connection from a dropped
+# one, so the handshake is the test.
+r8081=$(standin curl -sk -o /dev/null --max-time 8 -w '%{http_code} %{time_appconnect}' "https://$server_ip:8081/" </dev/null)
+if [ "$c9988" = 200 ] && [ "$c8082" = 200 ] && [ "${r8081%% *}" = 000 ] && [ "${r8081#* }" = 0.000000 ]; then
+  record spire-lane-is-narrow passed "from the gateway's pods: 9988 HTTP $c9988, 8082 HTTP $c8082, registration port 8081 refused (no TLS handshake)"
+else record spire-lane-is-narrow failed "9988 HTTP $c9988, 8082 HTTP $c8082, 8081 answered (HTTP code and TLS connect time: $r8081)"; fi
 [ "${VERIFY_INJECT_FAULT:-}" = spire-lane-is-narrow ] && restore_all
 
 tid=$(hex 16)
@@ -609,6 +619,12 @@ if alert_check revocation-endpoint-alerts "status list stopped" "$f_rev" \
   t=$ALERT_T
   record revocation-endpoint-alerts passed "RevocationEndpointDown for $ZONE and its status-list URL after ${t}s; resolved when it answered again"
 fi
+
+# ---------------------------------------------------------------- no scrape into a zone
+targets=$(probe curl -s --max-time 10 http://prometheus-server/api/v1/targets | jq -c '[.data.activeTargets[] | .scrapeUrl]')
+if jq -e 'length > 0 and all(test("^https?://(localhost|127\\.0\\.0\\.1)(:|/)"))' <<<"$targets" >/dev/null; then
+  record prometheus-scrapes-no-zone passed "Prometheus's only targets are its own ($targets); the zones' metrics arrive by remote write"
+else record prometheus-scrapes-no-zone failed "targets: $targets"; fi
 
 # ---------------------------------------------------------------- retention
 mark=$(date +%s)
