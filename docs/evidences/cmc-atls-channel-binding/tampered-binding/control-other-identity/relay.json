@@ -6,13 +6,13 @@
     "spiffe://b/gateway",
     "localhost"
   ],
-  "cert_fingerprint": "9ebd728b9a1f01c6c3fe5063c7d90bfdcfd228c547dfe0005a82775f9c90b58c",
-  "listen_addr": "127.0.0.1:22009",
+  "cert_fingerprint": "04ac8c1bb4a3c9b9f1b8b08c3e659d7639c4f3c8fdf56554c8708c853118c5c3",
+  "listen_addr": "127.0.0.1:28209",
   "hold_ms": 0,
   "interval_ms": 0,
-  "started_at": "2026-10-01T09:51:45.425031377Z",
-  "started_at_unix_ms": 1790848305425,
-  "finished_at": "2026-10-01T09:51:45.547806311Z",
+  "started_at": "2026-11-06T17:14:41.278698466Z",
+  "started_at_unix_ms": 1793985281278,
+  "finished_at": "2026-11-06T17:14:41.356796298Z",
   "exit_code": 2,
   "outcome": "not-relayed",
   "heartbeats": {
@@ -23,11 +23,11 @@
   "application_bytes_sent": 0,
   "application_bytes_received": 0,
   "relay": {
-    "upstream_addr": "127.0.0.1:25591",
+    "upstream_addr": "127.0.0.1:23547",
     "downstream": {
-      "local_addr": "127.0.0.1:22009",
-      "peer_addr": "127.0.0.1:51604",
-      "presented_fingerprint": "9ebd728b9a1f01c6c3fe5063c7d90bfdcfd228c547dfe0005a82775f9c90b58c",
+      "local_addr": "127.0.0.1:28209",
+      "peer_addr": "127.0.0.1:47158",
+      "presented_fingerprint": "04ac8c1bb4a3c9b9f1b8b08c3e659d7639c4f3c8fdf56554c8708c853118c5c3",
       "presented_identities": [
         "spiffe://b/gateway",
         "localhost"
@@ -40,7 +40,7 @@
     "bytes_listener_to_dialer": 0
   },
   "environment": {
-    "commit": "cfbc1dcd2b11d39e1f8bce3045b31681f2d546fb",
+    "commit": "f531ed63b8ef6f974008364393e74297f7ba3bd3",
     "dirty": false,
     "go_version": "go1.27.0",
     "cmc_version": "v0.9.15",
