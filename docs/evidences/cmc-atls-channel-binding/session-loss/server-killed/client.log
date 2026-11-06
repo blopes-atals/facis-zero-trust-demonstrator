@@ -1,4 +1,4 @@
-2026-10-01T09:51:55.773Z atls-probe: dialing 127.0.0.1:42735 through cmcd 127.0.0.1:42037, expecting spiffe://a/gateway
-time="2026-10-01T08:51:55-01:00" level=info msg="Client-side aTLS connection complete" service=atls
-2026-10-01T09:51:55.783Z atls-probe: session 0 established with 127.0.0.1:42735: binding 3124360a7e0a5fd8499cdb0549e5a74928e0708a42402854d6d32781fbb8bd21, peer 4e87601716462f54f531d28e2b82c63397df7cc0c8f45f69b75211495225185e, verdict success, valid until 2026-10-01T10:06:55Z
-2026-10-01T09:51:57.836Z atls-probe: session 0 ended (peer-closed): read failed after 2.053s: EOF
+2026-11-06T17:14:57.750Z atls-probe: dialing 127.0.0.1:30619 through cmcd 127.0.0.1:38921, expecting spiffe://a/gateway
+time="2026-11-06T17:14:57Z" level=info msg="Client-side aTLS connection complete" service=atls
+2026-11-06T17:14:57.766Z atls-probe: session 0 established with 127.0.0.1:30619: binding 6a7e9ac2fb1ee882329770c4c104f73c0bcba43651a2ebcfb1c40119b72d825b, peer dc3e5ba143405c391898213012c2941b4f11e57a769fe82b0034c2a559bd07ad, verdict success, valid until 2026-11-06T17:29:57Z
+2026-11-06T17:14:59.866Z atls-probe: session 0 ended (peer-closed): read failed after 2.099s: EOF
