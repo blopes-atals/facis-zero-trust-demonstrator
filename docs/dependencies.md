@@ -19,11 +19,45 @@ and are the authoritative list. This page records the components chosen and why.
 ### Pending Eclipse IP review
 
 Dependencies Dash cannot clear yet. They are not exceptions: each stays here until Eclipse approves it,
-and is removed then. None is pending: the last two, `golang.org/x/text` v0.42.0
+and is removed then. The previous two, `golang.org/x/text` v0.42.0
 ([iplab #32075](https://gitlab.eclipse.org/eclipsefdn/emo-team/iplab/-/work_items/32075)) and
 `github.com/santhosh-tekuri/jsonschema/v6` v6.0.3
 ([iplab #32387](https://gitlab.eclipse.org/eclipsefdn/emo-team/iplab/-/work_items/32387)), were approved
 by 23 October 2026.
+
+The 17 below are what Dash did not verify automatically in two scans. Sixteen are recorded from the
+latest scan of the attested-channel dependencies, on 4 November 2026, which ran before those
+dependencies were rebased onto the current `main`. Each version below is the one in `go.sum` now, but
+four modules that reached `go.sum` from `main` with the policy hook were not in that scanned tree, so
+that scan says nothing about them: `github.com/cncf/xds/go`,
+`github.com/envoyproxy/go-control-plane/envoy`, `github.com/envoyproxy/protoc-gen-validate` and
+`github.com/planetscale/vtprotobuf`.
+
+The 6 November 2026 scan covered a `go.mod` and `go.sum` identical to `main`'s, which hold those four
+modules and not the 15 others below that came with CMC. Of the four it flagged only
+`github.com/envoyproxy/protoc-gen-validate` v1.3.3, the one row recorded from this scan, and it did
+not flag the other three. The only other module it flagged is `google.golang.org/grpc` v1.83.2, which
+the 4 November scan flagged too.
+
+| Dependency | Version | Why it is pending | Review |
+|---|---|---|---|
+| `github.com/Fraunhofer-AISEC/cmc` | v0.9.15 | not verified automatically by Dash | no work item recorded |
+| `github.com/containerd/containerd/v2` | v2.3.2 | not verified automatically by Dash | no work item recorded |
+| `github.com/edgelesssys/ego` | v1.9.0 | not verified automatically by Dash | no work item recorded |
+| `github.com/envoyproxy/protoc-gen-validate` (from `main`, with the policy hook; not new with CMC) | v1.3.3 | not verified automatically by Dash | no work item recorded |
+| `github.com/google/go-attestation` | v0.6.0 | not verified automatically by Dash | no work item recorded |
+| `github.com/google/go-configfs-tsm` | v0.3.3 | not verified automatically by Dash | no work item recorded |
+| `github.com/google/go-eventlog` | v0.0.2 | not verified automatically by Dash | no work item recorded |
+| `github.com/google/go-sev-guest` | v0.14.1 | not verified automatically by Dash | no work item recorded |
+| `github.com/google/go-tdx-guest` | v0.3.2-0.20250131194449-460f94c01da7 | not verified automatically by Dash | no work item recorded |
+| `github.com/google/go-tpm-tools` (in `go.sum` only, not in `go.mod`) | v0.4.6 | not verified automatically by Dash | no work item recorded |
+| `github.com/google/go-tpm` | v0.9.8 | not verified automatically by Dash | no work item recorded |
+| `github.com/google/logger` | v1.1.2 | not verified automatically by Dash | no work item recorded |
+| `github.com/opencontainers/runtime-spec` | v1.3.0 | not verified automatically by Dash | no work item recorded |
+| `github.com/pion/dtls/v3` | v3.1.4 | not verified automatically by Dash | no work item recorded |
+| `github.com/plgd-dev/go-coap/v3` | v3.5.1 | not verified automatically by Dash | no work item recorded |
+| `github.com/veraison/go-cose` | v1.3.0 | not verified automatically by Dash | no work item recorded |
+| `google.golang.org/grpc` (also on `main`, for the policy hook; not new with CMC) | v1.83.2 | not verified automatically by Dash | no work item recorded |
 
 ## Licence exceptions
 
@@ -71,6 +105,7 @@ Direct dependencies of the Go module. Transitive dependencies are listed in the 
 | `github.com/cucumber/messages/go/v34` | v34.2.0 | MIT | the Gherkin document model used with it |
 | `github.com/santhosh-tekuri/jsonschema/v6` | v6.0.3 | Apache-2.0 | validates SBOMs and mock attestations against their JSON Schemas at admission |
 | `github.com/envoyproxy/go-control-plane/envoy` | v1.37.0 | Apache-2.0 | the Envoy `ext_authz` and `ext_proc` API types the guard policy hook is served through (`cmd/policy-hook-probe`); only its `envoyhook` package may import them |
+| `google.golang.org/genproto/googleapis/rpc` | v0.0.0-20260526163538-3dc84a4a5aaa | Apache-2.0 | the `google.rpc` `Status` type the guard policy hook sets in its `ext_authz` answers (`cmd/policy-hook-probe/internal/envoyhook`) |
 | `github.com/Fraunhofer-AISEC/cmc` | v0.9.15 (commit `6754d3c`) | Apache-2.0 | Attested TLS (CMC `attestedtls`) for the inter-zone channel, wrapped by `internal/atls`, the only package allowed to import it. Unmodified upstream. See [Attested channel control](attested-channel.md). |
 | `google.golang.org/grpc` | v1.83.2 | Apache-2.0 | gRPC transport of the policy hook's Envoy services. Transport to the zone's `cmcd` (through CMC), and the in-process `cmcd` stand-in of the `internal/atls` tests. |
 | `github.com/go-jose/go-jose/v4` | v4.1.4 | Apache-2.0 | JWS signing of the throwaway attestation metadata in the `internal/atls` test fixtures. Also used by CMC. |
@@ -83,7 +118,9 @@ the pinned Syft and Grype write by default.
 
 ### Brought in by CMC
 
-CMC v0.9.15 adds the following modules to `go.mod`. All of them are free and open-source software.
+CMC v0.9.15 adds the following modules to `go.mod`, with one exception: `google.golang.org/protobuf`
+was already on `main` at v1.36.11, and CMC and `github.com/containerd/containerd/v2` raise it to the
+pseudo-version below. All of them are free and open-source software.
 Like every other third-party component, each is declared in writing with its licence (tender
 clause 9.5), and the client confirms the included FOSS components and their versions (TDR,
 "Open-Source Software"). That confirmation includes the CMC pin, v0.9.15, itself, and the two
@@ -124,7 +161,6 @@ the in-process backend.
 | `go.uber.org/multierr` | v1.11.0 | MIT | no |
 | `golang.org/x/exp` | v0.0.0-20260410095643-746e56fc9e2f | BSD-3-Clause | yes |
 | `golang.org/x/sync` | v0.23.0 | BSD-3-Clause | yes |
-| `google.golang.org/genproto/googleapis/rpc` | v0.0.0-20260526163538-3dc84a4a5aaa | Apache-2.0 | yes |
 | `google.golang.org/protobuf` | v1.36.12-0.20260120151049-f2248ac996af | BSD-3-Clause | yes |
 | `gopkg.in/sourcemap.v1` | v1.0.5 | BSD-2-Clause | no |
 
