@@ -49,14 +49,17 @@ planes:
   namespaceLabels: {}
 
 # --------------------------------------------------------------------------------------------
-# Mesh mode. ADR-0009 baselines Istio sidecar mode with Cilium as the CNI, superseding the ambient
-# baseline of ADR-0001 (the mesh cannot take SPIRE-issued identities under ambient). Ambient is
-# parked, not abandoned: the value stays accepted and the Cilium host-probe exception below still
-# renders in that mode, so returning is a zone value, not a chart change. Only the namespace label
-# changes between the modes, so the chart is the same either way:
+# Mesh mode. ADR-0009 baselines Istio sidecar mode with Cilium as the CNI on the participant zones,
+# superseding the ambient baseline of ADR-0001 (the mesh cannot take SPIRE-issued identities under
+# ambient). Ambient is used on the demonstrator cluster alone, on its provider's Calico and without
+# SPIRE (ADR-0018, zones/ionos.yaml, with the CNI derogation below); with Cilium it stays the parked
+# mode, whose Cilium host-probe exception still renders. The namespace label changes between the
+# modes:
 #   sidecar -> istio-injection=enabled             ambient -> istio.io/dataplane-mode=ambient
 #   none    -> no mesh label (a cluster without Istio, such as a plain kind cluster)
-# Istio itself is installed by the mesh task after this chart; until then the label is inert.
+# Istio itself is installed by scripts/install-zone after this chart; until then the label is inert.
+# In ambient mode the allow-matrix lanes that name ports also name the HBONE port 15008: ztunnel
+# delivers captured traffic to the destination pod on that port, not on the application's.
 # --------------------------------------------------------------------------------------------
 mesh:
   mode: sidecar
@@ -66,7 +69,15 @@ mesh:
 # CNI-specific pieces. The openings whose source is an entity (the API server, the
 # host-networked SPIRE agents) and the API lane (networkPolicy, below) are Cilium policies; with a
 # mesh and without Cilium the chart refuses to render, because another CNI needs a declared
-# derogation (docs/workload-identity.md). Under Istio ambient (the parked mode) with Cilium, a
+# derogation (docs/workload-identity.md). The one declared derogation is `calico-ambient`
+# (ADR-0018): the demonstrator cluster, whose CNI is the provider's Calico, runs the mesh in ambient
+# mode without SPIRE. It is allowed only with mesh.mode ambient and cilium.enabled false, and then
+# requires networkPolicy.kubeApi.cidrs and networkPolicy.controlPlaneWebhooks.fromPods. The openings
+# are then plain Kubernetes NetworkPolicies (templates/networkpolicy-ambient-calico.yaml): the
+# webhook source pods to istiod's webhook port, ztunnel to istiod's xDS port, the node's network
+# namespace (SNAT-ed to 169.254.7.127: the kubelet's probes, and any host-network pod, on every
+# port) into every meshed plane namespace, and the API lane by address. Empty
+# (the default) declares none. Under Istio ambient with Cilium (the parked mode), a
 # default-deny NetworkPolicy blocks the kubelet health probes, which Istio SNATs to 169.254.7.127;
 # the documented remedy is a cluster-wide Cilium policy admitting that address. Rendered only with
 # cilium enabled AND mode ambient; nothing is rendered in sidecar mode.
@@ -75,6 +86,7 @@ mesh:
 cni:
   cilium:
     enabled: true
+  derogation: ""   # "" | calico-ambient (ADR-0018)
 
 # --------------------------------------------------------------------------------------------
 # Network-layer baseline: default DENY in both directions in every plane namespace. The only
@@ -138,6 +150,13 @@ networkPolicy:
     # fact (k8s:io.kubernetes.pod.namespace and at least one pod label); the lane stays on the
     # webhook port of the webhook pod. Empty by default; never an address.
     fromEndpoints: []
+    # Without Cilium, under the declared derogation calico-ambient (ADR-0018), the webhook source is
+    # a pod of the provider's, named by its namespace and labels, a zone fact (on the demonstrator
+    # cluster: kube-system, k8s-app=konnectivity-agent, through which the managed API server reaches
+    # the pods). Each entry: {namespace, podSelector}. Required with the derogation; empty by
+    # default; never an address. Only targets in a plane namespace of the zone are opened: the
+    # derogated zone has no SPIRE, so its zone file lists istiod alone.
+    fromPods: []
     targets:
       - name: istiod
         namespace: istio-system

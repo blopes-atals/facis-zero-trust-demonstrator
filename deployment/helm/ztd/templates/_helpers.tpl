@@ -39,9 +39,10 @@ Called with (dict "root" $ "endpoint" <endpoint>).
 {{- end }}
 
 {{/*
-Mesh label key and value for the plane namespaces, by mode. The only place the mode shapes the
-layout: sidecar (the ADR-0009 baseline) and ambient (parked) differ in one namespace label, so the
-chart is the same either way.
+Mesh label key and value for the plane namespaces, by mode: sidecar (the ADR-0009 baseline of the
+zones) and ambient (the demonstrator cluster's, ADR-0018; parked with Cilium) differ in this one
+namespace label, in the HBONE port of the allow-matrix lanes, and, under the declared CNI
+derogation, in the openings ("ztd.derogated").
 */}}
 {{- define "ztd.meshLabelKey" -}}
 {{- if eq .Values.mesh.mode "ambient" -}}istio.io/dataplane-mode
@@ -52,6 +53,25 @@ chart is the same either way.
 {{- define "ztd.meshLabelValue" -}}
 {{- if eq .Values.mesh.mode "ambient" -}}ambient
 {{- else if eq .Values.mesh.mode "sidecar" -}}{{ if .Values.mesh.revision }}{{ .Values.mesh.revision }}{{ else }}enabled{{ end }}
+{{- end -}}
+{{- end }}
+
+{{/*
+The declared CNI derogation (ADR-0018): "true" when the zone declares cni.derogation calico-ambient,
+which is valid only with mesh.mode ambient and Cilium disabled; empty otherwise. A derogation
+declared on any other zone fails the render, naming it (the schema refuses it first, but lint mode
+skips nothing here and a template guard keeps the message next to the code that relies on it).
+*/}}
+{{- define "ztd.derogated" -}}
+{{- $d := toString (.Values.cni.derogation | default "") -}}
+{{- if $d -}}
+{{- if ne $d "calico-ambient" -}}
+{{- fail (printf "cni.derogation %q is not a declared derogation (calico-ambient, ADR-0018)" $d) -}}
+{{- end -}}
+{{- if or (ne .Values.mesh.mode "ambient") .Values.cni.cilium.enabled -}}
+{{- fail (printf "cni.derogation calico-ambient applies to mesh.mode ambient without Cilium only (ADR-0018); this zone sets mesh.mode %s and cni.cilium.enabled %v" .Values.mesh.mode .Values.cni.cilium.enabled) -}}
+{{- end -}}
+true
 {{- end -}}
 {{- end }}
 
