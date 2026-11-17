@@ -5,8 +5,10 @@
 #   KUBE_CONTEXT       kubectl context           (default: kind-ztd)
 #   VALUES             zone file                 (default: deployment/helm/ztd/ci/values.yaml)
 #   AMBIENT_VALUES     zone file in ambient mode (default: ambient-values.yaml next to this script),
-#                      the excursion: sidecar is the installed baseline (ADR-0009), ambient the
-#                      parked mode the script switches to and back
+#                      the excursion: sidecar is the installed baseline (ADR-0009), ambient with
+#                      Cilium the parked mode the script switches to and back
+# Section 8b renders the demonstrator cluster's zone file (ambient on Calico under the declared
+# derogation, ADR-0018) with ci/ionos.overlay.yaml; render only, nothing of it is installed.
 #
 # Every check is "<test>; check $? <title>": the status of the test is what the check records.
 # shellcheck disable=SC2319
@@ -183,6 +185,35 @@ h template "$RELEASE" "$CHART" -f "$VALUES" --set zone.trustDomain= >/dev/null 2
 h template "$RELEASE" "$CHART" -f "$VALUES" --set zone.kubernetesVersion=v1.32.0 >/dev/null 2>/tmp/ztd-g5; [ $? -ne 0 ]; check $? "sidecar mode on Kubernetes v1.32.0: render refused (native sidecars need 1.33)" "$(grep -m1 -oE 'mesh.mode sidecar needs native.*' /tmp/ztd-g5)"
 h template "$RELEASE" "$CHART" -f "$VALUES" --set cni.cilium.enabled=false >/dev/null 2>/tmp/ztd-g6; [ $? -ne 0 ]; check $? "meshed zone without Cilium: render refused, naming the control-plane openings and the derogation" "$(grep -m1 -oE 'mesh.mode sidecar needs Cilium[^:]*' /tmp/ztd-g6)"
 h template "$RELEASE" "$CHART" -f "$VALUES" --set networkPolicy.kubeApi.enabled=false >/dev/null 2>/tmp/ztd-g7; [ $? -ne 0 ]; check $? "meshed zone with the kubeApi lane off: render refused by the schema (the control planes call the API)" "$(grep -m1 -oE "at '/networkPolicy/kubeApi/enabled'.*" /tmp/ztd-g7)"
+
+say '' "## 8b. The demonstrator cluster's declared derogation (ADR-0018): render only" ''
+say 'The demonstrator cluster runs ambient mode on its provider'"'"'s Calico without SPIRE, under the declared derogation `cni.derogation: calico-ambient`. Its zone file keeps the API endpoint addresses out of the repository, so it is rendered with the documentation-range overlay. These cases render only; the cluster above stays the sidecar baseline of the zones.' ''
+IONOS=$CHART/zones/ionos.yaml; OVERLAY=$CHART/ci/ionos.overlay.yaml
+h template "$RELEASE" "$CHART" -f "$IONOS" -f "$OVERLAY" >/tmp/ztd-d1.yaml 2>/tmp/ztd-d1; check $? "derogated ambient zone (zones/ionos.yaml + ci/ionos.overlay.yaml) renders" "$(head -c 200 /tmp/ztd-d1)"
+openings=$(python3 -c 'import sys,yaml
+docs=[d for d in yaml.safe_load_all(open(sys.argv[1])) if d]
+if any(d["kind"].startswith("Cilium") for d in docs): print("CILIUM"); sys.exit()
+o=sorted("%s/%s/%s" % (d["metadata"]["labels"]["ztd.facis.io/declared-opening"], d["metadata"]["namespace"], d["metadata"]["name"]) for d in docs if d["kind"]=="NetworkPolicy" and "ztd.facis.io/declared-opening" in (d["metadata"].get("labels") or {}))
+print(" ".join(o))' /tmp/ztd-d1.yaml)
+want="ambientHostProbes/ztd-data/allow-ambient-hostprobes ambientHostProbes/ztd-mgmt/allow-ambient-hostprobes controlPlaneWebhooks/istio-system/allow-control-plane-webhooks-istiod kubeApi/istio-system/allow-kube-api-egress kubeApi/ztd-mgmt/allow-kube-api-egress meshControlPlane/istio-system/allow-mesh-control-plane-ingress"
+[ "$openings" = "$want" ]; check $? "derogated zone: no Cilium object, and exactly the declared openings: istiod 15017 from the webhook source pods, istiod 15012 from ztunnel, the probe lane in each meshed plane namespace, the API lane in each management-plane namespace" "$openings"
+python3 -c 'import sys,yaml
+docs=[d for d in yaml.safe_load_all(open(sys.argv[1])) if d]
+ing=[d["metadata"]["name"] for d in docs if d["kind"]=="NetworkPolicy" and d["metadata"]["namespace"]=="istio-system" and "Ingress" in d["spec"]["policyTypes"]]
+sys.exit(sorted(ing)!=["allow-control-plane-webhooks-istiod","allow-intra-plane","allow-mesh-control-plane-ingress","default-deny"])' /tmp/ztd-d1.yaml; check $? "derogated zone: no ingress to istio-system beyond the declared openings (and the namespace's own default deny and intra-plane lane)"
+python3 -c 'import sys,yaml
+docs=[d for d in yaml.safe_load_all(open(sys.argv[1])) if d]
+eg=[d for d in docs if d["kind"]=="NetworkPolicy" and d["metadata"]["name"]=="allow-mesh-control-plane-egress"]
+sys.exit(len(eg)!=0)' /tmp/ztd-d1.yaml; check $? "derogated zone: no plane namespace gets egress to istiod (ztunnel is the xDS client)"
+python3 -c 'import sys,yaml
+docs=[d for d in yaml.safe_load_all(open(sys.argv[1])) if d]
+lane=[d for d in docs if d["kind"]=="NetworkPolicy" and d["metadata"]["name"].startswith("allow-workloads-to-otel-collector-")]
+ports=[[p["port"] for p in (d["spec"].get("egress") or d["spec"].get("ingress"))[0]["ports"]] for d in lane]
+sys.exit(not (len(lane)==2 and all(15008 in p and 4317 in p for p in ports)))' /tmp/ztd-d1.yaml; check $? "ambient: an allow-matrix lane that names ports also names the HBONE port 15008, egress and ingress"
+h template "$RELEASE" "$CHART" -f "$IONOS" -f "$OVERLAY" --set cni.derogation= >/dev/null 2>/tmp/ztd-d2; [ $? -ne 0 ] && grep -q 'derogation' /tmp/ztd-d2; check $? "ambient without Cilium and without the derogation: render refused, naming the derogation" "$(grep -m1 -oE 'mesh.mode ambient needs Cilium[^:]*' /tmp/ztd-d2)"
+h template "$RELEASE" "$CHART" -f "$IONOS" >/dev/null 2>/tmp/ztd-d3; [ $? -ne 0 ] && grep -q '/networkPolicy/kubeApi/cidrs' /tmp/ztd-d3; check $? "derogation without the API endpoint addresses: render refused, naming networkPolicy.kubeApi.cidrs" "$(grep -m1 -oE "at '/networkPolicy/kubeApi/cidrs'.*" /tmp/ztd-d3)"
+h template "$RELEASE" "$CHART" -f "$IONOS" -f "$OVERLAY" --set networkPolicy.controlPlaneWebhooks.fromPods=null >/dev/null 2>/tmp/ztd-d4; [ $? -ne 0 ] && grep -q 'fromPods' /tmp/ztd-d4; check $? "derogation without the webhook source: render refused, naming fromPods" "$(grep -m1 -oE "at '/networkPolicy/controlPlaneWebhooks'.*" /tmp/ztd-d4)"
+h template "$RELEASE" "$CHART" -f "$IONOS" -f "$OVERLAY" --set mesh.mode=sidecar >/dev/null 2>/tmp/ztd-d5; [ $? -ne 0 ]; check $? "sidecar without Cilium, even with the derogation: render refused" "$(grep -m1 -oE "at '/mesh/mode'.*" /tmp/ztd-d5)"
 
 say '' '## 9. Teardown leaves no plane namespace behind' ''
 for ns in "$MGMT" "$DATA"; do k delete pod --all -n "$ns" --wait=false >/dev/null 2>&1; k delete svc --all -n "$ns" --wait=false >/dev/null 2>&1; done

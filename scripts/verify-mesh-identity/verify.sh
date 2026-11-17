@@ -1527,7 +1527,12 @@ out=$(ZONE_VALUES=$work/no-td.yaml "$INSTALL" render istiod 2>&1); rc=$?
 [ $rc -ne 0 ] && grep -q 'zone.trustDomain' <<<"$out"; check $? "the istiod release does not render without the trust domain" "$(tail -1 <<<"$out")"
 out=$(helm template ztd "$CHART" -f "$work/no-td.yaml" 2>&1); rc=$?
 [ $rc -ne 0 ] && grep -q "/zone/trustDomain" <<<"$out"; check $? "the umbrella refuses a meshed zone without a trust domain, on the schema" "$(grep -o "at '/zone/trustDomain'.*" <<<"$out" | head -1)"
-helm template ztd "$CHART" -f "$CHART/zones/ionos.yaml" >/dev/null 2>&1; check $? "the umbrella renders zones/ionos.yaml (mesh none) without a trust domain"
+# The demonstrator cluster's zone file (ambient under the CNI derogation, ADR-0018) keeps its API
+# endpoint addresses out of the repository: alone it is refused on them, and it renders with the
+# documentation-range overlay ci/ionos.overlay.yaml, as in CI.
+out=$(helm template ztd "$CHART" -f "$CHART/zones/ionos.yaml" 2>&1); rc=$?
+[ $rc -ne 0 ] && grep -q "/networkPolicy/kubeApi/cidrs" <<<"$out"; check $? "the umbrella refuses zones/ionos.yaml alone, on its missing API endpoint addresses (networkPolicy.kubeApi.cidrs)" "$(grep -o "at '/networkPolicy/kubeApi/cidrs'.*" <<<"$out" | head -1)"
+helm template ztd "$CHART" -f "$CHART/zones/ionos.yaml" -f "$CHART/ci/ionos.overlay.yaml" >/dev/null 2>&1; check $? "the umbrella renders zones/ionos.yaml with the overlay ci/ionos.overlay.yaml"
 out=$(helm template ztd "$CHART" -f "$ZONE_VALUES" --set zone.kubernetesVersion=v1.32.0 2>&1); rc=$?
 [ $rc -ne 0 ] && grep -q 'native sidecar' <<<"$out"; check $? "the umbrella refuses sidecar mode below Kubernetes 1.33" "$(grep -o 'mesh.mode sidecar needs.*' <<<"$out")"
 out=$(helm template ztd "$CHART" -f "$ZONE_VALUES" --set cni.cilium.enabled=false 2>&1); rc=$?
@@ -1543,15 +1548,18 @@ done
 facts_ok=(0 0 0); facts_detail=("" "" "")
 for zf in "$CHART/ci/values.yaml" "$CHART"/zones/*.yaml; do
   case $zf in *.example.yaml) continue;; esac
-  helm template ztd "$CHART" -f "$zf" >"$work/facts.yaml" 2>"$work/facts.err" || { for i in 0 1 2; do facts_ok[i]=1; facts_detail[i]="${facts_detail[i]} ${zf#"$CHART"/}: no render ($(tail -1 "$work/facts.err"));"; done; continue; }
+  overlay=(); [ "$(basename "$zf")" = ionos.yaml ] && overlay=(-f "$CHART/ci/ionos.overlay.yaml")
+  helm template ztd "$CHART" -f "$zf" "${overlay[@]}" >"$work/facts.yaml" 2>"$work/facts.err" || { for i in 0 1 2; do facts_ok[i]=1; facts_detail[i]="${facts_detail[i]} ${zf#"$CHART"/}: no render ($(tail -1 "$work/facts.err"));"; done; continue; }
   # zone_facts <chart values> <zone file> <rendered>: one line per fact, "<0|1> <detail>" (0: as the zone states)
-  mapfile -t res < <(python3 - "$CHART/values.yaml" "$zf" "$work/facts.yaml" <<'PY'
+  mapfile -t res < <(python3 - "$CHART/values.yaml" "$zf" "$work/facts.yaml" "${overlay[@]:1}" <<'PY'
 import json, sys, yaml
 def merge(a, b):
     if isinstance(a, dict) and isinstance(b, dict):
         return {k: merge(a.get(k), b[k]) if k in b else a[k] for k in {**a, **b}}
     return b
 v = merge(yaml.safe_load(open(sys.argv[1])), yaml.safe_load(open(sys.argv[2])) or {})
+if len(sys.argv) > 4:  # the zone file's overlay (ionos.yaml), on top, as helm merges it
+    v = merge(v, yaml.safe_load(open(sys.argv[4])) or {})
 docs = [d for d in yaml.safe_load_all(open(sys.argv[3])) if d]
 np = v["networkPolicy"]
 # DNS bypass: every allow-dns-egress policy admits the zone's resolver ports, UDP and TCP, and no other
