@@ -130,16 +130,18 @@ release archive). The container images the charts run are pinned separately, by 
 `deployment/helm/values/`: the SPIRE server, agent, controller-manager and SPIFFE CSI driver, the
 CSI node-driver registrar, the server's `busybox` init container and `kubectl` hook image, and
 Istio's `pilot`, `proxyv2` (the injected proxy and the injected `istio-validation` init container)
-and `install-cni`. The images the charts already pin by digest are left
+and `install-cni`, and on the IONOS cluster's ambient path also `ztunnel`. The images the charts already pin by digest are left
 as they ship. One image stays a tag: `busybox:1.28` in Istio's `grpc-simple` injection template,
-which only a pod that chooses its injection templates would run, and the `zone-policy` admission
-policy refuses such a pod in every plane namespace. The values the repository sets on the charts
+which only a pod that chooses its injection templates would run, and `zone-policy` refuses such a
+pod in every plane namespace: on the sidecar path its admission policy `proxy-takes-spire-socket`, on
+the demonstrator cluster's ambient path its admission policy `no-sidecar-in-planes`. The values the repository sets on the charts
 are listed with their reasons in `deployment/helm/values/README.md`.
 
 | Component | Version | Installed through | Licence | Why |
 |---|---|---|---|---|
 | SPIRE (server, agent, controller-manager, SPIFFE CSI driver) | v1.15.3 | chart `spire` 0.30.2 and chart `spire-crds` 0.6.1, from the SPIFFE hardened charts `https://spiffe.github.io/helm-charts-hardened/` | Apache-2.0 | the only issuer of workload and mesh identities (ZT-24): attests every pod and serves its SVID over the CSI-mounted Workload API socket and to the mesh proxy over SDS |
 | Istio, sidecar mode | 1.31.1 | charts `base`, `istiod` and `cni` 1.31.1, from the Istio release archive `istio-1.31.1-linux-amd64.tar.gz` (`manifests/charts`), pinned by its published sha256 | Apache-2.0 | the service mesh of [ADR-0009](adr/0009-service-mesh-mode-istio-sidecar-with-cilium.md): native sidecars that take their certificates from SPIRE, mesh-wide STRICT mTLS, the CNI plugin chained behind Cilium |
+| Istio, ambient mode (the IONOS demonstrator cluster) | 1.31.4 | charts `base`, `istiod`, `cni` and `ztunnel` 1.31.4, from the Istio release archive `istio-1.31.4-linux-amd64.tar.gz` (`manifests/charts`), pinned apart from the zones' release by its published sha256 (`ISTIO_AMBIENT_*` in the installer); images `pilot`, `proxyv2`, `install-cni` and `ztunnel` 1.31.4 by digest | Apache-2.0 | the mesh of [ADR-0018](adr/0018-service-mesh-on-the-demonstrator-cluster.md): ambient mode on the provider's Calico, one ztunnel per node, istiod's CA as the certificate source (no SPIRE), mesh-wide STRICT mTLS; 1.31.4 is the release of the security advisory of 6 November 2026 |
 | Cilium | 1.20.2 on kind; 1.19.6 in tunnel mode on the participant clusters | kind: chart `cilium/cilium` 1.20.2, by `scripts/dev/kind-cilium-up.sh`, the version a kind run of `scripts/verify-mesh-identity/verify.sh` shows; the participant clusters of zone A and zone B: installed and upgraded by the provider (Gardener), never by the zone, found at 1.19.6 with tunnel routing (VXLAN), the version and routing mode a participant-cluster run of the same script shows in its preconditions and `environment.json` (see `scripts/verify-mesh-identity/README.md`) (the chaining and the mesh on every node, with calls between nodes, are proven on the provider's network by the participant-cluster run, not by a kind pass on 1.20.2; that run, on 1.19.6 in tunnel mode, has passed on both zones with the keep opt-in) | Apache-2.0 | the CNI and the enforcer of the network policies, with `cni.exclusive=false` (`cni-exclusive=false` in `cilium-config`) so that the Istio plugin can chain |
 | istioctl | 1.31.1 | the operator's machine | Apache-2.0 | reads a proxy's secrets and sync status in the proof; never installs |
 
