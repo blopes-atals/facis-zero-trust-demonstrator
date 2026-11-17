@@ -1,9 +1,12 @@
 # install-zone
 
-Installs one zone of the demonstrator, from an empty cluster that already runs its CNI, as eight
-Helm releases in a fixed order, each through the deployment lifecycle step
-(`scripts/lifecycle.sh`: a server-side dry run, then `helm upgrade --install --wait` with rollback
-on failure), each waiting on the previous:
+Installs one zone of the demonstrator, from an empty cluster that already runs its CNI, as Helm
+releases in a fixed order, each through the deployment lifecycle step (`scripts/lifecycle.sh`: a
+server-side dry run, then `helm upgrade --install --wait` with rollback on failure), each waiting on
+the previous. The zone file's `mesh.mode` selects one of two paths.
+
+**The sidecar path** (`mesh.mode: sidecar` or absent: the participant zones and the kind zone,
+ADR-0009), eight releases:
 
 | # | Release | Namespace | Chart | Values |
 |---|---|---|---|---|
@@ -15,6 +18,19 @@ on failure), each waiting on the previous:
 | 6 | `istio-cni` | `istio-system` | `cni` 1.31.1 | `deployment/helm/values/istio-cni.yaml` |
 | 7 | `zone-policy` | `istio-system` | `deployment/helm/zone-policy` | chart defaults + zone facts; also waits for its Jobs |
 | 8 | `ztd-openbao` | the management namespace (`ztd-mgmt`) | `deployment/helm/ztd-openbao`, its `openbao` 0.28.3 dependency built from `Chart.lock` | chart defaults + zone facts; also waits for its Jobs |
+
+**The ambient path** (`mesh.mode: ambient`: the demonstrator cluster on its provider's Calico,
+without SPIRE, [ADR-0018](../../docs/adr/0018-service-mesh-on-the-demonstrator-cluster.md)), six
+releases, with Istio from its own pin and no SPIRE or OpenBao release:
+
+| # | Release | Namespace | Chart | Values |
+|---|---|---|---|---|
+| 1 | `ztd` | `ztd-system` | `deployment/helm/ztd` (the umbrella, under the CNI derogation `calico-ambient`) | the zone file |
+| 2 | `istio-base` | `istio-system` | `base` 1.31.4, Istio release archive | `deployment/helm/values/istio-base.yaml` |
+| 3 | `istiod` | `istio-system` | `istiod` 1.31.4 (ambient profile, istiod's own CA) | `deployment/helm/values/istiod-ambient.yaml` + zone facts |
+| 4 | `istio-cni` | `istio-system` | `cni` 1.31.4 (ambient on, chained behind the cluster's CNI) | `deployment/helm/values/istio-cni-ambient.yaml` |
+| 5 | `ztunnel` | `istio-system` | `ztunnel` 1.31.4 (`manifests/charts/ztunnel` of the same archive) | `deployment/helm/values/ztunnel.yaml` |
+| 6 | `zone-policy` | `istio-system` | `deployment/helm/zone-policy` with `spire.enabled: false` | chart defaults + zone facts (the allow matrix and the plane namespaces as `lanePorts`): the STRICT `PeerAuthentication`, the lane-port `AuthorizationPolicy`s and the admission policy `no-sidecar-in-planes`; nothing of SPIRE |
 
 The umbrella creates every namespace the later releases install into; the lifecycle step never
 creates one. `ztd-openbao` comes last so that its server and its jobs are created after istiod and
@@ -42,29 +58,31 @@ scripts/install-zone/install.sh install
 | Variable | Default | Meaning |
 |---|---|---|
 | `ZONE_VALUES` | `deployment/helm/ztd/ci/values.yaml` | the zone file |
+| `ZONE_OVERLAY` | unset | a second file deep-merged over the zone file (its lists replace the zone file's): CI renders `zones/ionos.yaml` with `deployment/helm/ztd/ci/ionos.overlay.yaml` |
 | `KUBE_CONTEXT` | `kind-ztd` | the kubectl context of the zone's cluster |
 | `STEP_TIMEOUT` | `10m` | the timeout of each release |
 | `RENDER_DIR` | unset | with `render`, write each release's manifest there |
 | `INSTALL_ZONE_CACHE` | `~/.cache/ztd-install-zone` | where the pinned charts and the built OpenBao dependency are kept |
 
-- **`install`** first renders all eight releases with their zone facts, so a missing fact stops the
+- **`install`** first renders all the path's releases with their zone facts, so a missing fact stops the
   run before anything is installed; then installs them in order. It stops at the first release
   that does not reach a ready state, exits non-zero and names the release and the lifecycle step's
   error; the failed release is rolled back. It exits 0 only when every pod in the plane and
   control-plane namespaces is Ready (finished Job pods aside).
 - **Idempotent.** Run again, it upgrades every release in place with identical manifests.
-- **`render`** renders every release, or only the ones named; a name that is not one of the eight
-  releases (`ztd`, `spire-crds`, `spire`, `istio-base`, `istiod`, `istio-cni`, `zone-policy`,
-  `ztd-openbao`)
-  stops it with a non-zero exit and the list of valid names, before anything is rendered.
-- **`plan`** lists the eight steps without touching a cluster; `install` against an unreachable
+- **`render`** renders every release, or only the ones named; a name that is not one of the path's
+  releases (sidecar: `ztd`, `spire-crds`, `spire`, `istio-base`, `istiod`, `istio-cni`,
+  `zone-policy`, `ztd-openbao`; ambient: `ztd`, `istio-base`, `istiod`, `istio-cni`, `ztunnel`,
+  `zone-policy`) stops it with a non-zero exit and the list of valid names, before anything is rendered.
+- **`plan`** prints the selected path and lists its steps without touching a cluster; `install` against an unreachable
   cluster prints the same list and refuses to continue, changing nothing.
 - Every command first checks that the zone file exists, and stops with `zone file not found:
   <path>` and a non-zero exit when it does not. `help` (or `-h`, `--help`) prints the usage and
   exits 0; any other word prints the usage and `unknown command '<word>'` on stderr and exits 2.
-- **`uninstall`** removes the releases in reverse order (`ztd-openbao`, `zone-policy`, `istio-cni`,
-  `istiod`, `istio-base`, `spire`, `spire-crds`, then the umbrella, which takes the namespaces, the
-  OpenBao volume and its bootstrap Secret with it) and
+- **`uninstall`** removes the path's releases in reverse order (sidecar: `ztd-openbao`,
+  `zone-policy`, `istio-cni`, `istiod`, `istio-base`, `spire`, `spire-crds`, then the umbrella, which
+  takes the namespaces, the OpenBao volume and its bootstrap Secret with it; ambient: `zone-policy`,
+  `ztunnel`, `istio-cni`, `istiod`, `istio-base`, then the umbrella) and
   removes the CRDs each release owned, including the ones Istio's `base` chart marks to be kept by
   Helm. Delete the workloads in the plane namespaces first: a pod that still mounts the SPIFFE CSI
   volume when the driver goes holds its namespace in `Terminating`.
@@ -94,33 +112,55 @@ carries a key under `openbao` is refused by the umbrella's values schema before 
 
 ## What the installer accepts
 
-The installer installs sidecar mode with the default, unrevisioned istiod (release 5) and the Istio
-CNI plugin with ambient off (release 6, `deployment/helm/values/istio-cni.yaml`). Of the zone
-file's mesh settings it therefore accepts only:
+The installer installs the default, unrevisioned istiod, in sidecar mode (the sidecar path, with
+the Istio CNI plugin with ambient off) or in ambient mode (the ambient path, with ztunnel). Of the
+zone file's mesh settings it therefore accepts only:
 
 | Key | Accepted |
 |---|---|
-| `mesh.mode` | `sidecar`, or absent (the umbrella's default is sidecar) |
+| `mesh.mode` | `sidecar`, or absent (the umbrella's default is sidecar), or `ambient` |
 | `mesh.revision` | empty, or absent |
 
-`plan`, `render` and `install` refuse any other value before anything is fetched, rendered or
-installed, exit non-zero and name the key, its value and the reason, for example:
+`plan`, `render`, `install` and `uninstall` refuse any other value before anything is fetched,
+rendered or installed, exit non-zero and name the key, its value and the reason, for example:
 
 ```text
-install-zone: the zone file sets mesh.revision "canary", but this installer installs the default, unrevisioned istiod in sidecar mode only; a revisioned mesh needs its own installer support
+install-zone: the zone file sets mesh.revision "canary" with mesh.mode "ambient", but this installer installs the default, unrevisioned istiod in sidecar mode (the zones) or in ambient mode (the demonstrator cluster, ADR-0018) only; a revisioned mesh needs its own installer support
 ```
 
-A revisioned or ambient zone would otherwise be labelled by the umbrella for an injector that is
-never installed, and the install would report success with no proxy in any plane namespace. A zone
-without a mesh (`mesh.mode: none`, such as the IONOS zone) is not installed by this installer: it
-installs the umbrella alone through `scripts/lifecycle.sh`. CI runs both refusals (a revision, and
-ambient) against copies of the kind zone file.
+A revisioned zone would otherwise be labelled by the umbrella for an injector that is never
+installed, and the install would report success with no proxy in any plane namespace. A zone
+without a mesh (`mesh.mode: none`) is not installed by this installer: it installs the umbrella alone
+through `scripts/lifecycle.sh`. CI runs the refusals (a revision in either mode, and an unknown
+mode) against copies of the kind zone file.
+
+On the sidecar path the installer also refuses a `zone-policy` whose proxy image or status port
+differs from istiod's (the admission policy would refuse every injected pod). The ambient path
+injects no proxy and renders no admission policy, so that check does not run there.
+
+## The demonstrator cluster: the local zone copy
+
+`deployment/helm/ztd/zones/ionos.yaml` keeps the API endpoint addresses out of the repository
+(`networkPolicy.kubeApi.cidrs: []`), and the umbrella refuses the derogated zone without them. The
+operator installs from a local, uncommitted copy of the file with the two addresses filled in:
+
+```bash
+mkdir -p .dev && cp deployment/helm/ztd/zones/ionos.yaml .dev/ionos.local.yaml   # .dev/ is git-ignored; add the two /32 cidrs
+ZONE_VALUES=.dev/ionos.local.yaml KUBE_CONTEXT=cluster-admin@ZeroTrustDemonstrator \
+  scripts/install-zone/install.sh install
+```
+
+Then `scripts/verify-ambient-mesh/verify.sh` proves the mesh (`docs/environments/ionos.md`). CI
+renders the committed file with `ZONE_OVERLAY=deployment/helm/ztd/ci/ionos.overlay.yaml`, whose
+addresses are from the documentation range 192.0.2.0/24.
 
 ## The facts a zone file must carry
 
 The umbrella reads the whole file (`deployment/helm/ztd/zones/README.md`). Where the mesh runs, it
 must also state `zone.trustDomain` (a name under the DNS zone delegated to the trust framework, one per zone), the API lane
-(`networkPolicy.kubeApi.enabled: true` with its port), `cni.cilium.enabled: true`, a
+(`networkPolicy.kubeApi.enabled: true` with its port), `cni.cilium.enabled: true` (or, for the
+ambient zone without SPIRE, the declared derogation `cni.derogation: calico-ambient` with the API
+addresses and the webhook source pods), a
 `zone.kubernetesVersion` of 1.33 or later, the control-plane namespaces in `planes.extra` and the
 openings. The other releases read these zone facts from the umbrella's defaults
 (`deployment/helm/ztd/values.yaml`) with the zone file deep-merged on top, the zone file winning, so a
@@ -133,8 +173,8 @@ by the zone file:
 | `spire` | `global.spire.trustDomain`, `global.spire.caSubject.commonName` | `zone.trustDomain` |
 | `spire` | `global.spire.clusterName` | `zone.name` |
 | `spire` | `global.spire.persistence.storageClass` | `zone.storageClass` |
-| `istiod` | `meshConfig.trustDomain` | `zone.trustDomain` |
-| `zone-policy` | `trustDomain` | `zone.trustDomain` |
+| `istiod` | `meshConfig.trustDomain` | `zone.trustDomain` (both paths) |
+| `zone-policy` | `trustDomain` | `zone.trustDomain` (both paths; the ambient path also sets the literal `spire.enabled: false`, and `lanePorts.allowMatrix`, `lanePorts.namespaces.management`, `lanePorts.namespaces.data` from `allowMatrix`, `planes.management.namespace`, `planes.data.namespace`) |
 | `ztd-openbao` | `managementNamespace`, `openbao.global.namespace` (and its release namespace) | `planes.management.namespace` |
 | `ztd-openbao` | `openbao.server.dataStorage.storageClass` | `zone.storageClass` |
 | `ztd-openbao` | `cilium.enabled` | `cni.cilium.enabled` |
@@ -151,6 +191,9 @@ charts come from `https://spiffe.github.io/helm-charts-hardened/` and are checke
 sha256. The Istio 1.31 charts are not in Istio's Helm repository or OCI registry; they come from
 the release archive `istio-1.31.1-linux-amd64.tar.gz`, checked against its published sha256. An
 upgrade changes a version and its digest here and reruns `scripts/verify-mesh-identity/verify.sh`.
+The ambient path has its own pin, `ISTIO_AMBIENT_VERSION` 1.31.4 (the release of the security
+advisory of 6 Nov 2026) with `ISTIO_AMBIENT_ARCHIVE_SHA256`; the zones keep 1.31.1 until their own
+upgrade. An upgrade of the ambient pin reruns `scripts/verify-ambient-mesh/verify.sh`.
 
 ## Tools
 
