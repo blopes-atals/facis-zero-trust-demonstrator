@@ -343,8 +343,8 @@ been made yet. The proof's own placement is in the proof alone, and the charts
 and the policies carry none of it.
 
 The lanes admit no workload by address and are not widened to node addresses, which would admit
-every pod on every node (the one address the chart admits is the kubelet probe address of the parked
-ambient mode, rendered only in that mode). They need the pod network to keep a pod's address between
+every pod on every node (on these zones, the one address the chart admits is the kubelet probe
+address of the parked ambient mode, rendered only in that mode). They need the pod network to keep a pod's address between
 nodes, as the tunnel does; should the provider's routing change to masquerade pod traffic between
 nodes, the proof's routing check fails and [troubleshooting](../troubleshooting.md) gives the
 diagnosis. The re-install on the final trust-domain names is a run of its own.
