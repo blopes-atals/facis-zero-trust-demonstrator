@@ -1,7 +1,10 @@
 # Workload identity
 
 Every workload of a zone proves who it is with an X.509 SVID that SPIRE issues, and the service
-mesh uses that SVID, and nothing else, for its mutual TLS. This page describes the identity path as
+mesh uses that SVID, and nothing else, for its mutual TLS. The zones are the participant clusters
+(and the local kind cluster); the IONOS demonstrator cluster runs no SPIRE, and its ambient mesh takes
+its identities from istiod's CA ([ADR-0018](adr/0018-service-mesh-on-the-demonstrator-cluster.md),
+"Another CNI" below). This page describes the identity path as
 the repository installs it: where its parts live and why, how the zone's trust domain is named, how
 a workload is registered, which network openings the two control planes need under the default
 deny, the contract between the SPIRE agent and the mesh proxy, and how to check on a live cluster
@@ -64,12 +67,12 @@ trust domain itself is never resolved; only the trust framework's records are.
 | kind (local proof) | `kind.facis-ztd.local`, the local fixture zone the trust-list verification uses; a `.local` name is acceptable here and nowhere else |
 | zone A, zone B (final) | `zone-a.<zone>` and `zone-b.<zone>`, where `<zone>` is the delegated trust-framework zone; recorded in the zone files once the zone is named and the Technical Design Authority confirms the names |
 | zone A, zone B (interim) | `zone-a.trust.invalid` and `zone-b.trust.invalid`, in `zones/zone-a.yaml` and `zones/zone-b.yaml` until then, so that SPIRE and the mesh can be installed and proven on the participant clusters before the delegation lands. `.invalid` is reserved and can never resolve or be delegated, so an interim name is never taken for a real one. A zone installed on an interim name is re-installed with the final one, and is not acceptance evidence until then |
-| IONOS | none: `mesh.mode: none`, no identity path |
+| IONOS | `ionos.trust.invalid`, interim: istiod's mesh trust domain, without SPIRE ([ADR-0018](adr/0018-service-mesh-on-the-demonstrator-cluster.md)); not federated with the zones, replaced when the final trust domains are decided |
 
 `zone.trustDomain` is a zone fact with no default; the umbrella's schema requires it wherever
 `mesh.mode` is not `none`. The zone installer passes the same value to SPIRE
 (`global.spire.trustDomain`) and to the mesh (`meshConfig.trustDomain`), so the three cannot
-disagree; a mismatch would otherwise fail only at the first mTLS handshake. **The name is fixed at
+disagree (on the IONOS cluster, which runs no SPIRE, to the mesh alone); a mismatch would otherwise fail only at the first mTLS handshake. **The name is fixed at
 install:** it is baked into the SPIRE server's root CA, so changing it means reinstalling SPIRE and
 reissuing every identity. That is why a zone installed on an interim name is re-installed (a new
 SPIRE CA, new SVIDs) when the final name is confirmed. The `spiffe://zone-a…` examples in the attested
@@ -225,8 +228,9 @@ arrived as that node, and one from the webhook pod's own node as the `vpn-shoot`
 names that pod, so without an opening for it the webhook times out. Their zone files therefore add `networkPolicy.controlPlaneWebhooks.fromEndpoints`
 with that pod's namespace and labels (`app: vpn-shoot`, `type: tunnel`): the same two webhook
 ports, opened to that one pod by identity; no workload lane admits a pod by address, and the lanes
-are not widened to node addresses (the one address the chart admits is the kubelet probe address
-of the parked ambient mode, rendered only in that mode). Every Cilium rule sets
+are not widened to node addresses (on Cilium, the one address the chart admits is the kubelet probe
+address of the parked ambient mode, rendered only in that mode; under the IONOS cluster's derogation,
+below, the chart admits that probe address and the API server's addresses). Every Cilium rule sets
 `enableDefaultDeny` false: it adds its lane and leaves the deny to the baseline's `default-deny`.
 
 **Nothing else.** The sidecar reaches its agent over the mounted socket and the agent reaches the
@@ -237,7 +241,16 @@ any port but istiod's xDS port.
 **Another CNI.** With a mesh and without Cilium (`cni.cilium.enabled: false`) the umbrella refuses
 to render: the control planes cannot be opened under the default deny. A zone on another CNI needs
 a declared derogation of the preferred stack, written with the client before the zone is
-installed, with its own way of expressing these openings.
+installed, with its own way of expressing these openings. The one declared is `cni.derogation:
+calico-ambient` ([ADR-0018](adr/0018-service-mesh-on-the-demonstrator-cluster.md)): the IONOS
+cluster, on the provider's Calico, runs the mesh in ambient mode **without SPIRE**, so it has no
+identity control plane to open. Its mesh openings are Kubernetes NetworkPolicies by pod selector
+(the webhook source pods and ztunnel to istiod, the node's network namespace SNAT-ed to one address
+for the kubelet's probes, the API lane by address;
+[Umbrella chart](umbrella-chart.md#the-declared-cni-derogation)), and its identities come from
+istiod's CA. That cluster is the exception to every statement on this page that a mesh's identities
+are SPIRE's; ZT-24, SRS § 5.1.2 and ZT-60 are declared not met there
+([Specification changes](specifications.md)).
 
 ## The SDS contract
 
