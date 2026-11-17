@@ -14,6 +14,7 @@ The Jobs only read: their ServiceAccount may get and list, nothing else, and the
 entry (registrations are regular resources, clusterspiffeid-plane-workloads.yaml). They run in the
 release namespace under its default deny, through the DNS bypass and the API lane.
 */ -}}
+{{- if .Values.spire.enabled }}
 {{- if .Values.checks.enabled }}
 {{- $name := printf "%s-identity-checks" .Release.Name }}
 {{- $hook := dict "phase" "post-install,post-upgrade" "band" "identity" "offset" 0 }}
@@ -265,5 +266,6 @@ spec:
       volumes:
         - name: tmp
           emptyDir: {}
+{{- end }}
 {{- end }}
 {{- end }}
