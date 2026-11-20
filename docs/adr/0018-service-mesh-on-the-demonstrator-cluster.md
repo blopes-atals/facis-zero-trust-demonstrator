@@ -1,11 +1,11 @@
 # ADR-0018: Service mesh on the demonstrator cluster — Istio ambient on Calico, without SPIRE
 
-- **Status:** Accepted on 2026-11-14 by the Deputy Project Leader
-- **Date:** 2026-11-14
-- **Decided by:** Deputy Project Leader (Daniel Pires)
-- **Approvers of the deviation:** the Technical Design Authority and the Project Leader, through the
-  Deputy Project Leader; the FACIS written agreement (F-05). The date and the reference are added
-  when the approval is recorded.
+- **Status:** Accepted on 2026-11-18 by the Project Leader
+- **Date:** 2026-11-14 (decided), 2026-11-18 (confirmed in writing and the deviation approved)
+- **Decided by:** Project Leader (Daniel Pires)
+- **Approval of the deviation:** the Project Leader (Daniel Pires), 2026-11-18. No separate approval
+  of the Technical Design Authority is required. The FACIS written agreement (F-05) is sought in the
+  next F-05 update; its date and reference are added when it is recorded.
 - **Proposer:** the delivery team
 - **Refines:** [ADR-0005](0005-three-cluster-reading-of-the-target-environment.md), the three-cluster
   reading: how the mesh is installed on its IONOS cluster
@@ -62,8 +62,13 @@ SPIRE**:
    seccomp or AppArmor `Unconfined`, `procMount`, `hostProcess`, SELinux, unsafe sysctls, a host in
    a probe or a lifecycle hook). No `spire-crds`, `spire`,
    SPIRE resource of `zone-policy` or `ztd-openbao` is installed.
-2. The ambient path pins its own Istio release, 1.31.4 or later (the release of the security advisory
-   of 6 November 2026), by archive sha256 and image digests. The zones' sidecar pin is unchanged.
+2. The ambient path pins its own Istio release, 1.31.4 or later, by archive sha256 and image
+   digests. 1.31.4, released on 6 November 2026, is the release of the security bulletin
+   [ISTIO-SECURITY-2026-009](https://istio.io/latest/news/security/istio-security-2026-009/), which
+   fixes among others an ambient-mode bypass of a port-level STRICT `PeerAuthentication`
+   (GHSA-rr2c-p22p-6r9r), an istiod crash on an `AuthorizationPolicy` with an empty `to` or `from`
+   entry in ambient mode (GHSA-8jw7-82jp-wr2c) and a ztunnel panic on a malformed `traceparent`
+   header (GHSA-77vw-rg85-wx5x). The zones' sidecar pin is unchanged.
 3. The umbrella chart renders the mesh without Cilium only under the declared CNI derogation
    `cni.derogation: calico-ambient`, allowed with `mesh.mode: ambient` and Cilium disabled and
    requiring the API endpoint addresses and the webhook source pods. Its openings are Kubernetes
@@ -80,6 +85,23 @@ SPIRE**:
    are decided.
 5. The API endpoint addresses stay out of the repository: the operator installs from a local copy of
    the zone file, and CI renders it with documentation-range addresses.
+
+### Why this cluster differs from ADR-0009
+
+ADR-0009 rejects istiod-issued mesh identities on the participant zones, because there ZT-24 and
+ZT-60 require every mesh identity to come from SPIRE. That reason has no counterpart here, for three
+reasons recorded with the decision:
+
+- No workload on this cluster presents an identity to the participant zones. The zones export
+  telemetry to it over mTLS with their own CA, not over the mesh, and its mesh is a trust domain of
+  its own with no federation. A SPIRE-issued identity here would have no consumer.
+- Ambient mode is the client's recorded preference, which ADR-0009 keeps ("Ambient is parked, not
+  abandoned"), and upstream Istio cannot give it SPIRE identities.
+- Ambient mode meshes the CI/CD and visualization workloads without injecting a proxy into their
+  pods.
+
+The cost is the deviation from ZT-24, SRS § 5.1.2 and ZT-60 on this cluster alone, declared in
+[Specification changes](../specifications.md) and approved by the Project Leader.
 
 Of ADR-0009's scope statement, this record takes over the sentence on the IONOS cluster: that cluster
 now runs a mesh, in ambient mode on Calico, under this record. Everything else ADR-0009 decides stays
