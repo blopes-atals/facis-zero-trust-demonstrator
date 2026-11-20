@@ -292,8 +292,8 @@ section does not claim otherwise. The mesh's proxies cannot be configured withou
 ([Workload identity](workload-identity.md#the-proxy)); no AuthorizationPolicy can govern it,
 because such a policy is enforced by the proxy of its destination and istiod runs without one; and
 whether istiod serves only clients it has authenticated is Istio's default behaviour, neither pinned in the zone's values nor proven by
-the evidence. It is declared in [Specifications](specifications.md) as a proposed reading of ZT-55,
-with its approval pending; the row that disposes it, with istiod's client authentication pinned
+the evidence. It is declared in [Specifications](specifications.md) as a reading of ZT-55,
+approved by the Project Leader on 2026-11-18; the row that disposes it, with istiod's client authentication pinned
 and proven, is left to a follow-up. istiod's CA answers on the same port and cannot be switched
 off; a certificate it issues is refused by every meshed peer, whose `ROOTCA` is SPIRE's bundle
 alone, as every run of the mesh identity proof shows (see `scripts/verify-mesh-identity/README.md`). The other three openings keep
