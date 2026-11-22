@@ -37,9 +37,8 @@ by 23 October 2026. Pending, each awaiting the IP review request a committer fil
 | `go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp` | v1.47.0 | Apache-2.0 AND BSD-3-Clause |
 | `github.com/grpc-ecosystem/grpc-gateway/v2` | v2.30.0 | BSD-3-Clause |
 | `google.golang.org/genproto/googleapis/api` | v0.0.0-20260928230214-8a89bd6388cc | Apache-2.0 |
-| `google.golang.org/grpc` | v1.83.2 | Apache-2.0 |
 | `github.com/envoyproxy/protoc-gen-validate` | v1.3.3 | Apache-2.0 |
-| `golang.org/x/text` | v0.43.0 | BSD-3-Clause |
+| `github.com/jackc/pgx/v5` | v5.11.0 | MIT |
 
 ## Licence exceptions
 
