@@ -14,7 +14,7 @@ package main
 import (
 	"context"
 	"errors"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -29,8 +29,10 @@ import (
 )
 
 func main() {
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
 	if err := run(); err != nil {
-		log.Fatal(err)
+		slog.Error("trace-echo stopped", "error", err)
+		os.Exit(1)
 	}
 }
 
@@ -54,7 +56,7 @@ func run() error {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := provider.Shutdown(shutdownCtx); err != nil {
-			log.Printf("trace-echo: shutdown: %v", err)
+			slog.Error("trace-echo shutdown failed", "error", err)
 		}
 	}()
 
@@ -80,7 +82,7 @@ func run() error {
 		defer cancel()
 		_ = server.Shutdown(shutdownCtx)
 	}()
-	log.Printf("trace-echo: listening on %s", addr)
+	slog.Info("trace-echo listening", "addr", addr)
 	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
