@@ -6,12 +6,16 @@
 # Passes only when both records show an established channel with verdict "success", each end saw
 # the certificate of the expected peer, and both hold the same 32-byte RFC 9266 binding.
 #
-# Usage: prove-mutual-handshake.sh [--out DIR] [--verify DIR]
-#   --out DIR      write the evidence to DIR/mutual-handshake
-#                  (default: docs/evidences/cmc-atls-channel-binding/)
-#   --verify DIR   run nothing; check the records already in DIR
+# Usage: prove-mutual-handshake.sh [--out DIR] [--summary] [--verify DIR]
+#   --out DIR      write the full output of the run to DIR/mutual-handshake
+#                  (default: .dev/atls-evidence/, which git ignores)
+#   --summary      after a passing run, also write the summary the repository keeps to
+#                  docs/evidences/cmc-atls-channel-binding/mutual-handshake/
+#   --verify DIR   run nothing; check what is already in DIR: the records of a run, or the
+#                  recorded verdict when DIR holds only the summary (the committed folder)
 #
-# Needs go, git and jq. Evidence: server.json, client.json, logs, environment.json, verdict.txt.
+# Needs go, git and jq. Full output: server.json, client.json, logs, environment.json,
+# verdict.txt. Summary: verdict.txt, environment.json.
 set -euo pipefail
 # shellcheck source=scripts/atls-probe/lib.sh
 source "$(dirname "$0")/lib.sh"
@@ -53,10 +57,7 @@ verdict() {
 
 parse_args mutual-handshake "$@"
 title="Mutual attested handshake, identical binding"
-if [ -n "$verify_only" ]; then
-	verdict "$out"
-	conclude "$title"
-fi
+if [ -n "$verify_only" ]; then run_verify "$title"; fi
 
 setup
 start_cmcds

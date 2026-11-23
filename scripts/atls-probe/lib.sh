@@ -3,7 +3,12 @@
 #
 # It builds cmcd (the CMC version pinned in go.mod) and the probe, generates the two zones'
 # fixtures, runs one cmcd per zone as a plain process, and collects records, logs, the verdict
-# and the environment into the evidence folder. Everything it starts is stopped again on exit.
+# and the environment into the output folder. Everything it starts is stopped again on exit.
+#
+# A run writes its full output (records, logs, cmcd configurations, verdict, environment) to
+# --out DIR, by default the git-ignored .dev/atls-evidence/. The repository keeps only the summary
+# of a run under docs/evidences/cmc-atls-channel-binding/: verdict.txt and environment.json per
+# proof, plus reconnect-findings.md for the session-loss proof. --summary writes those files.
 #
 # Environment:
 #   ATLS_HOST_KIND   what the run is recorded as: local (default), ci (default on GitHub
@@ -15,6 +20,9 @@ set -euo pipefail
 
 CMC_MODULE=github.com/Fraunhofer-AISEC/cmc
 EVIDENCE_ROOT=docs/evidences/cmc-atls-channel-binding
+DEFAULT_OUT=.dev/atls-evidence
+# What the repository keeps of a run; everything else is the run's full output.
+SUMMARY_FILES=(verdict.txt environment.json reconnect-findings.md)
 ZONE_A_ID=spiffe://a/gateway
 ZONE_B_ID=spiffe://b/gateway
 
@@ -25,6 +33,8 @@ script=$(basename "$0")
 work=
 out=
 verify_only=
+summary_dir=
+summary_only=
 declare -A pids=()
 checks_failed=0
 
@@ -44,19 +54,27 @@ now_ms() {
 # --- arguments ----------------------------------------------------------------------------
 
 # parse_args DEFAULT_FOLDER "$@"
-#   --out DIR      write the evidence to DIR (default: the proof's folder in the repository)
-#   --verify DIR   run no process: check the records already in DIR and print the verdict
+#   --out DIR      write the full output to DIR/DEFAULT_FOLDER (default: .dev/atls-evidence/)
+#   --summary      after a passing run, also write the summary files to the proof's folder in
+#                  the repository
+#   --verify DIR   run no process: check what is already in DIR and print the verdict. A folder
+#                  with the records of a run is checked on those records; a folder that holds
+#                  only summary files (the committed one) is checked on the recorded verdict.
 parse_args() {
 	local default=$1
 	shift
-	out=$root/$EVIDENCE_ROOT/$default
-	local base=
+	out=$root/$DEFAULT_OUT/$default
+	local base='' summary=''
 	while [ $# -gt 0 ]; do
 		case $1 in
 		--out)
 			[ $# -ge 2 ] || die "--out needs a directory"
 			base=$2
 			shift 2
+			;;
+		--summary)
+			summary=yes
+			shift
 			;;
 		--verify)
 			[ $# -ge 2 ] || die "--verify needs a directory"
@@ -75,9 +93,31 @@ parse_args() {
 		out=$(cd "$base" && pwd)/$default
 	fi
 	if [ -n "$verify_only" ]; then
+		[ -z "$summary" ] || die "--summary writes the summary of a run; it cannot be combined with --verify"
 		[ -d "$verify_only" ] || die "--verify: $verify_only is not a directory"
 		out=$(cd "$verify_only" && pwd)
+		if holds_only_summary "$out"; then summary_only=yes; fi
+		return 0
 	fi
+	# The folder in the repository holds summary files only; a run never writes its records there.
+	case $out/ in
+	"$root/$EVIDENCE_ROOT"/*) die "--out: $out is the committed evidence folder; use --summary to write the summary files there" ;;
+	esac
+	if [ -n "$summary" ]; then summary_dir=$root/$EVIDENCE_ROOT/$default; fi
+}
+
+# holds_only_summary DIR: true when DIR holds summary files and nothing else.
+holds_only_summary() {
+	local entry name known f found=
+	for entry in "$1"/* "$1"/.[!.]*; do
+		[ -e "$entry" ] || continue
+		name=$(basename "$entry")
+		known=
+		for f in "${SUMMARY_FILES[@]}"; do [ "$name" = "$f" ] && known=yes; done
+		[ -n "$known" ] && [ -f "$entry" ] || return 1
+		found=yes
+	done
+	[ -n "$found" ]
 }
 
 # --- lifecycle ------------------------------------------------------------------------------
@@ -118,7 +158,7 @@ setup() {
 	prepare_out
 
 	commit=$(git rev-parse HEAD)
-	# The evidence folders are what the run writes; changes there do not make the tree dirty.
+	# The evidence folder is what --summary writes; changes there do not make the tree dirty.
 	if [ -z "$(git status --porcelain -- . ":!$EVIDENCE_ROOT")" ]; then dirty=false; else dirty=true; fi
 	cmc_version=$(go list -m -f '{{.Version}}' "$CMC_MODULE")
 
@@ -340,6 +380,46 @@ check() {
 # expect FILE [JQ-OPTION...] JQ-CONDITION: true when the record satisfies the condition.
 expect() { [ -f "$1" ] && jq -e "${@:2}" "$1" >/dev/null 2>&1; }
 
+# verify_summary TITLE SCRIPT-NAME: the checks --verify makes on a folder that holds only the
+# summary of a run. The records are not there, so the recorded verdict is checked, not re-derived.
+verify_summary() {
+	local e=$out/environment.json
+	check "verdict.txt is the verdict of this proof" summary_line head "$1"
+	check "verdict.txt records at least one check and none that failed" summary_checks
+	check "verdict.txt ends with verdict: PASS" summary_line tail "verdict: PASS"
+	check "environment.json names this script, the commit, the versions, the date and the host kind of the run" \
+		expect "$e" --arg script "scripts/atls-probe/$script" \
+		'.script == $script and (.commit | test("^[0-9a-f]{40}$")) and (.dirty | type) == "boolean"
+		 and (.go_version // "") != "" and (.cmc_version // "") != "" and (.date // "") != ""
+		 and (.host_kind | IN("local", "ci", "target-cluster"))'
+}
+summary_line() { [ -f "$out/verdict.txt" ] && [ "$("$1" -n 1 "$out/verdict.txt")" = "$2" ]; }
+summary_checks() { grep -q '^PASS  ' "$out/verdict.txt" 2>/dev/null && ! grep -q '^FAIL' "$out/verdict.txt"; }
+
+# run_verify TITLE: what --verify does. On the records of a run it makes the proof's own checks
+# (verdict); on a summary-only folder it checks the recorded verdict, and the proof's
+# verdict_summary when the script defines one. It does not return.
+run_verify() {
+	if [ -n "$summary_only" ]; then
+		verify_summary "$1"
+		if declare -F verdict_summary >/dev/null; then verdict_summary "$out"; fi
+		conclude "$1" "summary only: this folder holds the summary of a run, so the recorded verdict is checked; the records it was derived from are in the run's full output"
+	fi
+	verdict "$out"
+	conclude "$1"
+}
+
+# write_summary: copy the summary files of this run to the proof's folder in the repository.
+write_summary() {
+	local f
+	rm -rf "$summary_dir"
+	mkdir -p "$summary_dir"
+	for f in "${SUMMARY_FILES[@]}"; do
+		[ -f "$out/$f" ] && cp "$out/$f" "$summary_dir/$f"
+	done
+	say "summary written to $summary_dir"
+}
+
 # conclude TITLE [NOTE...]: print the verdict, write verdict.txt unless verifying, and exit
 # with status 0 only when every check passed.
 conclude() {
@@ -357,7 +437,12 @@ conclude() {
 	say "$text"
 	if [ -z "$verify_only" ]; then
 		say "$text" >"$out/verdict.txt"
-		say "evidence written to $out"
+		say "full output written to $out"
+		if [ -n "$summary_dir" ] && [ "$result" = PASS ]; then
+			write_summary
+		elif [ -n "$summary_dir" ]; then
+			say "the run failed: the summary in $summary_dir is left as it was"
+		fi
 	fi
 	[ "$result" = PASS ] || exit 1
 	exit 0

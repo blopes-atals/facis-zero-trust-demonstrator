@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Regenerates the wrapper-isolation evidence: the import guard, the wrapper test run and the freeze of
-# the wrapper's exported API at v1.
+# Regenerates the wrapper-isolation evidence in
+# docs/evidences/cmc-atls-channel-binding/wrapper-isolation/: the import guard, the wrapper test
+# run and the freeze of the wrapper's exported API at v1.
 #
 #   depguard-run.txt   golangci-lint on the clean tree, then with throwaway imports of CMC and of
 #                      the test-only atlstest package planted outside internal/atls (each must
@@ -13,13 +14,28 @@
 #
 # It ends with one line per proof and exits non-zero unless all three hold.
 #
-# Usage: prove-isolation.sh            (golangci-lint on PATH, or GOLANGCI_LINT=/path/to/it)
+# Usage: prove-isolation.sh [--out DIR]    (golangci-lint on PATH, or GOLANGCI_LINT=/path/to/it)
+#   --out DIR   write the three files to DIR instead of the folder in the repository
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(git -C "$here" rev-parse --show-toplevel)
 lint=${GOLANGCI_LINT:-golangci-lint}
+out=$root/docs/evidences/cmc-atls-channel-binding/wrapper-isolation
+case ${1:-} in
+"") ;;
+--out)
+	[ $# -eq 2 ] || { echo "prove-isolation.sh: --out needs a directory" >&2; exit 1; }
+	mkdir -p "$2"
+	out=$(cd "$2" && pwd)
+	;;
+*)
+	echo "prove-isolation.sh: unknown argument: $1" >&2
+	exit 1
+	;;
+esac
 cd "$root"
+mkdir -p "$out"
 
 probe_dir=internal/bddreport
 cmc_probe=$probe_dir/zz_cmc_guard_probe.go
@@ -112,7 +128,7 @@ EOF
 	echo '$ golangci-lint run ./...'
 	run_lint ./...
 	[ "$status" -eq 0 ] || imports_ok=no
-} >"$here/depguard-run.txt" 2>&1
+} >"$out/depguard-run.txt" 2>&1
 
 tests_ok=yes
 {
@@ -128,7 +144,7 @@ tests_ok=yes
 	echo '$ go test -race -count=1 ./internal/atls/...'
 	go test -race -count=1 ./internal/atls/... 2>&1 || status=$?
 	[ "$status" -eq 0 ] || tests_ok=no
-} >"$here/atls-test-run.txt"
+} >"$out/atls-test-run.txt"
 
 # The interface was frozen at the last commit that changed the listing.
 frozen=$(git log -1 --format=%H -- "$api_listing")
@@ -201,8 +217,8 @@ EOF
 	echo "wrapper tests: $([ "$tests_ok" = yes ] && echo pass || echo FAIL) (atls-test-run.txt)"
 	echo "API guard:     $([ "$api_ok" = yes ] && echo pass || echo FAIL)"
 	echo "frozen commit: ${frozen:-none}"
-} >"$here/api-freeze.txt" 2>&1
+} >"$out/api-freeze.txt" 2>&1
 
-echo "wrote $here/depguard-run.txt, $here/atls-test-run.txt and $here/api-freeze.txt"
-sed -n '/^## Outcome of this run$/,$p' "$here/api-freeze.txt" | tail -n +2
+echo "wrote depguard-run.txt, atls-test-run.txt and api-freeze.txt to $out"
+sed -n '/^## Outcome of this run$/,$p' "$out/api-freeze.txt" | tail -n +2
 [ "$imports_ok" = yes ] && [ "$tests_ok" = yes ] && [ "$api_ok" = yes ]

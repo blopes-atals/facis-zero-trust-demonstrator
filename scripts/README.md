@@ -99,12 +99,13 @@ the probe `cmd/atls-probe`.
 | `atls-probe/prove-session-loss.sh` | Session loss is recorded: server killed, client killed, `cmcd` killed with a channel open and during a handshake, server frozen (half-open) | every scenario ran from an established channel and left its findings, with one reconnect attempt each |
 
 ```sh
-scripts/atls-probe/prove-mutual-handshake.sh                   # writes docs/evidences/cmc-atls-channel-binding/mutual-handshake/
+scripts/atls-probe/prove-mutual-handshake.sh                   # writes the git-ignored .dev/atls-evidence/mutual-handshake/
 scripts/atls-probe/prove-tampered-binding.sh
-scripts/atls-probe/prove-session-loss.sh                   # about one minute
+scripts/atls-probe/prove-session-loss.sh                       # about one minute
 scripts/atls-probe/prove-mutual-handshake.sh --out /tmp/run    # writes /tmp/run/mutual-handshake/ instead
-scripts/atls-probe/prove-mutual-handshake.sh --verify DIR      # runs nothing: checks the records already in DIR
-scripts/atls-probe/summary.sh [DIR]              # the verdicts under DIR as a Markdown table
+scripts/atls-probe/prove-mutual-handshake.sh --summary         # also writes the summary the repository keeps
+scripts/atls-probe/prove-mutual-handshake.sh --verify DIR      # runs nothing: checks what is already in DIR
+scripts/atls-probe/summary.sh [DIR]                            # the verdicts under DIR as a Markdown table
 ```
 
 They need `go`, `git`, `jq` and bash 5. Each run:
@@ -117,7 +118,13 @@ They need `go`, `git`, `jq` and bash 5. Each run:
    that both verify (`TestCmcdReports`, `ATLS_FIXTURE_CMCD_CHECK`);
 4. runs the probe processes and checks the proof on their JSON records;
 5. writes the records, the logs, `environment.json` (commit, Go and CMC versions, date, host kind)
-   and `verdict.txt` to the evidence folder, and removes the temporary directory with its keys.
+   and `verdict.txt` to the output folder, and removes the temporary directory with its keys.
+
+The full output of a run never goes into the repository. With `--summary` a passing run also
+writes its summary to `docs/evidences/cmc-atls-channel-binding/<proof>/`: `verdict.txt` and
+`environment.json`, and `reconnect-findings.md` for the session-loss proof. `--verify DIR` checks
+the records when `DIR` is the full output of a run; on a folder that holds only the summary, such
+as the committed one, it checks the recorded verdict and says so.
 
 The scripts stop every process they started, also when interrupted. In the copied logs the
 temporary directory appears as `<work>` and the host name as `<host>`; private keys never leave the
@@ -130,8 +137,14 @@ temporary directory.
 | `ATLS_SESSION_LOSS_LIMIT` | seconds a surviving end is given to observe an error in `prove-session-loss.sh` (default 15) |
 | `ATLS_KEEP_WORK` | keep the temporary directory, keys included, for inspection |
 
-The evidence in the repository is produced by running the scripts locally and committing the
-result. The workflow `.github/workflows/atls-channel-binding.yml` re-runs them with `--out` outside
-the checkout to verify that the proofs reproduce; it never writes the committed evidence.
+The summaries in the repository are produced by running the scripts locally with `--summary` and
+committing the result. The workflow `.github/workflows/atls-channel-binding.yml` re-runs them with
+`--out` outside the checkout to verify that the proofs reproduce, and uploads the full output of
+its run as the artefact `atls-channel-binding-evidence`; it never writes the committed evidence.
 
-`lib.sh` holds what the three scripts share and is not run on its own.
+`atls-probe/prove-isolation.sh` is the fourth proof: it regenerates the three text files under
+`docs/evidences/cmc-atls-channel-binding/wrapper-isolation/` (the import guard, the wrapper test
+run and the freeze of the exported API), or writes them to `--out DIR`. It needs `go`, `git` and
+`golangci-lint` (on `PATH`, or `GOLANGCI_LINT=`) and starts no `cmcd`.
+
+`lib.sh` holds what the three channel proofs share and is not run on its own.

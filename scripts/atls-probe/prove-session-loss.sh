@@ -21,15 +21,19 @@
 # ErrAttesterUnavailable. A surviving end that sees nothing is recorded as
 # "no error observed within <limit>".
 #
-# Usage: prove-session-loss.sh [--out DIR] [--verify DIR]
-#   --out DIR      write the evidence to DIR/session-loss
-#                  (default: docs/evidences/cmc-atls-channel-binding/)
-#   --verify DIR   run nothing; check the findings already in DIR
+# Usage: prove-session-loss.sh [--out DIR] [--summary] [--verify DIR]
+#   --out DIR      write the full output of the run to DIR/session-loss
+#                  (default: .dev/atls-evidence/, which git ignores)
+#   --summary      after a passing run, also write the summary the repository keeps to
+#                  docs/evidences/cmc-atls-channel-binding/session-loss/
+#   --verify DIR   run nothing; check what is already in DIR: the records of a run, or the
+#                  recorded verdict when DIR holds only the summary (the committed folder)
 #
 # Environment: ATLS_SESSION_LOSS_LIMIT  seconds a surviving end is given to observe an error (default 15)
 #
-# Needs go, git and jq. Evidence: reconnect-findings.md, findings.json, one folder of records
-# and logs per scenario, environment.json, verdict.txt.
+# Needs go, git and jq. Full output: reconnect-findings.md, findings.json, one folder of records
+# and logs per scenario, environment.json, verdict.txt. Summary: reconnect-findings.md,
+# verdict.txt, environment.json.
 set -euo pipefail
 # shellcheck source=scripts/atls-probe/lib.sh
 source "$(dirname "$0")/lib.sh"
@@ -65,12 +69,17 @@ verdict() {
 		 and ((.time_to_detect | test("ms$")) or (.error | test("^no error observed within"))))'
 }
 
+# verdict_summary DIR: what --verify adds for a folder that holds only the summary.
+verdict_summary() {
+	local md=$1/reconnect-findings.md sc
+	for sc in "${scenarios[@]}"; do
+		check "$sc: listed in reconnect-findings.md" grep -q "| $sc |" "$md"
+	done
+}
+
 parse_args session-loss "$@"
 title="Session loss is recorded per scenario"
-if [ -n "$verify_only" ]; then
-	verdict "$out"
-	conclude "$title"
-fi
+if [ -n "$verify_only" ]; then run_verify "$title"; fi
 
 # --- helpers ------------------------------------------------------------------------------
 
@@ -324,15 +333,15 @@ write_findings() {
 		say "every second in both directions. A surviving end is given $limit s to observe an error."
 		say "\"Sentinel\" is a refusal sentinel of \`internal/atls\`; \"transport\" is an error of the"
 		say "connection that matches none. Time to detect counts from the moment the process was"
-		say "killed or frozen. The records and logs of each scenario are in the folder of its name."
+		say "killed or frozen. The records and logs of each scenario, and \`findings.json\`, belong to"
+		say "the full output of a run; the repository keeps this file, \`verdict.txt\` and"
+		say "\`environment.json\`."
 		say
 		say "| Scenario | Surviving end | Error observed | Sentinel or transport | Time to detect | Reconnect |"
 		say "|---|---|---|---|---|---|"
 		jq -r '.[] | [.scenario, .surviving_end, .error, .classification, .time_to_detect, .reconnect]
-			| map(gsub("\\|"; "\\|") | gsub("\n"; " ") | if length > 260 then .[0:260] + "…" else . end)
+			| map(gsub("\\|"; "\\|") | gsub("\n"; " "))
 			| "| " + join(" | ") + " |"' "$out/findings.json"
-		say
-		say "Long error texts are cut in the table; \`findings.json\` has them in full."
 	} >"$out/reconnect-findings.md"
 }
 

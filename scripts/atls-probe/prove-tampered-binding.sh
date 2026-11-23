@@ -8,16 +8,20 @@
 # part of. Passes only when the relay was in the path and forwarded bytes both ways, both ends
 # refuse the channel with ErrBindingMismatch, and no application data crossed.
 #
-# Usage: prove-tampered-binding.sh [--out DIR] [--verify DIR]
-#   --out DIR      write the evidence to DIR/tampered-binding
-#                  (default: docs/evidences/cmc-atls-channel-binding/)
-#   --verify DIR   run nothing; check the records already in DIR
+# Usage: prove-tampered-binding.sh [--out DIR] [--summary] [--verify DIR]
+#   --out DIR      write the full output of the run to DIR/tampered-binding
+#                  (default: .dev/atls-evidence/, which git ignores)
+#   --summary      after a passing run, also write the summary the repository keeps to
+#                  docs/evidences/cmc-atls-channel-binding/tampered-binding/
+#   --verify DIR   run nothing; check what is already in DIR: the records of a run, or the
+#                  recorded verdict when DIR holds only the summary (the committed folder)
 #
 # A control run shows why the relay needs those identities: with a certificate of another
 # identity it is stopped by the identity check (ErrIdentityMismatch) before any attestation.
 #
-# Needs go, git and jq. Evidence: server.json, client.json, relay.json, control-other-identity/,
-# logs, environment.json, verdict.txt.
+# Needs go, git and jq. Full output: server.json, client.json, relay.json,
+# control-other-identity/, logs, environment.json, verdict.txt. Summary: verdict.txt,
+# environment.json.
 set -euo pipefail
 # shellcheck source=scripts/atls-probe/lib.sh
 source "$(dirname "$0")/lib.sh"
@@ -65,10 +69,7 @@ verdict() {
 
 parse_args tampered-binding "$@"
 title="A report bound to another TLS session is refused"
-if [ -n "$verify_only" ]; then
-	verdict "$out"
-	conclude "$title"
-fi
+if [ -n "$verify_only" ]; then run_verify "$title"; fi
 
 setup
 start_cmcds

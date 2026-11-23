@@ -55,6 +55,8 @@ nav:
   - Evidence:
       - "Mesh mode, upstream state: about": evidences/mesh-mode-upstream-state/README.md
       - "Mesh mode, upstream state: record": evidences/mesh-mode-upstream-state/upstream-state.md
+      - "Attested channel binding: about": evidences/cmc-atls-channel-binding/README.md
+      - "Attested channel binding: session-loss findings": evidences/cmc-atls-channel-binding/session-loss/reconnect-findings.md
   - Architecture decisions:
       - Overview: adr/index.md
       - Decision ledger: adr/decision-ledger.md

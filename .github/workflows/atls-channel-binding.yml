@@ -2,8 +2,9 @@ name: Attested channel proofs
 
 # Re-runs the three attested-channel proofs from the commit under review, on a hosted runner and
 # without containers: two cmcd processes and the probe as plain processes. It verifies that the
-# proofs reproduce. The evidence committed under docs/evidences/ comes from a local run and is
-# never written or replaced here; this run's own records are uploaded as an artefact.
+# proofs reproduce. The repository keeps only the summary of a local run under docs/evidences/
+# (verdicts, environments, session-loss findings); it is never written or replaced here. The full
+# output of this run, with every record and log, is uploaded as an artefact.
 on:
   pull_request:
     paths:
