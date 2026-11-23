@@ -123,9 +123,9 @@ its own and applies to the participant zones.
   until istio-cni and ztunnel come back with the new node. Accepted for a tooling cluster.
 - Negative: two facts were inferred, not observed, when this was decided: the webhook calls arrive
   from the `konnectivity-agent` pods, and Calico applies the probe lane to the SNAT-ed probes. The
-  proof fails on either; the remedy is a corrected zone fact or opening, not a new decision. Its run
-  of 2026-11-15 passed with both openings in place
-  ([evidence](../evidences/ambient-mesh-demonstrator/2026-11-15.md)).
+  proof fails on either; the remedy is a corrected zone fact or opening, not a new decision. Its runs
+  of 2026-11-15 and 2026-11-23 passed with both openings in place
+  ([evidence](../evidences/ambient-mesh-demonstrator/2026-11-23.md), the record of the second).
 - Negative: traffic from the node's network namespace bypasses the mesh. Istio SNATs every
   connection from it to an ambient pod to 169.254.7.127, which ztunnel lets past without mTLS, and
   the probe opening admits that address on every port, as the kubelet's probes need. A host-network

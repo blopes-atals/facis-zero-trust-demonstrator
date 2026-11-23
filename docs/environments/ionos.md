@@ -228,9 +228,9 @@ zone file `deployment/helm/ztd/zones/ionos.yaml`
 `istiod` (ambient profile, istiod's own CA, trust domain `ionos.trust.invalid`, interim), `istio-cni`
 (ambient on, chained behind Calico), `ztunnel`, and `zone-policy` (the mesh-wide STRICT
 `PeerAuthentication`, the lane-port policies and the no-sidecar admission policy). Istio comes from
-its own pin, 1.31.4. Installed on 2026-11-15 and proven the same day: every check of the proof passed
-([evidence](../evidences/ambient-mesh-demonstrator/2026-11-15.md)). The record names the commit it
-ran on, on the branch before its rebase onto `main`; the same changes land under another hash.
+its own pin, 1.31.4. Installed on 2026-11-15 and proven the same day; the proof ran again on 2026-11-23 and every check
+passed ([evidence](../evidences/ambient-mesh-demonstrator/2026-11-23.md)). The record names the
+commit it ran on.
 
 The cluster facts that shaped it (read-only, 2026-11-14):
 

@@ -54,7 +54,7 @@ nav:
   - Evidence:
       - "Mesh mode, upstream state: about": evidences/mesh-mode-upstream-state/README.md
       - "Mesh mode, upstream state: record": evidences/mesh-mode-upstream-state/upstream-state.md
-      - "Ambient mesh, demonstrator cluster: 2026-11-15": evidences/ambient-mesh-demonstrator/2026-11-15.md
+      - "Ambient mesh, demonstrator cluster: 2026-11-23": evidences/ambient-mesh-demonstrator/2026-11-23.md
   - Architecture decisions:
       - Overview: adr/index.md
       - Decision ledger: adr/decision-ledger.md
