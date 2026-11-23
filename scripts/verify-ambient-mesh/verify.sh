@@ -73,9 +73,11 @@
 #   ZTD_CONFIRM_CLUSTER  the context name, typed for this run: the proof creates pods on that cluster
 #   ZONE_VALUES          the zone file the cluster was installed from (default:
 #                        deployment/helm/ztd/zones/ionos.yaml; the local copy with the API addresses
-#                        reads the same). Refused unless it lies inside the repository (the record
-#                        names it by its path there) and sets mesh.mode ambient and cni.derogation
-#                        calico-ambient.
+#                        reads the same). Refused unless it lies inside the repository and sets
+#                        mesh.mode ambient and cni.derogation calico-ambient.
+# The record names the cluster by its role and the zone by its name and what the zone file sets; it
+# names the zone file's path only when the file is tracked, and never the kubectl context, a value
+# of the zone file other than those, or a path on the operator's machine.
 #   STANDIN_TIMEOUT      seconds to wait for the stand-ins to be Ready (default: 180)
 # Every check is "<test>; check $? <title>": the status of the test is what the check records.
 # shellcheck disable=SC2319,SC2015
@@ -104,14 +106,14 @@ python3 -c 'import yaml' 2>/dev/null || refuse "python3 needs PyYAML"
 [ -f "$ZONE_VALUES" ] || refuse "zone file not found: $ZONE_VALUES"
 case $ZONE_VALUES in
   "$REPO"/*) ;;
-  *) refuse "the zone file must lie inside the repository (the evidence names it by its path there): $(basename -- "$ZONE_VALUES")";;
+  *) refuse "the zone file must lie inside the repository (a tracked zone file, or a local copy under the ignored .dev/): $(basename -- "$ZONE_VALUES")";;
 esac
 [ "${ZTD_CONFIRM_CLUSTER:-}" = "$CONTEXT" ] \
   || refuse "context '$CONTEXT': the proof creates pods there; set ZTD_CONFIRM_CLUSTER=$CONTEXT for this run"
 
 # The zone document: the umbrella's defaults with the zone file on top (as scripts/install-zone reads
-# it). Prints: mode derogation trustDomain management-namespace data-namespace mesh-namespace.
-read -r MODE DEROGATION TD MGMT DATA MESH_NS <<<"$(python3 - "$CHART/values.yaml" "$ZONE_VALUES" <<'PY'
+# it). Prints: mode derogation trustDomain management-namespace data-namespace mesh-namespace zone-name.
+read -r MODE DEROGATION TD MGMT DATA MESH_NS ZONE <<<"$(python3 - "$CHART/values.yaml" "$ZONE_VALUES" <<'PY'
 import sys, yaml
 def merge(base, top):
     if isinstance(base, dict) and isinstance(top, dict):
@@ -123,12 +125,20 @@ def merge(base, top):
 z = merge(yaml.safe_load(open(sys.argv[1])) or {}, yaml.safe_load(open(sys.argv[2])) or {})
 print(z["mesh"]["mode"], (z.get("cni") or {}).get("derogation") or "-", z["zone"].get("trustDomain") or "-",
       z["planes"]["management"]["namespace"], z["planes"]["data"]["namespace"],
-      z["networkPolicy"]["meshControlPlane"]["namespace"])
+      z["networkPolicy"]["meshControlPlane"]["namespace"], z["zone"].get("name") or "-")
 PY
 )"
 [ "$MODE" = ambient ] && [ "$DEROGATION" = calico-ambient ] \
   || refuse "the zone file ${ZONE_VALUES#"$REPO"/} sets mesh.mode $MODE and cni.derogation $DEROGATION; this proof is for the ambient zone under the derogation calico-ambient (ADR-0018)"
 [ "$TD" != - ] || refuse "the zone file states no zone.trustDomain"
+[ "$ZONE" != - ] || refuse "the zone file states no zone.name"
+# How the record names the zone file: by its path when it is tracked, and as a local copy when not
+# (the operator's copy holds the API endpoint addresses and is not committed).
+if git -C "$REPO" ls-files --error-unmatch -- "$ZONE_VALUES" >/dev/null 2>&1; then
+  ZONE_SOURCE="zone file \`${ZONE_VALUES#"$REPO"/}\`"
+else
+  ZONE_SOURCE="read from a local copy of its zone file, which is not in the repository"
+fi
 kubectl --context "$CONTEXT" version --request-timeout=10s >/dev/null 2>&1 || refuse "context '$CONTEXT' cannot be reached"
 for ns in "$MGMT" "$DATA"; do
   left=$(kubectl --context "$CONTEXT" -n "$ns" get pod,service,serviceaccount,networkpolicy -o name 2>/dev/null | grep '/proof-'
@@ -196,8 +206,8 @@ nodes=$(k get nodes -o name | wc -l | tr -d ' ')
 server=$(k version -o json | python3 -c 'import sys,json;print(json.load(sys.stdin)["serverVersion"]["gitVersion"])')
 istio=$(k -n "$MESH_NS" get deploy istiod -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null)
 say "# The ambient mesh on the demonstrator cluster ($started)" ''
-say "Commit \`$commit\`, tree dirty: $dirty. Context \`$CONTEXT\`, Kubernetes $server, $nodes node(s)." ''
-say "Zone file \`${ZONE_VALUES#"$REPO"/}\` (mesh.mode ambient, cni.derogation calico-ambient, trust domain \`$TD\`). istiod image \`${istio:-not found}\`." ''
+say "Commit \`$commit\`, tree dirty: $dirty. The demonstrator cluster on IONOS, Kubernetes $server, $nodes node(s)." ''
+say "Zone \`$ZONE\`, $ZONE_SOURCE (mesh.mode ambient, cni.derogation calico-ambient, trust domain \`$TD\`). istiod image \`${istio:-not found}\`." ''
 say "Stand-in images \`$AGNHOST\` and \`$CURL\`. Call results: an HTTP code, or failed(<curl exit>)." ''
 
 say '## 1. Control plane' ''
@@ -407,7 +417,7 @@ metadata: {name: proof-invalid, namespace: $DATA}
 spec:
   rules: [{to: [{operation: {ports: ["not-a-port"]}}]}]
 YAML
-out=$(k apply --dry-run=server -f "$work/invalid.yaml" 2>&1); rc=$?
+out=$(k apply --dry-run=server -f - <"$work/invalid.yaml" 2>&1); rc=$?
 if [ $rc -eq 0 ]; then
   fail "the invalid AuthorizationPolicy was admitted: istiod's webhook did not validate it" "$out"
 elif grep -q 'failed calling webhook' <<<"$out"; then

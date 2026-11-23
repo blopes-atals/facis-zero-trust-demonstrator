@@ -14,8 +14,7 @@ ZTD_CONFIRM_CLUSTER=cluster-admin@ZeroTrustDemonstrator \
 `KUBE_CONTEXT` defaults to `cluster-admin@ZeroTrustDemonstrator` and `ZONE_VALUES` to
 `deployment/helm/ztd/zones/ionos.yaml` (the local copy with the API addresses reads the same). The
 script refuses, before it reads the cluster, a run under CI, a run without `ZTD_CONFIRM_CLUSTER`
-equal to the context, a zone file outside the repository (the record names the zone file by its
-path in the repository, so no local path is committed; the local copy goes under the ignored
+equal to the context, a zone file outside the repository (the local copy goes under the ignored
 `.dev/`), and a zone file that does not set `mesh.mode: ambient` with
 `cni.derogation: calico-ambient`. It also refuses to start while a pod, Service, ServiceAccount or
 NetworkPolicy named `proof-*` or labelled `ztd.facis.io/proof=ambient-mesh` exists in the plane
@@ -124,7 +123,9 @@ demonstrator cluster.
 ## The record
 
 A passing run writes its record, dated, to `docs/evidences/ambient-mesh-demonstrator/<UTC date>.md`:
-the commit, the context, the Kubernetes version, the node count, the istiod image (the Istio
-version) and every result. The script is the only writer of that directory, and the record is
+the commit, the cluster by its role (the demonstrator cluster on IONOS), the Kubernetes version, the
+node count, the zone by its name and what the zone file sets, the istiod image (the Istio version)
+and every result. It names the zone file's path only when the file is tracked, and never the kubectl
+context or a path on the operator's machine. The script is the only writer of that directory, and the record is
 committed as the evidence. A failing run writes its record to a temporary directory and prints the
 path; nothing is written to the repository.
