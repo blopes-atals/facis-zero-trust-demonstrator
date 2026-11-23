@@ -146,7 +146,7 @@ operator installs from a local, uncommitted copy of the file with the two addres
 
 ```bash
 mkdir -p .dev && cp deployment/helm/ztd/zones/ionos.yaml .dev/ionos.local.yaml   # .dev/ is git-ignored; add the two /32 cidrs
-ZONE_VALUES=.dev/ionos.local.yaml KUBE_CONTEXT=cluster-admin@ZeroTrustDemonstrator \
+ZONE_VALUES=.dev/ionos.local.yaml KUBE_CONTEXT=<ionos-context> \
   scripts/install-zone/install.sh install
 ```
 

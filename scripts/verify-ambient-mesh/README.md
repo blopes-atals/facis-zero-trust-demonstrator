@@ -7,13 +7,15 @@ installs nothing itself: it places stand-in pods, proves with them, and removes 
 
 ```bash
 ZONE_VALUES=<local copy of deployment/helm/ztd/zones/ionos.yaml> \
-ZTD_CONFIRM_CLUSTER=cluster-admin@ZeroTrustDemonstrator \
+KUBE_CONTEXT=<ionos-context> ZTD_CONFIRM_CLUSTER=<ionos-context> \
   scripts/verify-ambient-mesh/verify.sh
 ```
 
-`KUBE_CONTEXT` defaults to `cluster-admin@ZeroTrustDemonstrator` and `ZONE_VALUES` to
+`KUBE_CONTEXT` is required and has no default: it is the kubectl context of the demonstrator
+cluster. `ZONE_VALUES` defaults to
 `deployment/helm/ztd/zones/ionos.yaml` (the local copy with the API addresses reads the same). The
-script refuses, before it reads the cluster, a run under CI, a run without `ZTD_CONFIRM_CLUSTER`
+script refuses, before it reads the cluster, a run under CI, a run without `KUBE_CONTEXT`, a run
+without `ZTD_CONFIRM_CLUSTER`
 equal to the context, a zone file outside the repository (the local copy goes under the ignored
 `.dev/`), and a zone file that does not set `mesh.mode: ambient` with
 `cni.derogation: calico-ambient`. It also refuses to start while a pod, Service, ServiceAccount or

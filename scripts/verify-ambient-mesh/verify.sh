@@ -66,10 +66,11 @@
 #   scripts/verify-ambient-mesh/verify.sh --help    this text; touches nothing
 #
 # Exit status: 0 every check passed; 1 a check failed (the run stopped there); 125 refused or not
-# run (an argument, CI, the context or zone file guard, a missing tool): nothing written.
+# run (an argument, CI, no KUBE_CONTEXT, the context or zone file guard, a missing tool): nothing
+# written.
 #
 # Environment:
-#   KUBE_CONTEXT         kubectl context (default: cluster-admin@ZeroTrustDemonstrator)
+#   KUBE_CONTEXT         kubectl context of the demonstrator cluster; required, no default
 #   ZTD_CONFIRM_CLUSTER  the context name, typed for this run: the proof creates pods on that cluster
 #   ZONE_VALUES          the zone file the cluster was installed from (default:
 #                        deployment/helm/ztd/zones/ionos.yaml; the local copy with the API addresses
@@ -92,11 +93,16 @@ if [ -n "${CI:-}" ]; then
   echo "verify-ambient-mesh: refusing to run under CI; the evidence is the record of a run on the cluster" >&2
   exit 125
 fi
+if [ -z "${KUBE_CONTEXT:-}" ]; then
+  usage >&2
+  echo "verify-ambient-mesh: refusing: KUBE_CONTEXT is not set: name the kubectl context of the demonstrator cluster" >&2
+  exit 125
+fi
 [ -n "${ZONE_VALUES:-}" ] && ZONE_VALUES=$(realpath -m -- "$ZONE_VALUES")
 cd "$(dirname "$0")" || exit 125
 REPO=$(git rev-parse --show-toplevel) || exit 125
 CHART=$REPO/deployment/helm/ztd
-CONTEXT=${KUBE_CONTEXT:-cluster-admin@ZeroTrustDemonstrator}
+CONTEXT=$KUBE_CONTEXT
 ZONE_VALUES=${ZONE_VALUES:-$CHART/zones/ionos.yaml}
 TIMEOUT=${STANDIN_TIMEOUT:-180}
 refuse() { echo "verify-ambient-mesh: refusing: $*" >&2; exit 125; }

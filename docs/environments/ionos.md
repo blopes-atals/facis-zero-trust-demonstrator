@@ -284,13 +284,13 @@ volumes) and access to the node.
 
 **The local zone copy.** The API endpoint addresses are kept out of the repository; the committed
 zone file has `networkPolicy.kubeApi.cidrs: []` and the umbrella refuses it as it stands. Copy it
-to `.dev/` (git-ignored, so it is never committed, and the proof's record names it by that
-relative path) and add the two addresses as `/32` entries, read from the cluster:
+to `.dev/` (git-ignored, so it is never committed) and add the two addresses as `/32` entries, read
+from the cluster. In the commands below `<ionos-context>` is the kubectl context of the IONOS kubeconfig:
 
 ```bash
 mkdir -p .dev && cp deployment/helm/ztd/zones/ionos.yaml .dev/ionos.local.yaml
 # put each address into networkPolicy.kubeApi.cidrs as <address>/32
-kubectl --context cluster-admin@ZeroTrustDemonstrator get endpointslices -n default \
+kubectl --context <ionos-context> get endpointslices -n default \
   -l kubernetes.io/service-name=kubernetes \
   -o jsonpath='{.items[*].endpoints[*].addresses[*]}'
 ```
@@ -299,9 +299,9 @@ kubectl --context cluster-admin@ZeroTrustDemonstrator get endpointslices -n defa
 
 ```bash
 # the six steps of the ambient path
-ZONE_VALUES=.dev/ionos.local.yaml KUBE_CONTEXT=cluster-admin@ZeroTrustDemonstrator \
+ZONE_VALUES=.dev/ionos.local.yaml KUBE_CONTEXT=<ionos-context> \
   scripts/install-zone/install.sh plan
-ZONE_VALUES=.dev/ionos.local.yaml KUBE_CONTEXT=cluster-admin@ZeroTrustDemonstrator \
+ZONE_VALUES=.dev/ionos.local.yaml KUBE_CONTEXT=<ionos-context> \
   scripts/install-zone/install.sh install
 ```
 
@@ -309,7 +309,7 @@ ZONE_VALUES=.dev/ionos.local.yaml KUBE_CONTEXT=cluster-admin@ZeroTrustDemonstrat
 namespace and removes them on exit (`scripts/verify-ambient-mesh/README.md`):
 
 ```bash
-ZONE_VALUES=.dev/ionos.local.yaml ZTD_CONFIRM_CLUSTER=cluster-admin@ZeroTrustDemonstrator \
+ZONE_VALUES=.dev/ionos.local.yaml KUBE_CONTEXT=<ionos-context> ZTD_CONFIRM_CLUSTER=<ionos-context> \
   scripts/verify-ambient-mesh/verify.sh
 ```
 
