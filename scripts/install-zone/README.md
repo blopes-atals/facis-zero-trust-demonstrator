@@ -171,6 +171,17 @@ two after that step; on kind the interval was about a minute between the first r
 images during the move, because that would mean a template and schema change to a security policy
 and a second step to narrow it again.
 
+**A hook pod on a rerun.** On the first install the umbrella runs before istiod, so its hook pods
+get no proxy; on a rerun a hook pod created in a meshed namespace gets the proxy injected. The
+umbrella's OpenBao verification hook `ztd-verify-openbao` (with `openbao.enabled: true`, as in the
+kind file `deployment/helm/ztd/ci/values.yaml`) therefore carries the identity label
+`spiffe.io/spire-managed-identity: "true"` and runs with a ServiceAccount of its own: SPIRE issues
+its proxy an SVID, and the hook completes. Without the label its pod would stay at `Init:1/2` and
+the rerun would fail at step 1 (`docs/troubleshooting.md`). CI checks that every hook the umbrella
+renders into a meshed namespace carries the label (`scripts/ci/check-hook-identity.sh`). The
+OpenBao bootstrap is a regular Job, not a hook: a rerun leaves it alone unless its script or values
+change, and it carries no identity label, so such a change on an installed zone is not covered.
+
 **Rollback.** Rerun the installer from the previous commit (the previous pin), then
 `roll-proxies.sh` from the same commit, so that the proxies return to the previous image. A release
 that does not become Ready during an upgrade is already rolled back by the installer's lifecycle

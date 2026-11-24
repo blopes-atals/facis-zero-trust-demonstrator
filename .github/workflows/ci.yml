@@ -347,6 +347,44 @@ jobs:
       - name: Test the chart check
         run: scripts/ci/check-charts_test.sh
 
+      # Helm reruns an install or upgrade hook on every upgrade, when the mesh already exists: a hook
+      # pod in a namespace with the injection label gets the mesh proxy, which waits for an SVID that
+      # SPIRE issues only to a pod with zone-policy's identity label. The umbrella is rendered with
+      # its ci/values.yaml and every shipped zone file, and every such hook must carry the label; a
+      # copy of the umbrella with a post-upgrade hook Job planted in the management namespace without
+      # it must be refused, naming the hook. Rendering only. PyYAML falls back to the pinned,
+      # hash-checked wheel.
+      - name: Check that hook pods in meshed namespaces carry the identity label
+        run: |
+          python3 -c 'import yaml' 2>/dev/null ||
+            python3 -m pip install --user --require-hashes --only-binary :all: --no-deps \
+              -r scripts/tools/requirements-ci.txt
+          scripts/ci/check-hook-identity.sh
+          copy="$RUNNER_TEMP/hook-identity/ztd"
+          mkdir -p "$copy"
+          cp -r deployment/helm/ztd/. "$copy/"
+          cat > "$copy/templates/zz-planted-hook.yaml" <<'YAML'
+          apiVersion: batch/v1
+          kind: Job
+          metadata:
+            name: planted-hook
+            namespace: {{ .Values.planes.management.namespace }}
+            annotations:
+              helm.sh/hook: post-install,post-upgrade
+          spec:
+            template:
+              spec:
+                restartPolicy: Never
+                containers:
+                  - name: planted
+                    image: planted
+          YAML
+          if CHART="$copy" scripts/ci/check-hook-identity.sh "$copy/ci/values.yaml" 2>"$copy.err"; then
+            echo "the check passed a hook without the identity label" >&2; exit 1
+          fi
+          cat "$copy.err"
+          grep -q 'Job ztd-mgmt/planted-hook' "$copy.err" || { echo "the refusal does not name the hook" >&2; exit 1; }
+
       # A zone is seven releases (scripts/install-zone/install.sh): the two project charts above and
       # five upstream charts, SPIRE's and Istio's, pinned by version and digest in the installer.
       # Each upstream release is rendered from its pinned chart with its values file under
