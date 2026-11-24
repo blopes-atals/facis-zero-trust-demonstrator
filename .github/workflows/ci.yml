@@ -412,6 +412,23 @@ jobs:
             [ ! -e "$copy/out/istiod.yaml" ] || { echo "install-zone rendered istiod before refusing the $field mismatch" >&2; exit 1; }
           done
 
+      # The proxy restart after an in-place Istio upgrade (scripts/install-zone/roll-proxies.sh),
+      # against a kubectl stub, no cluster (the cases are listed in the test's header):
+      # - no, or an empty, KUBE_CONTEXT, an unknown argument, a DRAIN_TIMEOUT that is not a number:
+      #   exit 2 before any kubectl call; --help exits 0;
+      # - a Deployment whose istio-validation init container runs another proxyv2 image is restarted,
+      #   one without a proxy next to it never is; still on the other image afterwards, the script
+      #   fails naming pod, namespace, container and image; on the pinned image, it exits 0;
+      # - a replica set list larger than one argument; nothing stale: nothing restarted;
+      # - a StatefulSet's and a DaemonSet's pods: both restarted;
+      # - a bare pod and a Job's pod: neither restarted, both named, non-zero;
+      # - a finished (Succeeded) pod: ignored; a terminating pod: waited on, and named as terminating
+      #   when it outlasts DRAIN_TIMEOUT.
+      - name: Test the proxy restart script
+        run: |
+          python3 -c 'import yaml' 2>/dev/null || python3 -m pip install --user pyyaml
+          scripts/install-zone/roll-proxies-test.sh
+
       # The upstream-state checker against local stand-ins that answer 404, 500 and the wrong
       # document: an error page must count as unreachable, never as the document. Its record goes
       # to a temporary directory; CI never writes the evidence under docs/evidences/.
