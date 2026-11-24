@@ -96,7 +96,7 @@ from the OpenAPI Initiative), vendored in `docs/contracts/tooling/oas-3.1/` and 
 ## Supply-chain, policy and test tooling
 
 Used by CI and the release workflow; never shipped inside a demonstrator image. Everything is pinned in
-`scripts/tools/pins.env`:
+`scripts/tools/pins.env`, except PyYAML, pinned in `scripts/tools/requirements-ci.txt`:
 
 - the executables (cosign, Syft, Grype, gator) and the Gatekeeper chart archive by SHA-256 — installed
   by `scripts/tools/install.sh`, which refuses a download whose checksum does not match;
@@ -116,6 +116,7 @@ The JavaScript packages above are pinned by exact version with integrity hashes 
 | OpenBao | 2.7.0 (test service) | MPL-2.0 | the token-store lifecycle proof only; its use in the demonstrator is the declared licence exception |
 | OpenBao (Helm chart `openbao`) | chart 0.28.3, server v2.5.4 | MPL-2.0 | the umbrella's X.509 key-value store when a zone turns it on ([Secrets](secrets.md)); covered by the declared licence exception |
 | Docker Distribution registry | 2.8.3 (test service) | Apache-2.0 | a local registry for signing and verification tests in CI |
+| PyYAML | 6.0.4 | MIT | YAML parsing in the CI steps that render a zone and test `scripts/install-zone/roll-proxies.sh`, installed only when the runner's Python lacks it, by exact version and wheel SHA-256 (`scripts/tools/requirements-ci.txt`) |
 
 The admission provider talks to OCI registries through a small first-party client built on the Go
 standard library rather than a general-purpose registry library, to keep its dependency set minimal.

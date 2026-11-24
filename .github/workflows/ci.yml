@@ -357,7 +357,9 @@ jobs:
       # zone-policy whose proxy image or status port differs from istiod's before it renders anything.
       - name: Render the upstream releases of a zone
         run: |
-          python3 -c 'import yaml' 2>/dev/null || python3 -m pip install --user pyyaml
+          python3 -c 'import yaml' 2>/dev/null ||
+            python3 -m pip install --user --require-hashes --only-binary :all: --no-deps \
+              -r scripts/tools/requirements-ci.txt
           RENDER_DIR="$RUNNER_TEMP/render" \
             scripts/install-zone/install.sh render spire-crds spire istio-base istiod istio-cni
           python3 - "$RUNNER_TEMP/render/istiod.yaml" <<'PY'
@@ -424,9 +426,13 @@ jobs:
       # - a bare pod and a Job's pod: neither restarted, both named, non-zero;
       # - a finished (Succeeded) pod: ignored; a terminating pod: waited on, and named as terminating
       #   when it outlasts DRAIN_TIMEOUT.
+      # PyYAML falls back to a pinned, hash-checked wheel (scripts/tools/requirements-ci.txt) when
+      # the runner's Python lacks it.
       - name: Test the proxy restart script
         run: |
-          python3 -c 'import yaml' 2>/dev/null || python3 -m pip install --user pyyaml
+          python3 -c 'import yaml' 2>/dev/null ||
+            python3 -m pip install --user --require-hashes --only-binary :all: --no-deps \
+              -r scripts/tools/requirements-ci.txt
           scripts/install-zone/roll-proxies-test.sh
 
       # The upstream-state checker against local stand-ins that answer 404, 500 and the wrong
