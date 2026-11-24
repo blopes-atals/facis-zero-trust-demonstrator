@@ -302,7 +302,7 @@ merged over the injected one without that annotation. A mesh proxy is therefore 
 namespace with the injection label, only under the name `istio-proxy` (no second proxy under
 another name), with the image `proxySocketPolicy.proxyImage` (which must equal the `istiod`
 release's `global.proxy.image`; the installer refuses a zone where they differ), no command, the
-arguments the 1.31.1 injector writes (`proxy sidecar --domain $(POD_NAMESPACE).svc.<cluster
+arguments the 1.31.4 injector writes (`proxy sidecar --domain $(POD_NAMESPACE).svc.<cluster
 domain>` and the three log-level flags, with only `--stsPort`, `--log_as_json` or
 `--outlierLogPath` besides), no `envFrom`, only the environment variables the injector writes, with
 `PILOT_CERT_PROVIDER`, `CA_ADDR`, `ISTIO_META_INTERCEPTION_MODE` and `TRUST_DOMAIN` at the

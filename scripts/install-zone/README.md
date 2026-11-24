@@ -10,9 +10,9 @@ on failure), each waiting on the previous:
 | 1 | `ztd` | `ztd-system` | `deployment/helm/ztd` (the umbrella) | the zone file |
 | 2 | `spire-crds` | `spire-system` | `spire-crds` 0.6.1, SPIFFE hardened charts | `deployment/helm/values/spire-crds.yaml` |
 | 3 | `spire` | `spire-system` | `spire` 0.30.2 (SPIRE v1.15.3) | `deployment/helm/values/spire.yaml` + zone facts |
-| 4 | `istio-base` | `istio-system` | `base` 1.31.1, Istio release archive | `deployment/helm/values/istio-base.yaml` |
-| 5 | `istiod` | `istio-system` | `istiod` 1.31.1 | `deployment/helm/values/istiod.yaml` + zone facts |
-| 6 | `istio-cni` | `istio-system` | `cni` 1.31.1 | `deployment/helm/values/istio-cni.yaml` |
+| 4 | `istio-base` | `istio-system` | `base` 1.31.4, Istio release archive | `deployment/helm/values/istio-base.yaml` |
+| 5 | `istiod` | `istio-system` | `istiod` 1.31.4 | `deployment/helm/values/istiod.yaml` + zone facts |
+| 6 | `istio-cni` | `istio-system` | `cni` 1.31.4 | `deployment/helm/values/istio-cni.yaml` |
 | 7 | `zone-policy` | `istio-system` | `deployment/helm/zone-policy` | chart defaults + zone facts; also waits for its Jobs |
 
 The umbrella creates every namespace the later releases install into; the lifecycle step never
@@ -112,7 +112,7 @@ The chart versions and digests are at the top of `install.sh` and in `docs/depen
 container images are pinned by tag and digest in the values files under `deployment/helm/values/`. The SPIRE
 charts come from `https://spiffe.github.io/helm-charts-hardened/` and are checked against their
 sha256. The Istio 1.31 charts are not in Istio's Helm repository or OCI registry; they come from
-the release archive `istio-1.31.1-linux-amd64.tar.gz`, checked against its published sha256. An
+the release archive `istio-1.31.4-linux-amd64.tar.gz`, checked against its published sha256. An
 upgrade changes a version and its digest here and reruns `scripts/verify-mesh-identity/verify.sh`.
 
 ## Tools

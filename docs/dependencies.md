@@ -139,13 +139,38 @@ are listed with their reasons in `deployment/helm/values/README.md`.
 | Component | Version | Installed through | Licence | Why |
 |---|---|---|---|---|
 | SPIRE (server, agent, controller-manager, SPIFFE CSI driver) | v1.15.3 | chart `spire` 0.30.2 and chart `spire-crds` 0.6.1, from the SPIFFE hardened charts `https://spiffe.github.io/helm-charts-hardened/` | Apache-2.0 | the only issuer of workload and mesh identities (ZT-24): attests every pod and serves its SVID over the CSI-mounted Workload API socket and to the mesh proxy over SDS |
-| Istio, sidecar mode | 1.31.1 | charts `base`, `istiod` and `cni` 1.31.1, from the Istio release archive `istio-1.31.1-linux-amd64.tar.gz` (`manifests/charts`), pinned by its published sha256 | Apache-2.0 | the service mesh of [ADR-0009](adr/0009-service-mesh-mode-istio-sidecar-with-cilium.md): native sidecars that take their certificates from SPIRE, mesh-wide STRICT mTLS, the CNI plugin chained behind Cilium |
+| Istio, sidecar mode | 1.31.4 | charts `base`, `istiod` and `cni` 1.31.4, from the Istio release archive `istio-1.31.4-linux-amd64.tar.gz` (`manifests/charts`), pinned by its published sha256; the lowest acceptable release is set by [ISTIO-SECURITY-2026-009](https://istio.io/latest/news/security/istio-security-2026-009/) (see below) | Apache-2.0 | the service mesh of [ADR-0009](adr/0009-service-mesh-mode-istio-sidecar-with-cilium.md): native sidecars that take their certificates from SPIRE, mesh-wide STRICT mTLS, the CNI plugin chained behind Cilium |
 | Cilium | 1.20.2 on kind; 1.18.8 on the participant clusters | kind: chart `cilium/cilium` 1.20.2, by `scripts/dev/kind-cilium-up.sh`, the version a kind run of `scripts/verify-mesh-identity/verify.sh` shows; the participant clusters of zone A and zone B: installed and upgraded by the provider (Gardener), never by the zone, found at 1.18.8, the version a participant-cluster run of the same script shows in its preconditions and `environment.json` (see `scripts/verify-mesh-identity/README.md`) (the chaining proven on every node; cross-node pod traffic masqueraded by the provider's configuration, so the mesh is proven node-locally there and fails across nodes until the provider changes it; a kind pass on 1.20.2 supports but does not prove a fix for the provider's 1.18.8 pod network) | Apache-2.0 | the CNI and the enforcer of the network policies, with `cni.exclusive=false` (`cni-exclusive=false` in `cilium-config`) so that the Istio plugin can chain |
-| istioctl | 1.31.1 | the operator's machine | Apache-2.0 | reads a proxy's secrets and sync status in the proof; never installs |
+| istioctl | 1.31.4 | the operator's machine | Apache-2.0 | reads a proxy's secrets and sync status in the proof; never installs |
 
 The Istio 1.31 charts are taken from the release archive because Istio's Helm repository and OCI
 registry do not carry them (on 2026-10-06 the repository's index stopped at 1.31.0-rc.0); the
 archive is the release Istio publishes, and its charts are the same charts.
+
+**Security floor.** The sidecar release is held outside the affected range of every advisory that
+applies to the zones as they are installed. The floor is set by the Istio security bulletin
+[ISTIO-SECURITY-2026-009](https://istio.io/latest/news/security/istio-security-2026-009/) of
+6 November 2026, which affects 1.31.0 to 1.31.3 and is fixed in 1.31.4. One of its advisories
+applies:
+
+- [GHSA-635j-qv98-9275](https://github.com/istio/istio/security/advisories/GHSA-635j-qv98-9275)
+  (High, 7.7): any workload with a mesh identity can crash istiod with a crafted `istio.io/debug`
+  xDS request; the bulletin counts every installation as affected.
+
+The others do not apply to the zones:
+
+| Advisory | Why it does not apply |
+|---|---|
+| GHSA-cxwg-46mx-q8hf | needs a sidecar with TPROXY inbound interception; the advisory states that "Deployments using the default REDIRECT mode are not affected". The bulletin's wider wording (any sidecar interception with iptables or nftables) is narrowed by the advisory. No values file sets a mesh-wide interception mode, and in the plane namespaces `zone-policy`'s `proxy-takes-spire-socket` policy admits a pod only with `sidecar.istio.io/interceptionMode: REDIRECT` and `ISTIO_META_INTERCEPTION_MODE=REDIRECT` (`deployment/helm/zone-policy/README.md`) |
+| GHSA-7m6f-j3gp-2r53 | needs an AuthorizationPolicy `when` condition on `request.headers[:authority]` or `request.headers[host]`; no policy the charts install uses one |
+| GHSA-9gqj-583v-mpqp | needs `ipBlocks`, `notIpBlocks` or `source.ip` in a policy for an ambient waypoint or a sidecar receiving HBONE traffic; the charts use none of these fields and the zones carry no HBONE |
+| GHSA-rr2c-p22p-6r9r | ambient mode only (port-level PeerAuthentication); the zones run sidecar mode |
+| GHSA-8jw7-82jp-wr2c | ambient mode only (AuthorizationPolicy with an empty `to` or `from`); the zones run sidecar mode |
+| GHSA-77vw-rg85-wx5x | ztunnel only; the zones run no ztunnel |
+| GHSA-gf6w-6mxv-5fj4 | multicluster installations only; each zone is a single-cluster mesh |
+| JWKS background refresh (a fix of the bulletin without an advisory) | istiod's JWKS resolver, used for `RequestAuthentication` JWT rules; no chart in `deployment/` installs a `RequestAuthentication` |
+
+A later bulletin that raises the floor for an advisory that applies moves the pin the same way.
 
 **Upgrades.** An upgrade changes the pinned version and digest in the installer and re-reads the
 digest of every image tag in the values files (`docker buildx imagetools inspect <image>:<tag>`
