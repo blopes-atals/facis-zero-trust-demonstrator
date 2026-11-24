@@ -115,6 +115,67 @@ sha256. The Istio 1.31 charts are not in Istio's Helm repository or OCI registry
 the release archive `istio-1.31.4-linux-amd64.tar.gz`, checked against its published sha256. An
 upgrade changes a version and its digest here and reruns `scripts/verify-mesh-identity/verify.sh`.
 
+## Upgrading a zone in place
+
+A zone moves to a new Istio pin without an uninstall: rerun the installer from the commit that
+carries the pin, then restart the mesh proxies.
+
+```bash
+KUBE_CONTEXT=<context> scripts/install-zone/install.sh install
+KUBE_CONTEXT=<context> scripts/install-zone/roll-proxies.sh
+```
+
+The installer upgrades `istio-base`, `istiod`, `istio-cni` and `zone-policy` in order, but it never
+restarts a workload, so that a routine rerun does not restart a zone: a running pod keeps the
+proxy it was injected with, and a fix in the proxy or its interception reaches the pod only when the
+pod is recreated. `roll-proxies.sh` takes the pinned image from `zone-policy`'s
+`proxySocketPolicy.proxyImage` and restarts (`kubectl rollout restart`, then `rollout status`)
+only the Deployments, StatefulSets and DaemonSets whose pods carry a `proxyv2` container on another
+image, init or regular: the proxies are native sidecars, so `istio-proxy` and `istio-validation` are
+init containers. A workload whose pods carry no proxy is left alone, since restarting it in a
+namespace with the injection label would inject a proxy it does not have. The script then lists
+every pod in the cluster and exits non-zero, naming the pod, its namespace, the container and the
+image, while any container still runs a `proxyv2` image other than the pinned one. Bare pods and
+Job pods are not restarted; the check names them, and the operator deletes them once they may go.
+`KUBE_CONTEXT` has no default in this script: it refuses to run without it.
+
+A restarted workload that needs a manual step before it is Ready holds `rollout status` until that
+step is done (`ROLLOUT_TIMEOUT`, 10 minutes by default). An OpenBao server that carries the mesh
+proxy is one: it seals itself on every restart, so run `scripts/secrets/unseal.sh` while the script
+waits on it. `unseal.sh` acts on kubectl's current context, not on `KUBE_CONTEXT`, so run it only
+behind a check that the current context is the zone being upgraded (in a second shell, while
+`roll-proxies.sh` waits; set `zone` to the context given to it as `KUBE_CONTEXT`):
+
+```bash
+zone=<context>
+if [ "$(kubectl config current-context)" = "$zone" ]; then
+  scripts/secrets/unseal.sh
+else
+  echo "the current context is not $zone: not unsealing" >&2
+fi
+```
+
+The check looks at running pods only: a pod that has finished (`Succeeded` or `Failed`, such as a
+completed Job's pod) runs no proxy, so its old image is not counted. It keeps the old image in its
+spec until it is deleted or its Job is cleaned up.
+
+**Short admission refusals.** Between the `istiod` step and the `zone-policy` step, the injector
+already writes the new proxy image while the `proxy-takes-spire-socket` policy still admits only
+the old one, so a plane pod created in that interval (a rescheduled or scaled pod) is refused with
+a `FailedCreate` event. Nothing is lost: the pod's controller (its ReplicaSet, StatefulSet,
+DaemonSet or Job) retries the creation with a growing backoff, and the first retry after the
+`zone-policy` step is admitted. Because of the backoff, such a pod can stay missing for a minute or
+two after that step; on kind the interval was about a minute between the first refusal and the
+`zone-policy` step, and about three minutes until the pod was back. A bare pod is not retried;
+`roll-proxies.sh` names any pod left on the old image. The policy is not widened to admit both
+images during the move, because that would mean a template and schema change to a security policy
+and a second step to narrow it again.
+
+**Rollback.** Rerun the installer from the previous commit (the previous pin), then
+`roll-proxies.sh` from the same commit, so that the proxies return to the previous image. A release
+that does not become Ready during an upgrade is already rolled back by the installer's lifecycle
+step.
+
 ## Tools
 
 `bash` 3.2 or later (macOS's `/bin/bash` is the floor), `helm` (v4.3.0, the pipeline's),

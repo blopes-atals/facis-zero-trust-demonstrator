@@ -176,7 +176,10 @@ A later bulletin that raises the floor for an advisory that applies moves the pi
 **Upgrades.** An upgrade changes the pinned version and digest in the installer and re-reads the
 digest of every image tag in the values files (`docker buildx imagetools inspect <image>:<tag>`
 prints the index digest), then reruns `scripts/verify-mesh-identity/verify.sh`, whose record goes
-to the run directory outside the repository. The local proof runs on kind node v1.35.8 with Cilium
+to the run directory outside the repository. A zone that is already installed moves to a new
+Istio pin in place: the installer is rerun, then `scripts/install-zone/roll-proxies.sh` restarts the
+workloads whose proxies still run the previous image and fails while any proxy does
+(`scripts/install-zone/README.md`). The local proof runs on kind node v1.35.8 with Cilium
 1.20.2; the participant clusters run Kubernetes v1.34.7 with the provider's
 Cilium 1.18.8, and the same proof is re-run there with the keep opt-in. At every Istio minor upgrade the
 [ADR-0009](adr/0009-service-mesh-mode-istio-sidecar-with-cilium.md) reopen check
