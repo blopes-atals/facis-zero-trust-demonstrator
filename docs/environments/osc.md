@@ -286,7 +286,7 @@ reason code rather than a generic admission error. A cluster where that image st
 configured.
 
 The policy catalogue is then handed to the zone's Argo CD, which keeps it equal to Git from there on
-([deployment/argocd](../../deployment/argocd/README.md)). The two OSC clusters are Gardener shoots
+([deployment/argocd](https://github.com/eclipse-xfsc/facis-zero-trust-demonstrator/blob/main/deployment/argocd/README.md)). The two OSC clusters are Gardener shoots
 with Cilium, so the installer gets the Cilium lane to the API server and the namespace label that
 keeps the platform's API proxy out of it:
 

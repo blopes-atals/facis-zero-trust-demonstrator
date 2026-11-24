@@ -109,7 +109,7 @@ them as not run.
 ## Admission reconciler
 
 The `admission-gitops` job proves the path from Git to the cluster that
-[deployment/argocd](../deployment/argocd/README.md) builds: a kind cluster with Gatekeeper and the
+[deployment/argocd](https://github.com/eclipse-xfsc/facis-zero-trust-demonstrator/blob/main/deployment/argocd/README.md) builds: a kind cluster with Gatekeeper and the
 pinned Argo CD, handed the admission policy of the revision under test by `scripts/argocd/install.sh`,
 fetched from the repository the revision came from (the pull request's head repository and commit, or
 the pushed commit). The job checks out that same commit, not the merge commit, so the catalogue the
