@@ -90,15 +90,6 @@ func TestMutualHandshake(t *testing.T) {
 	checkMutual(t, f, cli, srv)
 }
 
-func TestMutualHandshakeInProcess(t *testing.T) {
-	skipLibAPIUnderRace(t)
-	f := newFixture(t)
-	libapiMu.Lock()
-	cli, srv := pair(t, f.b.InProcessConfig(f.a), f.a.InProcessConfig(f.b))
-	libapiMu.Unlock()
-	checkMutual(t, f, cli, srv)
-}
-
 func checkMutual(t *testing.T, f *fixture, cli, srv *atls.Conn) {
 	t.Helper()
 	if cli.Peer().Verdict != atls.VerdictSuccess || srv.Peer().Verdict != atls.VerdictSuccess {

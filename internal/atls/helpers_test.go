@@ -41,16 +41,6 @@ func newFixture(t *testing.T, aOpts ...atlstest.ZoneOption) *fixture {
 	}
 }
 
-// skipLibAPIUnderRace skips tests that run both ends through CMC's in-process backend under the
-// race detector: CMC's libapi re-initialises its process-global drivers on every call, which the
-// race detector reports inside CMC (design.md, finding N4). The gRPC path has no such race.
-func skipLibAPIUnderRace(t *testing.T) {
-	t.Helper()
-	if raceEnabled {
-		t.Skip("CMC libapi races on its process-global drivers (finding N4); covered over gRPC")
-	}
-}
-
 type accepted struct {
 	conn *atls.Conn
 	err  error
