@@ -333,6 +333,15 @@ jobs:
             python3 -m pip install --user --only-binary=:all: --require-hashes -r "$RUNNER_TEMP/pyyaml.txt"
           fi
 
+      # Every kind node shares the runner's kernel, and the runner's default inotify instance limit
+      # (128) is too low for three nodes: istio-cni-node then never becomes ready (couldn't
+      # initialize inotify: too many open files; docs/troubleshooting.md). 512 is the value kind's
+      # known issues give.
+      - name: Raise the inotify limits for a multi-node kind cluster
+        run: |
+          sudo sysctl -w fs.inotify.max_user_instances=512
+          sudo sysctl -w fs.inotify.max_user_watches=524288
+
       - name: Create the kind cluster with Cilium and cert-manager
         run: |
           scripts/dev/kind-cilium-up.sh
@@ -359,6 +368,20 @@ jobs:
         env:
           ZTD_EVIDENCE_DIR: ${{ runner.temp }}/verify-observability
         run: scripts/verify-observability/verify.sh
+
+      # On a failure, the pods that are not ready and why: their events and their containers' last
+      # log lines, so a release that times out names its cause in the job's log.
+      - name: Show the pods that are not ready
+        if: failure()
+        run: |
+          kubectl get pods -A -o wide | awk 'NR == 1 || $4 != "Running" && $4 != "Completed" || $3 ~ /^0\//'
+          kubectl get pods -A --no-headers | awk '$4 != "Running" && $4 != "Completed" || $3 ~ /^0\//' |
+            while read -r ns pod _; do
+              echo "::group::$ns/$pod"
+              kubectl -n "$ns" describe pod "$pod" | sed -n '/^Events:/,$p'
+              kubectl -n "$ns" logs "$pod" --all-containers --tail=40 --prefix 2>&1 || true
+              echo "::endgroup::"
+            done
 
       - name: Publish the record
         if: always()
