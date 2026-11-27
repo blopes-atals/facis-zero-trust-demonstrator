@@ -12,6 +12,7 @@ metadata:
     app.kubernetes.io/part-of: verify-observability
     spiffe.io/spire-managed-identity: "true"
 spec:
+  serviceAccountName: obs-client   # fixtures/mesh-pairs.yaml: its principal is the echo's one caller
   securityContext:
     runAsNonRoot: true
     runAsUser: 100

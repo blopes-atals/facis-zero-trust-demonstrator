@@ -32,7 +32,11 @@ It installs only its fixtures (`fixtures/`: the meshed echo `tools/trace-echo`, 
 the fixture status list `features/fixtures/xfsc/status/allow.json`, a meshed data-plane client, a
 stand-in with the zone gateway's labels, a probe on the demonstrator side, a reader of the exported
 log files that mounts the entry's volume read-only, a probe in a scratch namespace) and removes them
-at the end. To inject failures it stops and restores components: the
+at the end. Under the mesh default deny of `zone-policy`, the two calls inside one plane namespace
+that only the proof makes, the client to the echo and the zone gateway to the status list's stand-in,
+are declared as the proof's own pairs (`fixtures/mesh-pairs.yaml`: one ALLOW rule each, by the
+caller's SPIFFE principal on port 8080; the client has a service account of its own); the calls into
+the zone gateway use the zone's own row `workloads-to-otel-collector`. To inject failures it stops and restores components: the
 SPIRE server (scaled to 0), one SPIRE agent and one node collector (a temporary `nodeSelector` that
 matches no node), the zone gateway's egress (its policy deleted and the gateway restarted), the
 status list, and the entry (60 s, twice, then one pod deletion for `logs-exported`). Every change is undone on exit, interrupted or not.

@@ -180,9 +180,9 @@ restore_all() {
 cleanup() {
   restore_all
   kz -n "$NSD" delete pod obs-client --ignore-not-found --wait=false >/dev/null 2>&1
-  kz -n "$NSD" delete deploy,svc -l app.kubernetes.io/part-of=verify-observability --ignore-not-found --wait=false >/dev/null 2>&1
+  kz -n "$NSD" delete deploy,svc,authorizationpolicy,serviceaccount -l app.kubernetes.io/part-of=verify-observability --ignore-not-found --wait=false >/dev/null 2>&1
   kz -n "$NSM" delete pod obs-gateway-standin --ignore-not-found --wait=false >/dev/null 2>&1
-  kz -n "$NSM" delete deploy,svc -l app.kubernetes.io/part-of=verify-observability --ignore-not-found --wait=false >/dev/null 2>&1
+  kz -n "$NSM" delete deploy,svc,authorizationpolicy -l app.kubernetes.io/part-of=verify-observability --ignore-not-found --wait=false >/dev/null 2>&1
   kz -n "$NSM" delete configmap status-list-fixture --ignore-not-found >/dev/null 2>&1
   kd -n "$NSB" delete pod obs-demonstrator-probe log-export-reader --ignore-not-found --wait=false >/dev/null 2>&1
   kz delete namespace "$NS_SCRATCH" --ignore-not-found --wait=false >/dev/null 2>&1
@@ -193,8 +193,10 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 # ---- fixtures
+TRUST_DOMAIN=$(fact "$ZONE_VALUES" zone.trustDomain)
 fixture() { # fixture <file>: the fixture with its placeholders filled
   sed -e "s|\${NS_MGMT}|$NSM|g; s|\${NS_DATA}|$NSD|g; s|\${NS_BACKENDS}|$NSB|g; s|\${NS_SCRATCH}|$NS_SCRATCH|g" \
+      -e "s|\${TRUST_DOMAIN}|$TRUST_DOMAIN|g" \
       -e "s|\${ECHO_IMAGE}|$ECHO_IMAGE|g; s|\${CLIENT_IMAGE}|$CLIENT_IMAGE|g; s|\${RUN_ID}|$RUN_ID|g" \
       "$HERE/fixtures/$1"
 }
@@ -203,7 +205,9 @@ jq -r '.output.statusListCredential' "$REPO/features/fixtures/xfsc/status/allow.
 kz -n "$NSM" create configmap status-list-fixture --from-file=status-list.json="$work/status-list.json" \
   --dry-run=client -o yaml | kz apply -f - >>"$LOG"
 kz create namespace "$NS_SCRATCH" --dry-run=client -o yaml | kz apply -f - >>"$LOG"
-for f in status-list.yaml trace-echo.yaml client.yaml gateway-standin.yaml node-address-probe.yaml; do
+# The proof's own pairs first (fixtures/mesh-pairs.yaml): under the mesh default deny they let the
+# client call the echo and the zone gateway probe the status list.
+for f in mesh-pairs.yaml status-list.yaml trace-echo.yaml client.yaml gateway-standin.yaml node-address-probe.yaml; do
   fixture "$f" | kz apply -f - >>"$LOG" || { say "fixture $f could not be applied"; exit 125; }
 done
 fixture demonstrator-probe.yaml | kd apply -f - >>"$LOG"
@@ -395,8 +399,7 @@ if [ "$srv" = 1 ] && [ "$cm" = 1 ] && [ "${ns_srv:-0}" -gt 0 ] && [ "${ns_cr:-0}
   record spire-server-scraped passed "up == 1 for the server and the controller-manager; ${ns_srv} spire_server_ and ${ns_cr} controller_runtime_ series of $ZONE"
 else record spire-server-scraped failed "server up=$srv controller-manager up=$cm spire_server_ series=$ns_srv controller_runtime_ series=$ns_cr"; fi
 
-trust_domain=$(fact "$ZONE_VALUES" zone.trustDomain)
-gw_id="spiffe://$trust_domain/ns/$NSM/sa/otel-gateway"
+gw_id="spiffe://$TRUST_DOMAIN/ns/$NSM/sa/otel-gateway"
 entry=$(kz -n spire-system exec spire-server-0 -c spire-server -- /opt/spire/bin/spire-server entry show -spiffeID "$gw_id" 2>/dev/null | sed -n 's/^Found \([0-9]*\) entr.*/\1/p')
 gw_ready=$(kz -n "$NSM" get pod -l "$GW_PODS" -o json | jq -r '[.items[0].status.containerStatuses[]?, .items[0].status.initContainerStatuses[]? | select(.name == "istio-proxy" or .name == "opentelemetry-collector") | select(.ready)] | length')
 if [ "${entry:-0}" -ge 1 ] && [ "$gw_ready" = 2 ]; then
