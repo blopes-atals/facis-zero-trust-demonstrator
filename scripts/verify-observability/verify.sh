@@ -580,6 +580,16 @@ else record unknown-client-refused failed "own certificate $ok_cert, no certific
 claim=$( [ "$ZONE" = zone-b ] && echo zone-a || echo zone-b )
 tid=$(hex 16)
 tcode=$(span_json "$tid" "$(hex 8)" verify-observability-claim "$claim" | post_otlp traces)
+# The gateway may still be draining the flood of export-buffered-while-down: a full queue answers
+# 200 and refuses the span. Until the trace is stored (90 s), the claim is sent again every 10 s, as
+# a new span of the same trace, so the check waits for the queue and not for one lucky send.
+claim_stored() { # claim_stored: the trace is in Jaeger, else one more claim span is sent
+  local i
+  for i in 1 2 3 4 5; do jaeger_trace "$tid" | jq -e '.data[0].spans | length > 0' >/dev/null 2>&1 && return 0; sleep 2; done
+  span_json "$tid" "$(hex 8)" verify-observability-claim "$claim" | post_otlp traces >/dev/null
+  return 1
+}
+until_true 90 claim_stored || true
 mcode=$(jq -nc --arg z "$claim" --arg r "$RUN_ID" --arg t "$(now_ns)" '{resourceMetrics: [{resource: {attributes: [{key: "service.name", value: {stringValue: "verify-observability-claim"}}, {key: "zone", value: {stringValue: $z}}]}, scopeMetrics: [{metrics: [{name: "ztd_proof_zone_claim", gauge: {dataPoints: [{asDouble: 1, timeUnixNano: $t, attributes: [{key: "zone", value: {stringValue: $z}}, {key: "run_id", value: {stringValue: $r}}]}]}}]}]}]}' | post_otlp metrics)
 stored_zone() { pq "ztd_proof_zone_claim{run_id=\"$RUN_ID\"}" | jq -r '[.data.result[].metric.zone] | unique | join(",")'; }
 for _ in $(seq 1 30); do [ -n "$(stored_zone)" ] && break; sleep 2; done
